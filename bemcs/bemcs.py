@@ -39,14 +39,6 @@ def plot_fields_no_elements(x, y, displacement, stress, sup_title):
             linewidths=0.25,
             colors="k",
         )
-
-        # for element in elements:
-        #     plt.plot(
-        #         [element["x1"], element["x2"]],
-        #         [element["y1"], element["y2"]],
-        #         "-k",
-        #         linewidth=1.0,
-        #     )
         plt.title(title)
         style_plots()
 
@@ -59,16 +51,7 @@ def plot_fields_no_elements(x, y, displacement, stress, sup_title):
     plot_subplot(x, y, 6, stress[2, :], "xy stress")
 
     plt.subplot(2, 3, 1)
-    # for element in elements:
-    #     plt.plot(
-    #         [element["x1"], element["x2"]],
-    #         [element["y1"], element["y2"]],
-    #         "-k",
-    #         linewidth=1.0,
-    #     )
-
     plt.quiver(x, y, displacement[0], displacement[1], units="width", color="b")
-
     plt.title("vector displacement")
     plt.gca().set_aspect("equal")
     plt.xticks([x_lim[0], x_lim[1]])
