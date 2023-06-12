@@ -1612,3 +1612,38 @@ def f_slip_to_displacement_stress(x_component, y_component, f, y, mu, nu):
     ) + 2 * y_component * mu * (-y * f[5, :])
 
     return displacement, stress
+
+
+def get_quadratic_coefficients_for_linear_slip(
+    a, node_coordinates, end_displacement_1, end_displacement_2
+):
+    """Get quadratic node coeficients/weights for the case of
+        linear slip
+
+        NOTE: We may want to generalize this so that it just works
+        on an element dictionary and doesn't need a or
+        node_coefficients.
+
+    Args:
+        a (_type_): element half width
+        node_coordinates: "x" location of quadratic nodes
+        end_displacement_1: displacement at endpoint 1
+        end_displacement_2: displacement at endpoint 2
+
+    Returns:
+        quadratic_coefficients: 3n nd.array with 3 quadratic coefficients
+    """
+    center_displacment = (end_displacement_1 + end_displacement_2) / 2.0
+    physical_displacements = np.array(
+        [end_displacement_1, center_displacment, end_displacement_2]
+    )
+    quadratic_coefficients = phicoef(node_coordinates, physical_displacements, a)
+    return quadratic_coefficients
+
+
+def phicoef(x, y, a):
+    mat = np.zeros((len(x), 3))
+    mat[:, 0] = (x / a) * (9 * (x / a) / 8 - 3 / 4)
+    mat[:, 1] = (1 - 3 * (x / a) / 2) * (1 + 3 * (x / a) / 2)
+    mat[:, 2] = (x / a) * (9 * (x / a) / 8 + 3 / 4)
+    return np.linalg.inv(mat) @ y
