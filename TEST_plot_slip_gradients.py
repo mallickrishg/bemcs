@@ -16,7 +16,7 @@ def df_1_dx(x, a):
     return (9 * x) / (4 * a**2) - 3 / (4 * a)
 
 def df_2_dx(x, a):
-    return -(9 * x) / (2 * a**2)
+    return -(9 * x) / (2 * a**2) # the missing negative sign was a source of a lot of our problems - all is well now :)
 
 def df_3_dx(x, a):
     return (9 * x) / (4 * a**2) + 3 / (4 * a)
