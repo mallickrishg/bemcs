@@ -1642,10 +1642,39 @@ def get_quadratic_coefficients_for_linear_slip(
     print(f"IN BEMCS - {quadratic_coefficients=}")
     return quadratic_coefficients
 
+# Slip functions
+def slip_functions(x, a):
+    design_matrix = np.zeros((len(x), 3))
+    f1 = (x / a) * (9 * (x / a) / 8 - 3 / 4)
+    f2 = (1 - 3 * (x / a) / 2) * (1 + 3 * (x / a) / 2)
+    f3 = (x / a) * (9 * (x / a) / 8 + 3 / 4)
+    design_matrix[:,0] = f1
+    design_matrix[:,1] = f2
+    design_matrix[:,3] = f3
+    return design_matrix
 
-def phicoef(x, y, a):
-    mat = np.zeros((len(x), 3))
-    mat[:, 0] = (x / a) * (9 * (x / a) / 8 - 3 / 4)
-    mat[:, 1] = (1 - 3 * (x / a) / 2) * (1 + 3 * (x / a) / 2)
-    mat[:, 2] = (x / a) * (9 * (x / a) / 8 + 3 / 4)
-    return np.linalg.inv(mat) @ y
+# Slip gradient functions
+def slipgradient_functions(x, a):
+    design_matrix = np.zeros((len(x), 3))
+    df_1_dx = (9 * x) / (4 * a**2) - 3 / (4 * a)
+    df_2_dx = -(9 * x) / (2 * a**2)
+    df_3_dx = (9 * x) / (4 * a**2) + 3 / (4 * a)
+    design_matrix[:,0] = df_1_dx
+    design_matrix[:,1] = df_2_dx
+    design_matrix[:,3] = df_3_dx
+    return design_matrix
+
+# Compute 3qn coefficients for given slip
+def phicoef(x, slip, a):
+    """ Get quadratic node coefficients for slip specified at the 3 nodes as an ordered set (x,slip) """
+    mat = slip_functions(x,a)
+    return np.linalg.inv(mat) @ slip
+
+# compute slip and slip gradients from 3qn coefficients
+def get_slip_slipgradient(x, a, phi):
+    slip_mat = slip_functions(x,a)
+    slipgradient_mat = slipgradient_functions(x,a)
+    slip = slip_mat @ phi
+    slipgradient = slipgradient_mat @ phi
+    return slip, slipgradient
+
