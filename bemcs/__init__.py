@@ -14,6 +14,8 @@ from .bemcs import (
     f_slip_to_displacement_stress,
     get_quadratic_coefficients_for_linear_slip,
     phicoef,
+    slip_functions,
+    slipgradient_functions,
 )
 
 try:
