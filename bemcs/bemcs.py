@@ -1650,7 +1650,7 @@ def slip_functions(x, a):
     f3 = (x / a) * (9 * (x / a) / 8 + 3 / 4)
     design_matrix[:,0] = f1
     design_matrix[:,1] = f2
-    design_matrix[:,3] = f3
+    design_matrix[:,2] = f3
     return design_matrix
 
 # Slip gradient functions
@@ -1661,7 +1661,7 @@ def slipgradient_functions(x, a):
     df_3_dx = (9 * x) / (4 * a**2) + 3 / (4 * a)
     design_matrix[:,0] = df_1_dx
     design_matrix[:,1] = df_2_dx
-    design_matrix[:,3] = df_3_dx
+    design_matrix[:,2] = df_3_dx
     return design_matrix
 
 # Compute 3qn coefficients for given slip
