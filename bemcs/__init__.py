@@ -16,6 +16,7 @@ from .bemcs import (
     phicoef,
     slip_functions,
     slipgradient_functions,
+    get_slip_slipgradient,
 )
 
 try:
