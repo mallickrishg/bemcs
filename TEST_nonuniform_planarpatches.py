@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import bemcs
 
-def quadratic_stresskernel(x_obs,y_obs,elements):
+def quadratic_stresskernel(x_obs,y_obs,elements,mu,nu):
     """Each stress kernel is a matrix of dimensions 
         Kxx = Nobs x 3xNpatches 
         Kyy = Nobs x 3xNpatches
@@ -74,15 +74,20 @@ def quadratic_stresskernel(x_obs,y_obs,elements):
 
     return Kxx, Kyy, Kxy
 
-def smooth_3qncoef_from_slip(elements,slip):
+def smooth_3qncoef_from_BC(elements,BCvector):
+    """ Compute quadratic coefficients from applied boundary conditions
+        Currently only apply slip, slip gradient boundary conditions as well as
+        continuity and 1-differentiability of slip at internal overlapping nodes"""
     for i in range(len(elements)):
-        slip, slip_gradient = bemcs.get_slip_slipgradient(x, a, phi)
+        slip_matrix[] = bemcs.slip_functions(elements[i]["x1"], elements[i]["half_length"])
+        slip_matrix = bemcs.slip_functions(elements[i]["x_center"], elements[i]["half_length"])
+        slip_matrix = bemcs.slip_functions(elements[i]["x2"], elements[i]["half_length"])
 
     return quadratic_coefs
 
 # define a mesh
 n_elements = 4
-mu = np.array([1])
+mu_shear = np.array([1])
 nu = np.array([0.25])
 elements = []
 element = {}
@@ -113,4 +118,4 @@ x_obs = np.linspace(-1.5, 1.5, n_obs)
 y_obs = 1e-9 * np.ones_like(x_obs)
 
 # Stress kernels
-Kxx,Kyy,Kxy = quadratic_stresskernel(x_obs,y_obs,elements)
+Kxx,Kyy,Kxy = quadratic_stresskernel(x_obs,y_obs,elements,mu_shear,nu)
