@@ -1644,6 +1644,7 @@ def get_quadratic_coefficients_for_linear_slip(
 
 # Slip functions
 def slip_functions(x, a):
+    """ Get pre-multiplier (L) to quadratic coefficients (x) to compute slip (Lx = slip) at any point on the fault patch"""
     design_matrix = np.zeros((len(x), 3))
     f1 = (x / a) * (9 * (x / a) / 8 - 3 / 4)
     f2 = (1 - 3 * (x / a) / 2) * (1 + 3 * (x / a) / 2)
@@ -1655,6 +1656,9 @@ def slip_functions(x, a):
 
 # Slip gradient functions
 def slipgradient_functions(x, a):
+    """ Get pre-multiplier (L) to quadratic coefficients (x) to compute slip-gradient (Lx = dslip/dx) at any point on the fault patch. 
+    
+    Note that the slip gradient is only along the fault."""
     design_matrix = np.zeros((len(x), 3))
     df_1_dx = (9 * x) / (4 * a**2) - 3 / (4 * a)
     df_2_dx = -(9 * x) / (2 * a**2)
@@ -1672,6 +1676,8 @@ def phicoef(x, slip, a):
 
 # compute slip and slip gradients from 3qn coefficients
 def get_slip_slipgradient(x, a, phi):
+    """ Get slip and slip gradient for a given fault patch at any point (x) within the fault
+    from quadratic coefficients (phi)"""
     slip_mat = slip_functions(x,a)
     slipgradient_mat = slipgradient_functions(x,a)
     slip = slip_mat @ phi
