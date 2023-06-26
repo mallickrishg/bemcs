@@ -4,11 +4,8 @@ import bemcs
 def get_designmatrix_3qn(elements):
     """ Compute design matrix for a linear system of equations to calculate quadratic coefficients from applied boundary conditions for an ordered list of fault elements. 
     
-    This function provides 2 design matrices - (1) for slip at every node, (2) for slip gradients at every node
-        
-    Currently designed to handle the following:
-        
-    (1) slip at patch centers, (2) slip-gradient at boundary nodes, (3) slip continuity at all internal overlapping nodes and (4) slip smoothness at all internal overlapping nodes"""
+    This function provides 2 design matrices - (1) for slip at every node, (2) for slip gradients at every node"""
+    
     designmatrix_slip = np.zeros((3*len(elements),3*len(elements)))
     designmatrix_slipgradient = np.zeros((3*len(elements),3*len(elements)))
 
