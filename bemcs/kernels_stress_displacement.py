@@ -42,7 +42,7 @@ def rotate_displacement_stress(displacement, stress, inverse_rotation_matrix):
         stress[2, i] = stress_tensor_global[0, 1]
     return displacement, stress
 
-def get_quadratic_displacement_stress_kernel(x_obs,y_obs,elements,mu,nu,flag=1):
+def get_quadratic_displacement_stress_kernel(x_obs,y_obs,elements,mu,nu,flag):
     """ INPUTS
 
         x_obs,y_obs - locations to compute kernels
@@ -69,14 +69,14 @@ def get_quadratic_displacement_stress_kernel(x_obs,y_obs,elements,mu,nu,flag=1):
     Gy = np.zeros((len(x_obs),3*len(elements)))    
 
     # check for which slip component kernels the user wants
-    if flag==1:
+    if flag == 1:
         flag_strikeslip=1.
         flag_tensileslip=0.
-    elif flag==0:
+    elif flag == 0:
         flag_strikeslip=0.
         flag_tensileslip=1.
     else:
-        raise ValueError("shear/tensile flag must be 0/1, no other values allowed")
+        raise ValueError("shear/tensile flag must be 1/0, no other values allowed")
     
     for i in range(len(elements)):
         # center observation locations (no translation needed)
