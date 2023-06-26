@@ -2,9 +2,13 @@ import numpy as np
 import bemcs
 
 def get_designmatrix_3qn(elements):
-    """ Compute design matrix for linear system to calculate quadratic coefficients from applied boundary conditions
-        Currently only apply slip, slip gradient boundary conditions as well as
-        continuity and 1-differentiability of slip at internal overlapping nodes"""
+    """ Compute design matrix for a linear system of equations to calculate quadratic coefficients from applied boundary conditions for an ordered list of fault elements. 
+    
+    This function provides 2 design matrices - (1) for slip at every node, (2) for slip gradients at every node
+        
+    Currently designed to handle the following:
+        
+    (1) slip at patch centers, (2) slip-gradient at boundary nodes, (3) slip continuity at all internal overlapping nodes and (4) slip smoothness at all internal overlapping nodes"""
     designmatrix_slip = np.zeros((3*len(elements),3*len(elements)))
     designmatrix_slipgradient = np.zeros((3*len(elements),3*len(elements)))
 
@@ -40,16 +44,22 @@ def rotate_displacement_stress(displacement, stress, inverse_rotation_matrix):
 
 def get_quadratic_displacement_stress_kernel(x_obs,y_obs,elements,mu,nu,flag=1):
     """ INPUTS
+
         x_obs,y_obs - locations to compute kernels
         elements - provide list of elements (geometry & rotation matrices)
         mu, nu - Elastic parameters (Shear Modulus, Poisson ratio)
         flag - 1 for shear, 0 for tensile kernels
+
         OUTPUTS
+
         Each stress kernel is a matrix of dimensions 
+
         Kxx = Nobs x 3xNpatches 
         Kyy = Nobs x 3xNpatches
         Kxy = Nobs x 3xNpatches
+
         Each displacement kernel is a matrix of dimensions
+
         Gx = Nobs x 3xNpatches
         Gy = Nobs x 3xNpatches"""
     Kxx = np.zeros((len(x_obs),3*len(elements)))
