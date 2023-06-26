@@ -208,6 +208,8 @@ def standardize_elements(elements):
         mag = np.sqrt(dx**2 + dy**2)
         element["x_normal"] = dy / mag
         element["y_normal"] = -dx / mag
+        element["x_shear"] = dx / mag
+        element["y_shear"] = dy / mag
 
         # Evaluations points for quadratic kernels
         element["x_integration_points"] = np.array(
