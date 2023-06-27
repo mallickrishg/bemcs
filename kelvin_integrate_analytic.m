@@ -18,4 +18,4 @@ sxy = fx * ((1 - 2 * nu) * gy - x * gxy) + fy * ((1 - 2 * nu) * gx - y * gxy);
 
 % Try integrating one of the stresses
 % This isn't what we really want but it's conceptually similar
-int(int(sxx, y), x)
+int(int(sxx, y, [0 1-x]), x, [0 1])
