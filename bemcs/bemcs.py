@@ -143,7 +143,7 @@ def plot_element_geometry(elements):
         plt.plot(
             [element["x1"], element["x2"]],
             [element["y1"], element["y2"]],
-            "-k",
+            "-",
             color="r",
             linewidth=0.5,
         )
