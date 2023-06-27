@@ -55,8 +55,8 @@ def get_designmatrix_xy_3qn(elements):
         slipgradient_matrixstack[0::2,0:3] = slipgradient_matrix
         slipgradient_matrixstack[1::2,3:] = slipgradient_matrix
 
-        designmatrix_slip[6*i:6*(i+1),6*i:6*(i+1)] = slip_matrixstack@unitvec_matrixstack
-        designmatrix_slipgradient[6*i:6*(i+1),6*i:6*(i+1)] = slipgradient_matrixstack@unitvec_matrixstack
+        designmatrix_slip[6*i:6*(i+1),6*i:6*(i+1)] = unitvec_matrixstack @ slip_matrixstack
+        designmatrix_slipgradient[6*i:6*(i+1),6*i:6*(i+1)] = unitvec_matrixstack @ slipgradient_matrixstack
 
     return designmatrix_slip, designmatrix_slipgradient
     
