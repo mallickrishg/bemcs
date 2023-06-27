@@ -25,8 +25,8 @@ def get_individualdesignmatrix_3qn(elements):
 
     return designmatrix_slip, designmatrix_slipgradient
 
-def get_designmatrix_3qn(elements):
-    """Assemble design matrix for both slip components for a 
+def get_designmatrix_xy_3qn(elements):
+    """Assemble design matrix in (x,y) coordinate system for 2 slip components (s,n) for a 
     linear system of equations to calculate quadratic coefficients from applied boundary conditions for an ordered list of fault elements.
     
     Unit vectors for each patch are used to premultiply the input matrices 
