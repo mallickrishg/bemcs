@@ -129,7 +129,7 @@ def get_quadratic_displacement_stress_kernel(x_obs,y_obs,elements,mu,nu,flag):
         displacement_local,stress_local = bemcs.displacements_stresses_quadratic_no_rotation(
             x_rot,y_rot,elements[i]["half_length"],mu,nu,strike_slip,tensile_slip,
             elements[i]["x_center"],elements[i]["y_center"])
-        displacement_eval,stress_eval = rotate_displacement_stress(displacement_local,stress_local, elements[i]["rotation_matrix"])
+        displacement_eval,stress_eval = rotate_displacement_stress(displacement_local,stress_local, elements[i]["inverse_rotation_matrix"])
         # displacement_eval,stress_eval = displacement_local,stress_local
         index = 3*i
         Kxx[:,index] = stress_eval[0,:]
@@ -146,7 +146,7 @@ def get_quadratic_displacement_stress_kernel(x_obs,y_obs,elements,mu,nu,flag):
         displacement_local,stress_local = bemcs.displacements_stresses_quadratic_no_rotation(
             x_rot,y_rot,elements[i]["half_length"],mu,nu,strike_slip,tensile_slip,
             elements[i]["x_center"],elements[i]["y_center"])
-        displacement_eval,stress_eval = rotate_displacement_stress(displacement_local,stress_local, elements[i]["rotation_matrix"])
+        displacement_eval,stress_eval = rotate_displacement_stress(displacement_local,stress_local, elements[i]["inverse_rotation_matrix"])
         index = 3*i + 1
         Kxx[:,index] = stress_eval[0,:]
         Kyy[:,index] = stress_eval[1,:]
@@ -162,7 +162,7 @@ def get_quadratic_displacement_stress_kernel(x_obs,y_obs,elements,mu,nu,flag):
         displacement_local,stress_local = bemcs.displacements_stresses_quadratic_no_rotation(
             x_rot,y_rot,elements[i]["half_length"],mu,nu,strike_slip,tensile_slip,
             elements[i]["x_center"],elements[i]["y_center"])
-        displacement_eval,stress_eval = rotate_displacement_stress(displacement_local,stress_local, elements[i]["rotation_matrix"])
+        displacement_eval,stress_eval = rotate_displacement_stress(displacement_local,stress_local, elements[i]["inverse_rotation_matrix"])
         index = 3*i + 2
         Kxx[:,index] = stress_eval[0,:]
         Kyy[:,index] = stress_eval[1,:]
