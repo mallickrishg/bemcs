@@ -1,9 +1,10 @@
 import numpy as np
 import bemcs
 
-def get_designmatrix_3qn(elements):
+def get_individualdesignmatrix_3qn(elements):
     """ Compute design matrix for a linear system of equations to calculate quadratic coefficients from applied boundary conditions for an ordered list of fault elements. 
-    
+    The resulting matrix is only for 1 component of slip or slip-gradient. Use get_designmatrix_3qn() for the full matrix.
+
     This function provides 2 design matrices - (1) for slip at every node, (2) for slip gradients at every node"""
 
     designmatrix_slip = np.zeros((3*len(elements),3*len(elements)))
@@ -24,16 +25,40 @@ def get_designmatrix_3qn(elements):
 
     return designmatrix_slip, designmatrix_slipgradient
 
-def assemble_designmatrix_3qn(matrix_s,matrix_n,elements):
-    """Assemble design matrix for both slip components from individual slip component matrices 
+def get_designmatrix_3qn(elements):
+    """Assemble design matrix for both slip components for a 
+    linear system of equations to calculate quadratic coefficients from applied boundary conditions for an ordered list of fault elements.
     
     Unit vectors for each patch are used to premultiply the input matrices 
     [dx nx] [f1 f2 f3 0  0  0]
     [dy ny] [0  0  0  f1 f2 f3]"""
 
-    design_matrix = matrix_s + matrix_n
+    designmatrix_slip = np.zeros((6*len(elements),6*len(elements)))
+    designmatrix_slipgradient = np.zeros((6*len(elements),6*len(elements)))
 
-    return design_matrix
+    for i in range(len(elements)):
+        slip_matrixstack = np.zeros((6,6))
+        slipgradient_matrixstack = np.zeros((6,6))
+
+        unitvec_matrix = np.array([[elements[i]["x_shear"], elements[i]["x_normal"]],
+                                [elements[i]["y_shear"], elements[i]["y_normal"]]])
+        unitvec_matrixstack = np.kron(np.eye(3), unitvec_matrix)
+        
+        # set x_obs to be oriented along the fault
+        x_obs = np.array((-elements[i]["half_length"],0.,elements[i]["half_length"]))
+        
+        slip_matrix = bemcs.slip_functions(x_obs, elements[i]["half_length"])
+        slipgradient_matrix = bemcs.slipgradient_functions(x_obs, elements[i]["half_length"])
+
+        slip_matrixstack[0::2,0:3] = slip_matrix
+        slip_matrixstack[1::2,3:] = slip_matrix
+        slipgradient_matrixstack[0::2,0:3] = slipgradient_matrix
+        slipgradient_matrixstack[1::2,3:] = slipgradient_matrix
+
+        designmatrix_slip[6*i:6*(i+1),6*i:6*(i+1)] = slip_matrixstack@unitvec_matrixstack
+        designmatrix_slipgradient[6*i:6*(i+1),6*i:6*(i+1)] = slipgradient_matrixstack@unitvec_matrixstack
+
+    return designmatrix_slip, designmatrix_slipgradient
     
 def rotate_displacement_stress(displacement, stress, inverse_rotation_matrix):
     """ Rotate displacements stresses from local to global reference frame """
