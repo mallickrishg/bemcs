@@ -36,7 +36,8 @@ if do_symbolic_integration == true
     % Indefinite integral over yoffset (inner integral)
     sxx_indefinite_yoffset = int(sxx, yoffset);
     sxx_indefinite_yoffset_lower_limit = subs(sxx_indefinite_yoffset, yoffset, 0);
-    sxx_indefinite_yoffset_upper_limit = subs(sxx_indefinite_yoffset, yoffset, 1-xoffset);
+    sxx_indefinite_yoffset_upper_limit = subs(sxx_indefinite_yoffset, yoffset, x0);
+%     sxx_indefinite_yoffset_upper_limit = subs(sxx_indefinite_yoffset, yoffset, 1);
     sxx_definite_yoffset = sxx_indefinite_yoffset_upper_limit - sxx_indefinite_yoffset_lower_limit;
     
     % Indefinite integral over xoffset (outer integral)
@@ -58,8 +59,8 @@ end
 sxx_function_handle = matlabFunction(sxx_definite_yoffset_definite_xoffset);
 
 % Plot result over a grid
-x_vec = linspace(-1.0, 2.0, 100);
-y_vec = linspace(-1.0, 2.0, 100);
+x_vec = linspace(-1.0, 2.0, 201);
+y_vec = linspace(-1.0, 2.0, 201);
 [x_mat, y_mat] = meshgrid(x_vec, y_vec);
 sxx_mat = sxx_function_handle(1, 0, 0.25, x_mat, y_mat);
 figure;
