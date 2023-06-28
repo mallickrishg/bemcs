@@ -143,7 +143,7 @@ def plot_element_geometry(elements):
         plt.plot(
             [element["x1"], element["x2"]],
             [element["y1"], element["y2"]],
-            "-k",
+            "-",
             color="r",
             linewidth=0.5,
         )
@@ -155,14 +155,15 @@ def plot_element_geometry(elements):
             linewidth=0.5,
         )
 
-    # Extract and plot unit normal vectors
+    # Extract and plot unit normal & shear vectors
     x_center = np.array([_["x_center"] for _ in elements])
     y_center = np.array([_["y_center"] for _ in elements])
     x_normal = np.array([_["x_normal"] for _ in elements])
     y_normal = np.array([_["y_normal"] for _ in elements])
-    plt.quiver(
-        x_center, y_center, x_normal, y_normal, units="width", color="gray", width=0.002
-    )
+    x_shear = np.array([_["x_shear"] for _ in elements])
+    y_shear = np.array([_["y_shear"] for _ in elements])
+    plt.quiver(x_center, y_center, x_normal, y_normal, units="width", color="gray", width=0.002) 
+    plt.quiver(x_center, y_center, x_shear, y_shear, units="width", color="green", width=0.005)       
 
     for i, element in enumerate(elements):
         plt.text(
