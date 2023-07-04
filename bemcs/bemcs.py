@@ -163,7 +163,7 @@ def plot_element_geometry(elements):
     x_shear = np.array([_["x_shear"] for _ in elements])
     y_shear = np.array([_["y_shear"] for _ in elements])
     plt.quiver(x_center, y_center, x_normal, y_normal, units="width", color="gray", width=0.002) 
-    plt.quiver(x_center, y_center, x_shear, y_shear, units="width", color="green", width=0.005)       
+    plt.quiver(x_center, y_center, x_shear, y_shear, units="width", color="green", width=0.002)       
 
     for i, element in enumerate(elements):
         plt.text(
@@ -179,7 +179,7 @@ def plot_element_geometry(elements):
     plt.ylabel("y")
     plt.title("element geometry and normals")
     plt.gca().set_aspect("equal")
-    plt.show(block=False)
+    #plt.show(block=False)
 
 def standardize_elements(elements):
     for element in elements:
