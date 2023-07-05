@@ -279,10 +279,10 @@ def LDstressHS(x, y, xe, ye, a, dip, Ds, Dn, nu, mu):
                            (2 * y * sb * (1 - 2 * c2b) + YB * s2b) * FF7i -
                            2 * y * (y * s4b - YB * s3b) * FF8i -
                            2 * y * (y * c4b - YB * c3b) * FF9i)
-    Sxyi_n = cons * Dyb * (YB * FF5i + (2 * y * sb + YB * s2b) * FF6i -
-                           (2 * y * cb + YB * c2b) * FF7i -
-                           2 * y * (y * c4b - YB * c3b) * FF8i +
-                           2 * y * (y * s4b - YB * s3b) * FF9i)
+    Sxyi_n = cons * Dyb * ((4 * y * sb * s2b + YB * c2b) * FF6i -
+                            (4 * y * sb * c2b - YB * s2b) * FF7i -
+                            2 * y * (y * c4b - YB * c3b) * FF8i -
+                            2 * y * (y * s4b - YB * s3b) * FF9i)
     
     Sxxi = Sxxi_s+Sxxi_n
     Syyi = Syyi_s+Syyi_n
