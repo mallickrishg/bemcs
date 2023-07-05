@@ -145,7 +145,7 @@ def LDdispHS(x, y, xe, ye, a, dip, Ds, Dn, nu):
 
     return Ux,Uy
 
-def LDstressHS(x, y, xe, ye, a, dip, Ds, Dn, nu, E):
+def LDstressHS(x, y, xe, ye, a, dip, Ds, Dn, nu, mu):
     # Arguments: (input)
     #   x & y  - The observation points locations in real Cartesian coords.  
     #  xe & ye - The element midpoint location in real coords. 
@@ -154,18 +154,19 @@ def LDstressHS(x, y, xe, ye, a, dip, Ds, Dn, nu, E):
     #  Dn,Ds   - The defined displacement of each element.(normal and shear)
             #    Dn+ is opening, Ds+ is left lateral shearing. 
     #    nu    - The Poisson's ratio
-    #    E     - The Young's modulus E = 2*G*nu/(1-nu)
+    #    mu    - Shear Modulus (E     - The Young's modulus E = 2*G*nu/(1-nu))
     #  Arguments: (output)
-    #  Stress - Is the stress caused by the movement of the dislocation at the observataion points. [Sxx,Syy,Sxy]
+    #  Stress - Is the stress caused by the movement of the dislocation at the observataion points. 
+    # [Sxx,Syy,Sxy]
 
     Beta = -np.deg2rad(dip)
-    
+
     if np.any(y > 0):
         raise ValueError('Half-space solution: Z coordinates must be negative!')
     
     # The shear modulus, sm, is related to the prescribed elastic constants.
-    sm = E / (2 * (1 + nu))
-    
+    # sm = E / (2 * (1 + nu))
+    sm = mu
     # Define material constant used in calculating influence coefficients.
     con = 1 / (4 * np.pi * (1 - nu))
     cons = 2 * sm
