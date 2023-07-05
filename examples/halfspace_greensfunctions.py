@@ -185,17 +185,17 @@ def LDstressHS(x, y, xe, ye, a, dip, Ds, Dn, nu, mu):
     # the midpoint and orientation of the ith element.
     # Refer to (Figure 5.6, C&S, p. 91) and eqs. 4.5.1 of C&S, p. 57.
     XB = (x - xe) * cb + (y - ye) * sb
-    YB = -(x - xe) * sb + (y - ye) * cb
+    YB = -(x - xe) * sb + (y - ye) * cb 
     
     # Coordinates of the image dislocation
     XBi = (x - xe) * cb - (y + ye) * sb  # equation 7.4.6 C&S
     YBi = (x - xe) * sb + (y + ye) * cb
     
     # Fix roundoff errors in Ybi and Yb from trig function problems
-    bad = np.abs(YBi) < 1e-10  # Steve Martels Fix
-    bad2 = np.abs(YB) < 1e-10
+    bad = np.where(np.abs(YBi) < 1e-10)  # Steve Martels Fix
+    bad2 = np.where(np.abs(YB) < 1e-10)
     YBi[bad] = 0
-    YB[bad2] = 0
+    YB[bad2] = 0.
     
     # Calculate derivatives of the function f(x, y), eq. 5.2.5 of C&S, p. 81.
     # which are used to calculate the displacement and stress components.
