@@ -172,7 +172,13 @@ def get_quadratic_displacement_stress_kernel(x_obs,y_obs,elements,mu,nu,flag):
 
     return Kxx, Kyy, Kxy, Gx, Gy
 
-def compute_tractionkernels(elements,kernels):    
+def compute_tractionkernels(elements,kernels):   
+    """ Function to calculate kernels of traction vector from a set of stress kernels and unit vectors. 
+    
+    Provide elements as a list with ["x_normal"] & ["y_normal"] for the unit normal vector. 
+    
+    kernels must be provided as kernels[0] = Kxx, kernels[1] = Kyy, kernels[2] = Kxy
+    """
     Kxx = kernels[0]
     Kyy = kernels[1]
     Kxy = kernels[2]
