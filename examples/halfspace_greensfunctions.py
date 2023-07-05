@@ -72,8 +72,8 @@ def LDdispHS(x, y, xe, ye, a, dip, Ds, Dn, nu):
     i3 = np.where((YB == 0) & (np.abs(XB) > a))
     FF3 = np.zeros_like(YB)
     FF3[i1] = np.arctan2(YB[i1], XMa[i1]) - np.arctan2(YB[i1], XPa[i1])
-    FF3[i2] = np.pi * np.ones_like(i2)
-    FF3[i3] = np.zeros_like(i3)
+    FF3[i2] = np.pi #* np.ones_like(i2)
+    FF3[i3] = 0#np.zeros_like(i3)
     FF3 = -con * FF3.T
     FF3 = np.reshape(FF3, (lengthrow, lengthcol))
 
@@ -91,8 +91,8 @@ def LDdispHS(x, y, xe, ye, a, dip, Ds, Dn, nu):
     # FB3 = difference of arc tangents for all other pts.
     FF3i = np.zeros_like(YBi)
     FF3i[i1i] = np.arctan2(YBi[i1i], XMai[i1i]) - np.arctan2(YBi[i1i], XPai[i1i])
-    FF3i[i2i] = np.pi * np.ones_like(i2i)
-    FF3i[i3i] = np.zeros_like(i3i)
+    FF3i[i2i] = np.pi #* np.ones_like(i2i)
+    FF3i[i3i] = 0#np.zeros_like(i3i)
     FF3i = -con * FF3i.T
     FF3i = FF3i.reshape(lengthrow, lengthcol)
     FF4i = con * (YBi / R1Si - YBi / R2Si)
