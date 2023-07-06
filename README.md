@@ -1,4 +1,4 @@
 # bemcs
 Continuous slip boundary element models
 
-Explorations with continuous slip boundary elements using non-constant slip elements
+Solutions to various boundary value problems in linear elasticity using quadratic polynomial slip boundary elements
