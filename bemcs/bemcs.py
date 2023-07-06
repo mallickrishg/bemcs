@@ -204,7 +204,7 @@ def plot_nine_fields(elements, x, y, displacement, stress, sup_title):
     plot_subplot(elements, x, y, 6, stress[2, :], "xy stress")
     plot_subplot(elements, x, y, 7, stress_first_invariant, "stress first invariant")
     plot_subplot(elements, x, y, 8, stress_second_invariant, "stress second invariant")
-    plot_subplot(elements, x, y, 9, stress_third_invariant, "stress third invariant")
+    # plot_subplot(elements, x, y, 9, stress_third_invariant, "stress third invariant")
     plt.tight_layout()
     plt.show(block=False)
 
