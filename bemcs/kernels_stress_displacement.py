@@ -171,3 +171,40 @@ def get_quadratic_displacement_stress_kernel(x_obs,y_obs,elements,mu,nu,flag):
         Gy[:,index] = displacement_eval[1,:]
 
     return Kxx, Kyy, Kxy, Gx, Gy
+
+def compute_tractionkernels(elements,kernels):   
+    """ Function to calculate kernels of traction vector from a set of stress kernels and unit vectors. 
+    
+    Provide elements as a list with ["x_normal"] & ["y_normal"] for the unit normal vector. 
+    
+    kernels must be provided as kernels[0] = Kxx, kernels[1] = Kyy, kernels[2] = Kxy
+    """
+    Kxx = kernels[0]
+    Kyy = kernels[1]
+    Kxy = kernels[2]
+    nrows = np.shape(Kxx)[0]
+    # nrows = len(elements)
+    # ncols = np.shape(Kxx)[1]
+
+    tx = np.zeros_like(Kxx)
+    ty = np.zeros_like(Kxx)
+    # unit vector in normal direction
+    nvec = np.zeros((nrows,2))
+
+    for i in range(nrows):
+        nvec[i,:] = np.array((elements[i]["x_normal"],elements[i]["y_normal"]))
+    nx_matrix = np.zeros_like(Kxx)
+    ny_matrix = np.zeros_like(Kxx)
+
+    nx_matrix[:,0::3] = nvec[:,0]
+    nx_matrix[:,1::3] = nvec[:,0]
+    nx_matrix[:,2::3] = nvec[:,0]
+    ny_matrix[:,0::3] = nvec[:,1]
+    ny_matrix[:,1::3] = nvec[:,1]
+    ny_matrix[:,2::3] = nvec[:,1]
+
+    # traction vector t = n.σ
+    tx = Kxx*nx_matrix + Kxy*ny_matrix
+    ty = Kxy*nx_matrix + Kyy*ny_matrix
+
+    return tx,ty
