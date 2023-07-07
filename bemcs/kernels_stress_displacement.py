@@ -31,7 +31,7 @@ def get_individualdesignmatrix_3qn(elements):
     return designmatrix_slip, designmatrix_slipgradient
 
 
-def get_designmatrix_xy_3qn(elements):
+def get_designmatrix_xy_3qn(elements,flag="node"):
     """Assemble design matrix in (x,y) coordinate system for 2 slip components (s,n) for a
     linear system of equations to calculate quadratic coefficients from applied boundary conditions for an ordered list of fault elements.
 
@@ -57,7 +57,13 @@ def get_designmatrix_xy_3qn(elements):
         # set x_obs to be oriented along the fault
         x_obs = np.array((-elements[i]["half_length"], 0.0, elements[i]["half_length"]))
 
-        slip_matrix = bemcs.slip_functions(x_obs, elements[i]["half_length"])
+        if flag == "node":
+            slip_matrix = bemcs.slip_functions(x_obs, elements[i]["half_length"])
+        elif flag == "mean":
+            slip_matrix = bemcs.slip_functions_mean(x_obs)
+        else:
+            raise ValueError("Invalid flag. Use either 'node' or 'mean'.")
+        
         slipgradient_matrix = bemcs.slipgradient_functions(
             x_obs, elements[i]["half_length"]
         )
@@ -77,7 +83,7 @@ def get_designmatrix_xy_3qn(elements):
     return designmatrix_slip, designmatrix_slipgradient
 
 
-def get_designmatrix_xy_3qn_mean(elements):
+def get_designmatrix_xy_3qn_mean(elements,flag="node"):
     """Assemble design matrix in (x,y) coordinate system for 2 slip components (s,n) for a
     linear system of equations to calculate quadratic coefficients from applied boundary conditions for an ordered list of fault elements.
 
@@ -101,9 +107,8 @@ def get_designmatrix_xy_3qn_mean(elements):
         unitvec_matrixstack = np.kron(np.eye(3), unitvec_matrix)
 
         # set x_obs to be oriented along the fault
-        x_obs = np.array((-elements[i]["half_length"], 0.0, elements[i]["half_length"]))
-
-        slip_matrix = bemcs.slip_functions(x_obs, elements[i]["half_length"])
+        x_obs = np.array((-elements[i]["half_length"], 0.0, elements[i]["half_length"]))        
+        
         slipgradient_matrix = bemcs.slipgradient_functions(
             x_obs, elements[i]["half_length"]
         )
