@@ -1730,6 +1730,17 @@ def slip_functions(x, a):
     design_matrix[:,2] = f3
     return design_matrix
 
+def slip_functions_mean(x, a):
+    """ Get pre-multiplier (L) to quadratic coefficients (x) to compute average slip (Lx = mean_slip) over the fault patch"""
+    design_matrix = np.zeros((len(x), 3))
+    f1 = 3/8
+    f2 = 1/4
+    f3 = 3/8
+    design_matrix[:,0] = f1
+    design_matrix[:,1] = f2
+    design_matrix[:,2] = f3
+    return design_matrix
+
 # Slip gradient functions
 def slipgradient_functions(x, a):
     """ Get pre-multiplier (L) to quadratic coefficients (x) to compute slip-gradient (Lx = dslip/dx) at any point on the fault patch. 
