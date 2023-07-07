@@ -36,8 +36,9 @@ def get_designmatrix_xy_3qn(elements,flag="node"):
     linear system of equations to calculate quadratic coefficients from applied boundary conditions for an ordered list of fault elements.
 
     flag = "node" : slip is applied at each node of a fault element
-    flag = "mean" : slip is applied as a mean value over the entire fault element, not just at nodes
     
+    flag = "mean" : slip is applied as a mean value over the entire fault element, not just at nodes
+
     Unit vectors for each patch are used to premultiply the input matrices
     [dx nx] [f1 f2 f3 0  0  0]
     [dy ny] [0  0  0  f1 f2 f3]"""
