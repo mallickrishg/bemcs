@@ -16,6 +16,7 @@ from .bemcs import (
     get_quadratic_coefficients_for_linear_slip,
     phicoef,
     slip_functions,
+    slip_functions_mean,
     slipgradient_functions,
     get_slip_slipgradient,
 )
