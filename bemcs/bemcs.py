@@ -137,7 +137,7 @@ def plot_fields(elements, x, y, displacement, stress, sup_title):
     plt.show(block=False)
 
 
-def plot_nine_fields(elements, x, y, displacement, stress, sup_title):
+def plot_nine_fields(elements, x, y, displacement, stress, n_pts, sup_title):
     """Contour 3 displacement fields, 6 stress fields"""
     x_lim = np.array([x.min(), x.max()])
     y_lim = np.array([y.min(), y.max()])
@@ -148,15 +148,15 @@ def plot_nine_fields(elements, x, y, displacement, stress, sup_title):
         plt.xticks([x_lim[0], x_lim[1]])
         plt.yticks([y_lim[0], y_lim[1]])
 
-    def plot_subplot(elements, x, y, idx, field, title):
+    def plot_subplot(elements, x, y, idx, field, n_pts, title):
         """Common elements for each subplot - other than quiver"""
         plt.subplot(3, 3, idx)
         field_max = np.max(np.abs(field))
         scale = 5e-1
         plt.contourf(
-            x,
-            y,
-            field.reshape(x.shape),
+            x.reshape(n_pts, n_pts),
+            y.reshape(n_pts, n_pts),
+            field.reshape(n_pts, n_pts),
             n_contours,
             vmin=-scale * field_max,
             vmax=scale * field_max,
@@ -166,9 +166,9 @@ def plot_nine_fields(elements, x, y, displacement, stress, sup_title):
         plt.colorbar(fraction=0.046, pad=0.04, extend="both")
 
         plt.contour(
-            x,
-            y,
-            field.reshape(x.shape),
+            x.reshape(n_pts, n_pts),
+            y.reshape(n_pts, n_pts),
+            field.reshape(n_pts, n_pts),
             n_contours,
             vmin=-scale * field_max,
             vmax=scale * field_max,
@@ -196,16 +196,17 @@ def plot_nine_fields(elements, x, y, displacement, stress, sup_title):
 
     plt.figure(figsize=(12, 12))
     n_contours = 10
-    plot_subplot(elements, x, y, 1, displacment_magnitude, "displacement magnitude")
-    plot_subplot(elements, x, y, 2, displacement[0, :], "x displacement")
-    plot_subplot(elements, x, y, 3, displacement[1, :], "y displacement")
-    plot_subplot(elements, x, y, 4, stress[0, :], "xx stress")
-    plot_subplot(elements, x, y, 5, stress[1, :], "yy stress")
-    plot_subplot(elements, x, y, 6, stress[2, :], "xy stress")
-    plot_subplot(elements, x, y, 7, stress_first_invariant, "stress first invariant")
-    plot_subplot(elements, x, y, 8, stress_second_invariant, "stress second invariant")
+    plot_subplot(elements, x, y, 1, displacment_magnitude, n_pts, "displacement magnitude")
+    plot_subplot(elements, x, y, 2, displacement[0, :], n_pts, "x displacement")
+    plot_subplot(elements, x, y, 3, displacement[1, :], n_pts, "y displacement")
+    plot_subplot(elements, x, y, 4, stress[0, :], n_pts, "xx stress")
+    plot_subplot(elements, x, y, 5, stress[1, :], n_pts, "yy stress")
+    plot_subplot(elements, x, y, 6, stress[2, :], n_pts, "xy stress")
+    plot_subplot(elements, x, y, 7, stress_first_invariant, n_pts, "stress first invariant")
+    plot_subplot(elements, x, y, 8, stress_second_invariant, n_pts, "stress second invariant")
     # plot_subplot(elements, x, y, 9, stress_third_invariant, "stress third invariant")
     plt.tight_layout()
+    plt.suptitle(sup_title)
     plt.show(block=False)
 
 
