@@ -1,0 +1,14 @@
+name: bemcs
+channels:
+  - conda-forge
+dependencies:
+  - numpy
+  - scipy
+  - matplotlib
+  - jupyterlab
+  - pytest
+  - addict
+  - tqdm
+  - h5py
+  - colorcet
+  - rich
