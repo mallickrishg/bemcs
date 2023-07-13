@@ -251,7 +251,7 @@ def compute_tractionkernels(elements, kernels):
     Kxx = kernels[0]
     Kyy = kernels[1]
     Kxy = kernels[2]
-    nrows = np.shape(Kxx)[0]
+    nrows = np.shape(Kxx)[0] # this is typically the same as number of elements because stress kernels are calculated ONLY at the center of a given element
     # nrows = len(elements)
     # ncols = np.shape(Kxx)[1]
 
@@ -265,12 +265,13 @@ def compute_tractionkernels(elements, kernels):
     nx_matrix = np.zeros_like(Kxx)
     ny_matrix = np.zeros_like(Kxx)
 
-    nx_matrix[:, 0::3] = nvec[:, 0]
-    nx_matrix[:, 1::3] = nvec[:, 0]
-    nx_matrix[:, 2::3] = nvec[:, 0]
-    ny_matrix[:, 0::3] = nvec[:, 1]
-    ny_matrix[:, 1::3] = nvec[:, 1]
-    ny_matrix[:, 2::3] = nvec[:, 1]
+    # this is definitely incorrect - need to fix
+    nx_matrix[:, 0::3] = nvec[:, 0].reshape(-1,1)
+    nx_matrix[:, 1::3] = nvec[:, 0].reshape(-1,1)
+    nx_matrix[:, 2::3] = nvec[:, 0].reshape(-1,1)
+    ny_matrix[:, 0::3] = nvec[:, 1].reshape(-1,1)
+    ny_matrix[:, 1::3] = nvec[:, 1].reshape(-1,1)
+    ny_matrix[:, 2::3] = nvec[:, 1].reshape(-1,1)
 
     # traction vector t = n.σ
     tx = Kxx * nx_matrix + Kxy * ny_matrix
