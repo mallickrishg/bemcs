@@ -19,6 +19,11 @@ from .bemcs import (
     slip_functions_mean,
     slipgradient_functions,
     get_slip_slipgradient,
+    get_individualdesignmatrix_3qn,
+    get_designmatrix_xy_3qn,
+    rotate_displacement_stress,
+    get_quadratic_displacement_stress_kernel,
+    compute_tractionkernels
 )
 
 try:
