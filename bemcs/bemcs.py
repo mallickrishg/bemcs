@@ -1,5 +1,7 @@
+import addict
 import numpy as np
 import matplotlib.pyplot as plt
+
 
 def plot_fields_no_elements(x, y, displacement, stress, sup_title):
     """Contour 2 displacement fields, 3 stress fields, and quiver displacements"""
@@ -59,6 +61,7 @@ def plot_fields_no_elements(x, y, displacement, stress, sup_title):
     plt.suptitle(sup_title)
     plt.tight_layout()
     plt.show(block=False)
+
 
 def plot_fields(elements, x, y, displacement, stress, sup_title):
     """Contour 2 displacement fields, 3 stress fields, and quiver displacements"""
@@ -187,23 +190,31 @@ def plot_nine_fields(elements, x, y, displacement, stress, n_pts, sup_title):
         style_plots()
 
     # Displacment magntiude
-    displacment_magnitude = np.sqrt(displacement[0, :]**2.0 + displacement[1, :]**2.0)
+    displacment_magnitude = np.sqrt(
+        displacement[0, :] ** 2.0 + displacement[1, :] ** 2.0
+    )
 
     # Stress invariants
     stress_first_invariant = stress[0, :] + stress[1, :]
-    stress_second_invariant = stress[0, :] * stress[1, :] - stress[2, :]**2.0
-    stress_third_invariant = np.zeros_like(stress[0, :]) # in 2D
+    stress_second_invariant = stress[0, :] * stress[1, :] - stress[2, :] ** 2.0
+    stress_third_invariant = np.zeros_like(stress[0, :])  # in 2D
 
     plt.figure(figsize=(12, 12))
     n_contours = 10
-    plot_subplot(elements, x, y, 1, displacment_magnitude, n_pts, "displacement magnitude")
+    plot_subplot(
+        elements, x, y, 1, displacment_magnitude, n_pts, "displacement magnitude"
+    )
     plot_subplot(elements, x, y, 2, displacement[0, :], n_pts, "x displacement")
     plot_subplot(elements, x, y, 3, displacement[1, :], n_pts, "y displacement")
     plot_subplot(elements, x, y, 4, stress[0, :], n_pts, "xx stress")
     plot_subplot(elements, x, y, 5, stress[1, :], n_pts, "yy stress")
     plot_subplot(elements, x, y, 6, stress[2, :], n_pts, "xy stress")
-    plot_subplot(elements, x, y, 7, stress_first_invariant, n_pts, "stress first invariant")
-    plot_subplot(elements, x, y, 8, stress_second_invariant, n_pts, "stress second invariant")
+    plot_subplot(
+        elements, x, y, 7, stress_first_invariant, n_pts, "stress first invariant"
+    )
+    plot_subplot(
+        elements, x, y, 8, stress_second_invariant, n_pts, "stress second invariant"
+    )
     # plot_subplot(elements, x, y, 9, stress_third_invariant, "stress third invariant")
     plt.tight_layout()
     plt.suptitle(sup_title)
@@ -235,8 +246,12 @@ def plot_element_geometry(elements):
     y_normal = np.array([_["y_normal"] for _ in elements])
     x_shear = np.array([_["x_shear"] for _ in elements])
     y_shear = np.array([_["y_shear"] for _ in elements])
-    plt.quiver(x_center, y_center, x_normal, y_normal, units="width", color="gray", width=0.002) 
-    plt.quiver(x_center, y_center, x_shear, y_shear, units="width", color="green", width=0.002)       
+    plt.quiver(
+        x_center, y_center, x_normal, y_normal, units="width", color="gray", width=0.002
+    )
+    plt.quiver(
+        x_center, y_center, x_shear, y_shear, units="width", color="green", width=0.002
+    )
 
     for i, element in enumerate(elements):
         plt.text(
@@ -252,7 +267,64 @@ def plot_element_geometry(elements):
     plt.ylabel("y")
     plt.title("element geometry and normals")
     plt.gca().set_aspect("equal")
-    #plt.show(block=False)
+    # plt.show(block=False)
+
+
+def plot_els_geometry(els):
+    """Plot element geometry"""
+    plt.figure()
+    for i in range(len(els.x1)):
+        plt.plot(
+            [els.x1[i], els.x2[i]],
+            [els.y1[i], els.y2[i]],
+            "-",
+            color="r",
+            linewidth=0.5,
+        )
+        plt.plot(
+            [els.x1[i], els.x2[i]],
+            [els.y1[i], els.y2[i]],
+            "r.",
+            markersize=1,
+            linewidth=0.5,
+        )
+
+    # Plot unit normal & shear vectors
+    plt.quiver(
+        els.x_centers,
+        els.y_centers,
+        els.x_normals,
+        els.y_normals,
+        units="width",
+        color="gray",
+        width=0.002,
+    )
+    plt.quiver(
+        els.x_centers,
+        els.y_centers,
+        els.x_shears,
+        els.y_shears,
+        units="width",
+        color="green",
+        width=0.002,
+    )
+
+    for i in range(len(els.x1)):
+        plt.text(
+            els.x_centers[i],
+            els.y_centers[i],
+            str(i),
+            horizontalalignment="center",
+            verticalalignment="center",
+            fontsize=8,
+        )
+
+    plt.xlabel("x")
+    plt.ylabel("y")
+    plt.title("element geometry and normals")
+    plt.gca().set_aspect("equal")
+    plt.show(block=False)
+
 
 def standardize_elements(elements):
     for element in elements:
@@ -1718,55 +1790,60 @@ def get_quadratic_coefficients_for_linear_slip(
     print(f"IN BEMCS - {quadratic_coefficients=}")
     return quadratic_coefficients
 
+
 # Slip functions
 def slip_functions(x, a):
-    """ Get pre-multiplier (L) to quadratic coefficients (x) to compute slip (Lx = slip) at any point on the fault patch"""
+    """Get pre-multiplier (L) to quadratic coefficients (x) to compute slip (Lx = slip) at any point on the fault patch"""
     design_matrix = np.zeros((len(x), 3))
     f1 = (x / a) * (9 * (x / a) / 8 - 3 / 4)
     f2 = (1 - 3 * (x / a) / 2) * (1 + 3 * (x / a) / 2)
     f3 = (x / a) * (9 * (x / a) / 8 + 3 / 4)
-    design_matrix[:,0] = f1
-    design_matrix[:,1] = f2
-    design_matrix[:,2] = f3
+    design_matrix[:, 0] = f1
+    design_matrix[:, 1] = f2
+    design_matrix[:, 2] = f3
     return design_matrix
 
+
 def slip_functions_mean(x):
-    """ Get pre-multiplier (L) to quadratic coefficients (x) to compute average slip (Lx = mean_slip) over the fault patch"""
+    """Get pre-multiplier (L) to quadratic coefficients (x) to compute average slip (Lx = mean_slip) over the fault patch"""
     design_matrix = np.zeros((len(x), 3))
-    f1 = 3/8
-    f2 = 1/4
-    f3 = 3/8
-    design_matrix[:,0] = f1
-    design_matrix[:,1] = f2
-    design_matrix[:,2] = f3
+    f1 = 3 / 8
+    f2 = 1 / 4
+    f3 = 3 / 8
+    design_matrix[:, 0] = f1
+    design_matrix[:, 1] = f2
+    design_matrix[:, 2] = f3
     return design_matrix
+
 
 # Slip gradient functions
 def slipgradient_functions(x, a):
-    """ Get pre-multiplier (L) to quadratic coefficients (x) to compute slip-gradient (Lx = dslip/dx) at any point on the fault patch. 
-    
+    """Get pre-multiplier (L) to quadratic coefficients (x) to compute slip-gradient (Lx = dslip/dx) at any point on the fault patch.
+
     Note that the slip gradient is only along the fault."""
     design_matrix = np.zeros((len(x), 3))
     df_1_dx = (9 * x) / (4 * a**2) - 3 / (4 * a)
     df_2_dx = -(9 * x) / (2 * a**2)
     df_3_dx = (9 * x) / (4 * a**2) + 3 / (4 * a)
-    design_matrix[:,0] = df_1_dx
-    design_matrix[:,1] = df_2_dx
-    design_matrix[:,2] = df_3_dx
+    design_matrix[:, 0] = df_1_dx
+    design_matrix[:, 1] = df_2_dx
+    design_matrix[:, 2] = df_3_dx
     return design_matrix
+
 
 # Compute 3qn coefficients for given slip
 def phicoef(x, slip, a):
-    """ Get quadratic node coefficients for slip specified at the 3 nodes as an ordered set (x,slip) """
-    mat = slip_functions(x,a)
+    """Get quadratic node coefficients for slip specified at the 3 nodes as an ordered set (x,slip)"""
+    mat = slip_functions(x, a)
     return np.linalg.inv(mat) @ slip
+
 
 # compute slip and slip gradients from 3qn coefficients
 def get_slip_slipgradient(x, a, phi):
-    """ Get slip and slip gradient for a given fault patch at any point (x) within the fault
+    """Get slip and slip gradient for a given fault patch at any point (x) within the fault
     from quadratic coefficients (phi)"""
-    slip_mat = slip_functions(x,a)
-    slipgradient_mat = slipgradient_functions(x,a)
+    slip_mat = slip_functions(x, a)
+    slipgradient_mat = slipgradient_functions(x, a)
     slip = slip_mat @ phi
     slipgradient = slipgradient_mat @ phi
     return slip, slipgradient
@@ -1776,7 +1853,8 @@ def get_individualdesignmatrix_3qn(elements):
     """Compute design matrix for a linear system of equations to calculate quadratic coefficients from applied boundary conditions for an ordered list of fault elements.
     The resulting matrix is only for 1 component of slip or slip-gradient. Use get_designmatrix_3qn() for the full matrix.
 
-    This function provides 2 design matrices - (1) for slip at every node, (2) for slip gradients at every node"""
+    This function provides 2 design matrices - (1) for slip at every node, (2) for slip gradients at every node
+    """
 
     designmatrix_slip = np.zeros((3 * len(elements), 3 * len(elements)))
     designmatrix_slipgradient = np.zeros((3 * len(elements), 3 * len(elements)))
@@ -1791,9 +1869,7 @@ def get_individualdesignmatrix_3qn(elements):
         slip_matrix = slip_functions(x_obs, elements[i]["half_length"])
         designmatrix_slip[3 * i : 3 * i + 3, 3 * i : 3 * i + 3] = slip_matrix
 
-        slipgradient_matrix = slipgradient_functions(
-            x_obs, elements[i]["half_length"]
-        )
+        slipgradient_matrix = slipgradient_functions(x_obs, elements[i]["half_length"])
         designmatrix_slipgradient[
             3 * i : 3 * i + 3, 3 * i : 3 * i + 3
         ] = slipgradient_matrix
@@ -1801,12 +1877,12 @@ def get_individualdesignmatrix_3qn(elements):
     return designmatrix_slip, designmatrix_slipgradient
 
 
-def get_designmatrix_xy_3qn(elements,flag="node"):
+def get_designmatrix_xy_3qn(elements, flag="node"):
     """Assemble design matrix in (x,y) coordinate system for 2 slip components (s,n) for a
     linear system of equations to calculate quadratic coefficients from applied boundary conditions for an ordered list of fault elements.
 
     flag = "node" : slip is applied at each node of a fault element
-    
+
     flag = "mean" : slip is applied as a mean value over the entire fault element, not just at nodes
 
     Unit vectors for each patch are used to premultiply the input matrices
@@ -1837,10 +1913,8 @@ def get_designmatrix_xy_3qn(elements,flag="node"):
             slip_matrix = slip_functions_mean(x_obs)
         else:
             raise ValueError("Invalid flag. Use either 'node' or 'mean'.")
-        
-        slipgradient_matrix = slipgradient_functions(
-            x_obs, elements[i]["half_length"]
-        )
+
+        slipgradient_matrix = slipgradient_functions(x_obs, elements[i]["half_length"])
 
         slip_matrixstack[0::2, 0:3] = slip_matrix
         slip_matrixstack[1::2, 3:] = slip_matrix
@@ -1855,6 +1929,7 @@ def get_designmatrix_xy_3qn(elements,flag="node"):
         )
 
     return designmatrix_slip, designmatrix_slipgradient
+
 
 def rotate_displacement_stress(displacement, stress, inverse_rotation_matrix):
     """Rotate displacements stresses from local to global reference frame"""
@@ -2021,7 +2096,9 @@ def compute_tractionkernels(elements, kernels):
     Kxx = kernels[0]
     Kyy = kernels[1]
     Kxy = kernels[2]
-    nrows = np.shape(Kxx)[0] # this is typically the same as number of elements because stress kernels are calculated ONLY at the center of a given element
+    nrows = np.shape(Kxx)[
+        0
+    ]  # this is typically the same as number of elements because stress kernels are calculated ONLY at the center of a given element
     # nrows = len(elements)
     # ncols = np.shape(Kxx)[1]
 
@@ -2036,12 +2113,12 @@ def compute_tractionkernels(elements, kernels):
     ny_matrix = np.zeros_like(Kxx)
 
     # this is definitely incorrect - need to fix
-    nx_matrix[:, 0::3] = nvec[:, 0].reshape(-1,1)
-    nx_matrix[:, 1::3] = nvec[:, 0].reshape(-1,1)
-    nx_matrix[:, 2::3] = nvec[:, 0].reshape(-1,1)
-    ny_matrix[:, 0::3] = nvec[:, 1].reshape(-1,1)
-    ny_matrix[:, 1::3] = nvec[:, 1].reshape(-1,1)
-    ny_matrix[:, 2::3] = nvec[:, 1].reshape(-1,1)
+    nx_matrix[:, 0::3] = nvec[:, 0].reshape(-1, 1)
+    nx_matrix[:, 1::3] = nvec[:, 0].reshape(-1, 1)
+    nx_matrix[:, 2::3] = nvec[:, 0].reshape(-1, 1)
+    ny_matrix[:, 0::3] = nvec[:, 1].reshape(-1, 1)
+    ny_matrix[:, 1::3] = nvec[:, 1].reshape(-1, 1)
+    ny_matrix[:, 2::3] = nvec[:, 1].reshape(-1, 1)
 
     # traction vector t = n.σ
     tx = Kxx * nx_matrix + Kxy * ny_matrix
@@ -2176,3 +2253,75 @@ def plot_displacements_stresses(
     plt.axis("equal")
     plt.title("$\sigma_{xy}$ (1a)")
     plt.show()
+
+
+def initialize_els():
+    els = addict.Dict()
+    els.angles = np.array([])
+    els.lengths = np.array([])
+    els.half_lengths = np.array([])
+    els.x_centers = np.array([])
+    els.y_centers = np.array([])
+    els.rot_mats = np.array([])
+    els.rot_mats_inv = np.array([])
+    els.x_normals = np.array([])
+    els.y_normals = np.array([])
+    els.x_shears = np.array([])
+    els.y_shears = np.array([])
+    els.x_nodes = np.array([])
+    els.y_nodes = np.array([])
+    return els
+
+
+def standardize_els_geometry(els):
+    for i in range(len(els.x1)):
+        dx = els.x2[i] - els.x1[i]
+        dy = els.y2[i] - els.y1[i]
+        magnitude = np.sqrt(dx**2.0 + dy**2.0)
+        els.angles = np.append(els.angles, np.arctan2(dy, dx))
+        els.lengths = np.append(els.lengths, magnitude)
+        els.half_lengths = np.append(els.half_lengths, 0.5 * els.lengths[i])
+        els.x_centers = np.append(els.x_centers, 0.5 * (els.x2[i] + els.x1[i]))
+        els.y_centers = np.append(els.y_centers, 0.5 * (els.y2[i] + els.y1[i]))
+        els.rot_mats = np.append(
+            els.rot_mats,
+            np.array(
+                [
+                    [np.cos(els.angles[i]), -np.sin(els.angles[i])],
+                    [np.sin(els.angles[i]), np.cos(els.angles[i])],
+                ]
+            ),
+        ).reshape(-1, 2, 2)
+        els.rot_mats_inv = np.append(
+            els.rot_mats_inv,
+            np.array(
+                [
+                    [np.cos(-els.angles[i]), -np.sin(-els.angles[i])],
+                    [np.sin(-els.angles[i]), np.cos(-els.angles[i])],
+                ]
+            ),
+        ).reshape(-1, 2, 2)
+        els.x_normals = np.append(els.x_normals, -dy / magnitude)
+        els.y_normals = np.append(els.y_normals, dx / magnitude)
+        els.x_shears = np.append(els.x_shears, dx / magnitude)
+        els.y_shears = np.append(els.y_shears, dy / magnitude)
+        els.x_nodes = np.append(
+            els.x_nodes,
+            np.array(
+                [
+                    els.x_centers[i] - (2 / 3 * dx / 2),
+                    els.x_centers[i],
+                    els.x_centers[i] + (2 / 3 * dx / 2),
+                ]
+            ),
+        ).reshape(-1, 3)
+        els.y_nodes = np.append(
+            els.y_nodes,
+            np.array(
+                [
+                    els.y_centers[i] - (2 / 3 * dy / 2),
+                    els.y_centers[i],
+                    els.y_centers[i] + (2 / 3 * dy / 2),
+                ]
+            ),
+        ).reshape(-1, 3)
