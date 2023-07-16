@@ -5,6 +5,7 @@ from .bemcs import (
     plot_fields,
     plot_element_geometry,
     plot_nine_fields,
+    plot_displacements_stresses,
     standardize_elements,
     discretized_line,
     constant_kernel,

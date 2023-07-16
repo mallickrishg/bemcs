@@ -2049,3 +2049,130 @@ def compute_tractionkernels(elements, kernels):
 
     return tx, ty
 
+
+def plot_displacements_stresses(
+    elements, n_obs, ux, uy, sxx, syy, sxy, x_obs, y_obs, n_skip_plot
+):
+    # Plot displacements
+    plt.figure(figsize=(18, 8))
+    plt.subplot(2, 2, 1)
+    plt.pcolor(
+        x_obs.reshape(n_obs, n_obs),
+        y_obs.reshape(n_obs, n_obs),
+        ux.reshape(n_obs, n_obs),
+        cmap="coolwarm",
+    )
+    for element in elements:
+        plt.plot(
+            [element["x1"], element["x2"]],
+            [element["y1"], element["y2"]],
+            ".-k",
+            linewidth=1.0,
+        )
+    plt.clim(-0.5, 0.5)
+    plt.colorbar()
+    plt.quiver(
+        x_obs[0::n_skip_plot],
+        y_obs[0::n_skip_plot],
+        ux[0::n_skip_plot],
+        uy[0::n_skip_plot],
+    )
+    plt.axis("equal")
+    plt.title("$u_x$ (1a)")
+
+    plt.subplot(2, 2, 2)
+    plt.pcolor(
+        x_obs.reshape(n_obs, n_obs),
+        y_obs.reshape(n_obs, n_obs),
+        uy.reshape(n_obs, n_obs),
+        cmap="coolwarm",
+    )
+    for element in elements:
+        plt.plot(
+            [element["x1"], element["x2"]],
+            [element["y1"], element["y2"]],
+            ".-k",
+            linewidth=1.0,
+        )
+    plt.clim(-0.5, 0.5)
+    plt.colorbar()
+    plt.quiver(
+        x_obs[0::n_skip_plot],
+        y_obs[0::n_skip_plot],
+        ux[0::n_skip_plot],
+        uy[0::n_skip_plot],
+    )
+    plt.title("$u_y$  (1a)")
+    plt.axis("equal")
+
+    # Plot stresses
+    plt.figure(figsize=(22, 6))
+    plt.subplot(2, 3, 1)
+    toplot = sxx
+    plt.contourf(
+        x_obs.reshape(n_obs, n_obs),
+        y_obs.reshape(n_obs, n_obs),
+        toplot.reshape(n_obs, n_obs),
+        levels=np.linspace(-2.5, 2.5, 21),
+        cmap="RdYlBu",
+        vmin=-1.5,
+        vmax=1.5,
+    )
+    for element in elements:
+        plt.plot(
+            [element["x1"], element["x2"]],
+            [element["y1"], element["y2"]],
+            ".-k",
+            linewidth=1.0,
+        )
+    plt.colorbar()
+    plt.clim(-2, 2)
+    plt.axis("equal")
+    plt.title("$\sigma_{xx}$ (1a)")
+
+    plt.subplot(2, 3, 2)
+    toplot = syy
+    plt.contourf(
+        x_obs.reshape(n_obs, n_obs),
+        y_obs.reshape(n_obs, n_obs),
+        toplot.reshape(n_obs, n_obs),
+        levels=np.linspace(-2.5, 2.5, 21),
+        cmap="RdYlBu",
+        vmin=-1.5,
+        vmax=1.5,
+    )
+    for element in elements:
+        plt.plot(
+            [element["x1"], element["x2"]],
+            [element["y1"], element["y2"]],
+            ".-k",
+            linewidth=1.0,
+        )
+    plt.colorbar()
+    plt.clim(-1, 1)
+    plt.axis("equal")
+    plt.title("$\sigma_{yy}$ (1a)")
+
+    plt.subplot(2, 3, 3)
+    toplot = sxy
+    plt.contourf(
+        x_obs.reshape(n_obs, n_obs),
+        y_obs.reshape(n_obs, n_obs),
+        toplot.reshape(n_obs, n_obs),
+        levels=np.linspace(-2.5, 2.5, 21),
+        cmap="RdYlBu",
+        vmin=-1.5,
+        vmax=1.5,
+    )
+    for element in elements:
+        plt.plot(
+            [element["x1"], element["x2"]],
+            [element["y1"], element["y2"]],
+            ".-k",
+            linewidth=1.0,
+        )
+    plt.colorbar()
+    plt.clim(-1, 1)
+    plt.axis("equal")
+    plt.title("$\sigma_{xy}$ (1a)")
+    plt.show()
