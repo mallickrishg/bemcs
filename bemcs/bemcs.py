@@ -2338,7 +2338,7 @@ def plot_displacements_stresses(
         uy[0::n_skip_plot],
     )
     plt.axis("equal")
-    plt.title("$u_x$ (1a)")
+    plt.title("$u_x$")
 
     plt.subplot(2, 2, 2)
     plt.pcolor(
@@ -2362,7 +2362,7 @@ def plot_displacements_stresses(
         ux[0::n_skip_plot],
         uy[0::n_skip_plot],
     )
-    plt.title("$u_y$  (1a)")
+    plt.title("$u_y$")
     plt.axis("equal")
 
     # Plot stresses
@@ -2388,7 +2388,7 @@ def plot_displacements_stresses(
     plt.colorbar()
     plt.clim(-2, 2)
     plt.axis("equal")
-    plt.title("$\sigma_{xx}$ (1a)")
+    plt.title("$\sigma_{xx}$")
 
     plt.subplot(2, 3, 2)
     toplot = syy
@@ -2411,7 +2411,7 @@ def plot_displacements_stresses(
     plt.colorbar()
     plt.clim(-1, 1)
     plt.axis("equal")
-    plt.title("$\sigma_{yy}$ (1a)")
+    plt.title("$\sigma_{yy}$")
 
     plt.subplot(2, 3, 3)
     toplot = sxy
@@ -2434,7 +2434,7 @@ def plot_displacements_stresses(
     plt.colorbar()
     plt.clim(-1, 1)
     plt.axis("equal")
-    plt.title("$\sigma_{xy}$ (1a)")
+    plt.title("$\sigma_{xy}$")
     plt.show()
 
 
@@ -2470,7 +2470,7 @@ def plot_displacements_stresses_els(
         uy[0::n_skip_plot],
     )
     plt.axis("equal")
-    plt.title("$u_x$ (1a)")
+    plt.title("$u_x$")
 
     plt.subplot(2, 2, 2)
     plt.pcolor(
@@ -2495,7 +2495,7 @@ def plot_displacements_stresses_els(
         ux[0::n_skip_plot],
         uy[0::n_skip_plot],
     )
-    plt.title("$u_y$  (1a)")
+    plt.title("$u_y$")
     plt.axis("equal")
 
     # Plot stresses
@@ -2522,7 +2522,7 @@ def plot_displacements_stresses_els(
     plt.colorbar()
     plt.clim(-2, 2)
     plt.axis("equal")
-    plt.title("$\sigma_{xx}$ (1a)")
+    plt.title("$\sigma_{xx}$")
 
     plt.subplot(2, 3, 2)
     toplot = syy
@@ -2546,7 +2546,7 @@ def plot_displacements_stresses_els(
     plt.colorbar()
     plt.clim(-1, 1)
     plt.axis("equal")
-    plt.title("$\sigma_{yy}$ (1a)")
+    plt.title("$\sigma_{yy}$")
 
     plt.subplot(2, 3, 3)
     toplot = sxy
