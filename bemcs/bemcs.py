@@ -1974,9 +1974,9 @@ def get_matrices_slip_slip_gradient(els, flag="node"):
         mat_slip[stride * i : stride * (i + 1), stride * i : stride * (i + 1)] = (
             unit_vec_mat_stack @ slip_mat_stack
         )
-        mat_slip_gradient[stride * i : stride * (i + 1), stride * i : stride * (i + 1)] = (
-            unit_vec_mat_stack @ slip_gradient_mat_stack
-        )
+        mat_slip_gradient[
+            stride * i : stride * (i + 1), stride * i : stride * (i + 1)
+        ] = (unit_vec_mat_stack @ slip_gradient_mat_stack)
     return mat_slip, mat_slip_gradient
 
 
@@ -2165,10 +2165,10 @@ def get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, flag):
     Gy = np.zeros((n_obs, 3 * n_els))
 
     # check for which slip component kernels the user wants
-    if flag == 1:
+    if flag == "shear":
         flag_strike_slip = 1.0
         flag_tensile_slip = 0.0
-    elif flag == 0:
+    elif flag == "normal":
         flag_strike_slip = 0.0
         flag_tensile_slip = 1.0
     else:
@@ -2277,6 +2277,15 @@ def get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, flag):
         Gx[:, index] = displacement_eval[0, :]
         Gy[:, index] = displacement_eval[1, :]
     return Kxx, Kyy, Kxy, Gx, Gy
+
+
+def coeffs_to_disp_stress(kernels_s, kernels_n, coeffs_s, coeffs_n):
+    ux = kernels_s[3] @ coeffs_s + kernels_n[3] @ coeffs_n
+    uy = kernels_s[4] @ coeffs_s + kernels_n[4] @ coeffs_n
+    sxx = kernels_s[0] @ coeffs_s + kernels_n[0] @ coeffs_n
+    syy = kernels_s[1] @ coeffs_s + kernels_n[1] @ coeffs_n
+    sxy = kernels_s[2] @ coeffs_s + kernels_n[2] @ coeffs_n
+    return ux, uy, sxx, syy, sxy
 
 
 def compute_tractionkernels(elements, kernels):
@@ -2441,6 +2450,142 @@ def plot_displacements_stresses(
             ".-k",
             linewidth=1.0,
         )
+    plt.colorbar()
+    plt.clim(-1, 1)
+    plt.axis("equal")
+    plt.title("$\sigma_{xy}$ (1a)")
+    plt.show()
+
+
+def plot_displacements_stresses_els(
+    els, n_obs, ux, uy, sxx, syy, sxy, x_obs, y_obs, n_skip_plot
+):
+    def plot_els(els):
+        n_els = len(els.x1)
+        for i in range(n_els):
+            plt.plot(
+                [els.x1[i], els.x2[i]],
+                [els.y1[i], els.y2[i]],
+                ".-k",
+                linewidth=1.0,
+            )
+
+    # Plot displacements
+    plt.figure(figsize=(18, 8))
+    plt.subplot(2, 2, 1)
+    plt.pcolor(
+        x_obs.reshape(n_obs, n_obs),
+        y_obs.reshape(n_obs, n_obs),
+        ux.reshape(n_obs, n_obs),
+        cmap="coolwarm",
+    )
+    plot_els(els)
+    plt.clim(-0.5, 0.5)
+    plt.colorbar()
+    plt.quiver(
+        x_obs[0::n_skip_plot],
+        y_obs[0::n_skip_plot],
+        ux[0::n_skip_plot],
+        uy[0::n_skip_plot],
+    )
+    plt.axis("equal")
+    plt.title("$u_x$ (1a)")
+
+    plt.subplot(2, 2, 2)
+    plt.pcolor(
+        x_obs.reshape(n_obs, n_obs),
+        y_obs.reshape(n_obs, n_obs),
+        uy.reshape(n_obs, n_obs),
+        cmap="coolwarm",
+    )
+    plot_els(els)
+    # for element in elements:
+    #     plt.plot(
+    #         [element["x1"], element["x2"]],
+    #         [element["y1"], element["y2"]],
+    #         ".-k",
+    #         linewidth=1.0,
+    #     )
+    plt.clim(-0.5, 0.5)
+    plt.colorbar()
+    plt.quiver(
+        x_obs[0::n_skip_plot],
+        y_obs[0::n_skip_plot],
+        ux[0::n_skip_plot],
+        uy[0::n_skip_plot],
+    )
+    plt.title("$u_y$  (1a)")
+    plt.axis("equal")
+
+    # Plot stresses
+    plt.figure(figsize=(22, 6))
+    plt.subplot(2, 3, 1)
+    toplot = sxx
+    plt.contourf(
+        x_obs.reshape(n_obs, n_obs),
+        y_obs.reshape(n_obs, n_obs),
+        toplot.reshape(n_obs, n_obs),
+        levels=np.linspace(-2.5, 2.5, 21),
+        cmap="RdYlBu",
+        vmin=-1.5,
+        vmax=1.5,
+    )
+    plot_els(els)
+    # for element in elements:
+    #     plt.plot(
+    #         [element["x1"], element["x2"]],
+    #         [element["y1"], element["y2"]],
+    #         ".-k",
+    #         linewidth=1.0,
+    #     )
+    plt.colorbar()
+    plt.clim(-2, 2)
+    plt.axis("equal")
+    plt.title("$\sigma_{xx}$ (1a)")
+
+    plt.subplot(2, 3, 2)
+    toplot = syy
+    plt.contourf(
+        x_obs.reshape(n_obs, n_obs),
+        y_obs.reshape(n_obs, n_obs),
+        toplot.reshape(n_obs, n_obs),
+        levels=np.linspace(-2.5, 2.5, 21),
+        cmap="RdYlBu",
+        vmin=-1.5,
+        vmax=1.5,
+    )
+    plot_els(els)
+    # for element in elements:
+    #     plt.plot(
+    #         [element["x1"], element["x2"]],
+    #         [element["y1"], element["y2"]],
+    #         ".-k",
+    #         linewidth=1.0,
+    #     )
+    plt.colorbar()
+    plt.clim(-1, 1)
+    plt.axis("equal")
+    plt.title("$\sigma_{yy}$ (1a)")
+
+    plt.subplot(2, 3, 3)
+    toplot = sxy
+    plt.contourf(
+        x_obs.reshape(n_obs, n_obs),
+        y_obs.reshape(n_obs, n_obs),
+        toplot.reshape(n_obs, n_obs),
+        levels=np.linspace(-2.5, 2.5, 21),
+        cmap="RdYlBu",
+        vmin=-1.5,
+        vmax=1.5,
+    )
+    plot_els(els)
+    # for element in elements:
+    #     plt.plot(
+    #         [element["x1"], element["x2"]],
+    #         [element["y1"], element["y2"]],
+    #         ".-k",
+    #         linewidth=1.0,
+    #     )
     plt.colorbar()
     plt.clim(-1, 1)
     plt.axis("equal")
