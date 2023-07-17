@@ -1931,6 +1931,55 @@ def get_designmatrix_xy_3qn(elements, flag="node"):
     return designmatrix_slip, designmatrix_slipgradient
 
 
+def get_matrices_slip_slip_gradient(els, flag="node"):
+    """Assemble design matrix in (x,y) coordinate system for 2 slip components (s,n) for a
+    linear system of equations to calculate quadratic coefficients from applied boundary conditions for an ordered list of fault elements.
+
+    flag = "node" : slip is applied at each node of a fault element
+    flag = "mean" : slip is applied as a mean value over the entire fault element, not just at nodes
+
+    Unit vectors for each patch are used to premultiply the input matrices
+    [dx nx] [f1 f2 f3 0  0  0]
+    [dy ny] [0  0  0  f1 f2 f3]"""
+
+    stride = 6
+    n_els = len(els.x1)
+    mat_slip = np.zeros((stride * n_els, stride * n_els))
+    mat_slip_gradient = np.zeros_like(mat_slip)
+
+    for i in range(n_els):
+        slip_mat_stack = np.zeros((stride, stride))
+        slip_gradient_mat_stack = np.zeros_like(slip_mat_stack)
+        unit_vec_mat = np.array(
+            [
+                [els.x_shears[i], els.x_normals[i]],
+                [els.y_shears[i], els.y_normals[i]],
+            ]
+        )
+        unit_vec_mat_stack = np.kron(np.eye(3), unit_vec_mat)
+        x_obs = np.array([-els.half_lengths[i], 0.0, els.half_lengths[i]])
+
+        if flag == "node":
+            slip_mat = slip_functions(x_obs, els.half_lengths[i])
+        elif flag == "mean":
+            slip_mat = slip_functions_mean(x_obs)
+        else:
+            raise ValueError("Invalid flag. Use either 'node' or 'mean'.")
+
+        slip_gradient_mat = slipgradient_functions(x_obs, els.half_lengths[i])
+        slip_mat_stack[0::2, 0:3] = slip_mat
+        slip_mat_stack[1::2, 3:] = slip_mat
+        slip_gradient_mat_stack[0::2, 0:3] = slip_gradient_mat
+        slip_gradient_mat_stack[1::2, 3:] = slip_gradient_mat
+        mat_slip[stride * i : stride * (i + 1), stride * i : stride * (i + 1)] = (
+            unit_vec_mat_stack @ slip_mat_stack
+        )
+        mat_slip_gradient[stride * i : stride * (i + 1), stride * i : stride * (i + 1)] = (
+            unit_vec_mat_stack @ slip_gradient_mat_stack
+        )
+    return mat_slip, mat_slip_gradient
+
+
 def rotate_displacement_stress(displacement, stress, inverse_rotation_matrix):
     """Rotate displacements stresses from local to global reference frame"""
     displacement = np.matmul(displacement.T, inverse_rotation_matrix).T
@@ -2083,6 +2132,150 @@ def get_quadratic_displacement_stress_kernel(x_obs, y_obs, elements, mu, nu, fla
         Gx[:, index] = displacement_eval[0, :]
         Gy[:, index] = displacement_eval[1, :]
 
+    return Kxx, Kyy, Kxy, Gx, Gy
+
+
+def get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, flag):
+    """
+    INPUTS
+    x_obs,y_obs - locations to compute kernels
+    elements - provide list of elements (geometry & rotation matrices)
+    mu, nu - Elastic parameters (Shear Modulus, Poisson ratio)
+    flag - 1 for shear, 0 for tensile kernels
+
+    OUTPUTS
+
+    Each stress kernel is a matrix of dimensions
+
+    Kxx = Nobs x 3xNpatches
+    Kyy = Nobs x 3xNpatches
+    Kxy = Nobs x 3xNpatches
+
+    Each displacement kernel is a matrix of dimensions
+
+    Gx = Nobs x 3xNpatches
+    Gy = Nobs x 3xNpatches
+    """
+    n_obs = len(x_obs)
+    n_els = len(els.x1)
+    Kxx = np.zeros((n_obs, 3 * n_els))
+    Kyy = np.zeros((n_obs, 3 * n_els))
+    Kxy = np.zeros((n_obs, 3 * n_els))
+    Gx = np.zeros((n_obs, 3 * n_els))
+    Gy = np.zeros((n_obs, 3 * n_els))
+
+    # check for which slip component kernels the user wants
+    if flag == 1:
+        flag_strike_slip = 1.0
+        flag_tensile_slip = 0.0
+    elif flag == 0:
+        flag_strike_slip = 0.0
+        flag_tensile_slip = 1.0
+    else:
+        raise ValueError("shear/tensile flag must be 1/0, no other values allowed")
+
+    for i in range(n_els):
+        # Center observation locations (no translation needed)
+        x_trans = x_obs - els.x_centers[i]
+        y_trans = y_obs - els.y_centers[i]
+
+        # Rotate observations such that fault element is horizontal
+        rotated_coordinates = els.rot_mats_inv[i, :, :] @ np.vstack(
+            (x_trans.T, y_trans.T)
+        )
+        x_rot = rotated_coordinates[0, :].T + els.x_centers[i]
+        y_rot = rotated_coordinates[1, :].T + els.y_centers[i]
+
+        # Go through each of the 3 components for a given patch
+        # Component 1
+        slip_vector = np.array([1.0, 0.0, 0.0])
+        strike_slip = slip_vector * flag_strike_slip
+        tensile_slip = slip_vector * flag_tensile_slip
+
+        # Calculate displacements and stresses for current element
+        (
+            displacement_local,
+            stress_local,
+        ) = displacements_stresses_quadratic_no_rotation(
+            x_rot,
+            y_rot,
+            els.half_lengths[i],
+            mu,
+            nu,
+            strike_slip,
+            tensile_slip,
+            els.x_centers[i],
+            els.y_centers[i],
+        )
+        displacement_eval, stress_eval = rotate_displacement_stress(
+            displacement_local, stress_local, els.rot_mats_inv[i, :, :]
+        )
+        index = 3 * i
+        Kxx[:, index] = stress_eval[0, :]
+        Kyy[:, index] = stress_eval[1, :]
+        Kxy[:, index] = stress_eval[2, :]
+        Gx[:, index] = displacement_eval[0, :]
+        Gy[:, index] = displacement_eval[1, :]
+
+        # Component 2
+        slip_vector = np.array([0.0, 1.0, 0.0])
+        strike_slip = slip_vector * flag_strike_slip
+        tensile_slip = slip_vector * flag_tensile_slip
+
+        # Calculate displacements and stresses for current element
+        (
+            displacement_local,
+            stress_local,
+        ) = displacements_stresses_quadratic_no_rotation(
+            x_rot,
+            y_rot,
+            els.half_lengths[i],
+            mu,
+            nu,
+            strike_slip,
+            tensile_slip,
+            els.x_centers[i],
+            els.y_centers[i],
+        )
+        displacement_eval, stress_eval = rotate_displacement_stress(
+            displacement_local, stress_local, els.rot_mats_inv[i, :, :]
+        )
+        index = 3 * i + 1
+        Kxx[:, index] = stress_eval[0, :]
+        Kyy[:, index] = stress_eval[1, :]
+        Kxy[:, index] = stress_eval[2, :]
+        Gx[:, index] = displacement_eval[0, :]
+        Gy[:, index] = displacement_eval[1, :]
+
+        # Component 3
+        slip_vector = np.array([0.0, 0.0, 1.0])
+        strike_slip = slip_vector * flag_strike_slip
+        tensile_slip = slip_vector * flag_tensile_slip
+
+        # Calculate displacements and stresses for current element
+        (
+            displacement_local,
+            stress_local,
+        ) = displacements_stresses_quadratic_no_rotation(
+            x_rot,
+            y_rot,
+            els.half_lengths[i],
+            mu,
+            nu,
+            strike_slip,
+            tensile_slip,
+            els.x_centers[i],
+            els.y_centers[i],
+        )
+        displacement_eval, stress_eval = rotate_displacement_stress(
+            displacement_local, stress_local, els.rot_mats_inv[i, :, :]
+        )
+        index = 3 * i + 2
+        Kxx[:, index] = stress_eval[0, :]
+        Kyy[:, index] = stress_eval[1, :]
+        Kxy[:, index] = stress_eval[2, :]
+        Gx[:, index] = displacement_eval[0, :]
+        Gy[:, index] = displacement_eval[1, :]
     return Kxx, Kyy, Kxy, Gx, Gy
 
 

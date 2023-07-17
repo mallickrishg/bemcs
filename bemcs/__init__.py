@@ -28,6 +28,8 @@ from .bemcs import (
     initialize_els,
     standardize_els_geometry,
     plot_els_geometry,
+    get_matrices_slip_slip_gradient,
+    get_displacement_stress_kernel,
 )
 
 try:
