@@ -2136,33 +2136,14 @@ def get_quadratic_displacement_stress_kernel(x_obs, y_obs, elements, mu, nu, fla
 
 
 def get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, flag):
-    """
-    INPUTS
-    x_obs,y_obs - locations to compute kernels
-    elements - provide list of elements (geometry & rotation matrices)
-    mu, nu - Elastic parameters (Shear Modulus, Poisson ratio)
-    flag - 1 for shear, 0 for tensile kernels
-
-    OUTPUTS
-
-    Each stress kernel is a matrix of dimensions
-
-    Kxx = Nobs x 3xNpatches
-    Kyy = Nobs x 3xNpatches
-    Kxy = Nobs x 3xNpatches
-
-    Each displacement kernel is a matrix of dimensions
-
-    Gx = Nobs x 3xNpatches
-    Gy = Nobs x 3xNpatches
-    """
     n_obs = len(x_obs)
     n_els = len(els.x1)
-    Kxx = np.zeros((n_obs, 3 * n_els))
-    Kyy = np.zeros((n_obs, 3 * n_els))
-    Kxy = np.zeros((n_obs, 3 * n_els))
-    Gx = np.zeros((n_obs, 3 * n_els))
-    Gy = np.zeros((n_obs, 3 * n_els))
+
+    kernel_ux = np.zeros((n_obs, 3 * n_els))
+    kernel_uy = np.zeros((n_obs, 3 * n_els))
+    kernel_sxx = np.zeros((n_obs, 3 * n_els))
+    kernel_syy = np.zeros((n_obs, 3 * n_els))
+    kernel_sxy = np.zeros((n_obs, 3 * n_els))
 
     # check for which slip component kernels the user wants
     if flag == "shear":
@@ -2172,7 +2153,7 @@ def get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, flag):
         flag_strike_slip = 0.0
         flag_tensile_slip = 1.0
     else:
-        raise ValueError("shear/tensile flag must be 1/0, no other values allowed")
+        raise ValueError("shear/tensile flag must be 'shear' or 'normal', no other values allowed")
 
     for i in range(n_els):
         # Center observation locations (no translation needed)
@@ -2211,11 +2192,11 @@ def get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, flag):
             displacement_local, stress_local, els.rot_mats_inv[i, :, :]
         )
         index = 3 * i
-        Kxx[:, index] = stress_eval[0, :]
-        Kyy[:, index] = stress_eval[1, :]
-        Kxy[:, index] = stress_eval[2, :]
-        Gx[:, index] = displacement_eval[0, :]
-        Gy[:, index] = displacement_eval[1, :]
+        kernel_sxx[:, index] = stress_eval[0, :]
+        kernel_syy[:, index] = stress_eval[1, :]
+        kernel_sxy[:, index] = stress_eval[2, :]
+        kernel_ux[:, index] = displacement_eval[0, :]
+        kernel_uy[:, index] = displacement_eval[1, :]
 
         # Component 2
         slip_vector = np.array([0.0, 1.0, 0.0])
@@ -2241,11 +2222,11 @@ def get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, flag):
             displacement_local, stress_local, els.rot_mats_inv[i, :, :]
         )
         index = 3 * i + 1
-        Kxx[:, index] = stress_eval[0, :]
-        Kyy[:, index] = stress_eval[1, :]
-        Kxy[:, index] = stress_eval[2, :]
-        Gx[:, index] = displacement_eval[0, :]
-        Gy[:, index] = displacement_eval[1, :]
+        kernel_sxx[:, index] = stress_eval[0, :]
+        kernel_syy[:, index] = stress_eval[1, :]
+        kernel_sxy[:, index] = stress_eval[2, :]
+        kernel_ux[:, index] = displacement_eval[0, :]
+        kernel_uy[:, index] = displacement_eval[1, :]
 
         # Component 3
         slip_vector = np.array([0.0, 0.0, 1.0])
@@ -2271,12 +2252,12 @@ def get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, flag):
             displacement_local, stress_local, els.rot_mats_inv[i, :, :]
         )
         index = 3 * i + 2
-        Kxx[:, index] = stress_eval[0, :]
-        Kyy[:, index] = stress_eval[1, :]
-        Kxy[:, index] = stress_eval[2, :]
-        Gx[:, index] = displacement_eval[0, :]
-        Gy[:, index] = displacement_eval[1, :]
-    return Kxx, Kyy, Kxy, Gx, Gy
+        kernel_sxx[:, index] = stress_eval[0, :]
+        kernel_syy[:, index] = stress_eval[1, :]
+        kernel_sxy[:, index] = stress_eval[2, :]
+        kernel_ux[:, index] = displacement_eval[0, :]
+        kernel_uy[:, index] = displacement_eval[1, :]
+    return kernel_sxx, kernel_syy, kernel_sxy, kernel_ux, kernel_uy
 
 
 def coeffs_to_disp_stress(kernels_s, kernels_n, coeffs_s, coeffs_n):
