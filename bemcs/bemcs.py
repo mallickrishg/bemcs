@@ -24,11 +24,11 @@ def plot_fields_no_elements(x, y, displacement, stress, sup_title):
             y,
             field.reshape(x.shape),
             n_contours,
-            vmin=-scale * field_max,
-            vmax=scale * field_max,
+            # vmin=-scale * field_max,
+            # vmax=scale * field_max,
             cmap=plt.get_cmap("RdYlBu"),
         )
-        plt.clim(-scale * field_max, scale * field_max)
+        # plt.clim(-scale * field_max, scale * field_max)
         plt.colorbar(fraction=0.046, pad=0.04, extend="both")
 
         plt.contour(
@@ -36,8 +36,8 @@ def plot_fields_no_elements(x, y, displacement, stress, sup_title):
             y,
             field.reshape(x.shape),
             n_contours,
-            vmin=-scale * field_max,
-            vmax=scale * field_max,
+            # vmin=-scale * field_max,
+            # vmax=scale * field_max,
             linewidths=0.25,
             colors="k",
         )
@@ -84,11 +84,11 @@ def plot_fields(elements, x, y, displacement, stress, sup_title):
             y,
             field.reshape(x.shape),
             n_contours,
-            vmin=-scale * field_max,
-            vmax=scale * field_max,
+            # vmin=-scale * field_max,
+            # vmax=scale * field_max,
             cmap=plt.get_cmap("RdYlBu"),
         )
-        plt.clim(-scale * field_max, scale * field_max)
+        # plt.clim(-scale * field_max, scale * field_max)
         plt.colorbar(fraction=0.046, pad=0.04, extend="both")
 
         plt.contour(
@@ -96,8 +96,8 @@ def plot_fields(elements, x, y, displacement, stress, sup_title):
             y,
             field.reshape(x.shape),
             n_contours,
-            vmin=-scale * field_max,
-            vmax=scale * field_max,
+            # vmin=-scale * field_max,
+            # vmax=scale * field_max,
             linewidths=0.25,
             colors="k",
         )
@@ -161,11 +161,11 @@ def plot_nine_fields(elements, x, y, displacement, stress, n_pts, sup_title):
             y.reshape(n_pts, n_pts),
             field.reshape(n_pts, n_pts),
             n_contours,
-            vmin=-scale * field_max,
-            vmax=scale * field_max,
+            # vmin=-scale * field_max,
+            # vmax=scale * field_max,
             cmap=plt.get_cmap("RdYlBu"),
         )
-        plt.clim(-scale * field_max, scale * field_max)
+        # plt.clim(-scale * field_max, scale * field_max)
         plt.colorbar(fraction=0.046, pad=0.04, extend="both")
 
         plt.contour(
@@ -173,8 +173,8 @@ def plot_nine_fields(elements, x, y, displacement, stress, n_pts, sup_title):
             y.reshape(n_pts, n_pts),
             field.reshape(n_pts, n_pts),
             n_contours,
-            vmin=-scale * field_max,
-            vmax=scale * field_max,
+            # vmin=-scale * field_max,
+            # vmax=scale * field_max,
             linewidths=0.25,
             colors="k",
         )
@@ -2329,7 +2329,7 @@ def plot_displacements_stresses(
             ".-k",
             linewidth=1.0,
         )
-    plt.clim(-0.5, 0.5)
+    # plt.clim(-0.5, 0.5)
     plt.colorbar()
     plt.quiver(
         x_obs[0::n_skip_plot],
@@ -2354,7 +2354,7 @@ def plot_displacements_stresses(
             ".-k",
             linewidth=1.0,
         )
-    plt.clim(-0.5, 0.5)
+    # plt.clim(-0.5, 0.5)
     plt.colorbar()
     plt.quiver(
         x_obs[0::n_skip_plot],
@@ -2375,8 +2375,8 @@ def plot_displacements_stresses(
         toplot.reshape(n_obs, n_obs),
         levels=np.linspace(-2.5, 2.5, 21),
         cmap="RdYlBu",
-        vmin=-1.5,
-        vmax=1.5,
+        # vmin=-1.5,
+        # vmax=1.5,
     )
     for element in elements:
         plt.plot(
@@ -2386,7 +2386,7 @@ def plot_displacements_stresses(
             linewidth=1.0,
         )
     plt.colorbar()
-    plt.clim(-2, 2)
+    # plt.clim(-2, 2)
     plt.axis("equal")
     plt.title("$\sigma_{xx}$")
 
@@ -2398,8 +2398,8 @@ def plot_displacements_stresses(
         toplot.reshape(n_obs, n_obs),
         levels=np.linspace(-2.5, 2.5, 21),
         cmap="RdYlBu",
-        vmin=-1.5,
-        vmax=1.5,
+        # vmin=-1.5,
+        # vmax=1.5,
     )
     for element in elements:
         plt.plot(
@@ -2409,7 +2409,7 @@ def plot_displacements_stresses(
             linewidth=1.0,
         )
     plt.colorbar()
-    plt.clim(-1, 1)
+    # plt.clim(-1, 1)
     plt.axis("equal")
     plt.title("$\sigma_{yy}$")
 
@@ -2421,8 +2421,8 @@ def plot_displacements_stresses(
         toplot.reshape(n_obs, n_obs),
         levels=np.linspace(-2.5, 2.5, 21),
         cmap="RdYlBu",
-        vmin=-1.5,
-        vmax=1.5,
+        # vmin=-1.5,
+        # vmax=1.5,
     )
     for element in elements:
         plt.plot(
@@ -2432,7 +2432,7 @@ def plot_displacements_stresses(
             linewidth=1.0,
         )
     plt.colorbar()
-    plt.clim(-1, 1)
+    # plt.clim(-1, 1)
     plt.axis("equal")
     plt.title("$\sigma_{xy}$")
     plt.show()
@@ -2453,42 +2453,52 @@ def plot_displacements_stresses_els(
 
     # Plot displacements
     plt.figure(figsize=(18, 8))
-    plt.subplot(2, 2, 1)
-    plt.pcolor(
+    plt.subplot(2, 3, 1)
+    plt.contourf(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         ux.reshape(n_obs, n_obs),
         cmap="coolwarm",
     )
-    plot_els(els)
-    plt.clim(-0.5, 0.5)
     plt.colorbar()
+    plt.contour(
+        x_obs.reshape(n_obs, n_obs),
+        y_obs.reshape(n_obs, n_obs),
+        ux.reshape(n_obs, n_obs),
+        linewidths=0.25,
+        colors="k",
+    )
+    plot_els(els)
+    plt.xlim([np.min(x_obs), np.max(x_obs)])
+    plt.ylim([np.min(y_obs), np.max(y_obs)])
+    plt.gca().set_aspect("equal", adjustable="box")
     plt.quiver(
         x_obs[0::n_skip_plot],
         y_obs[0::n_skip_plot],
         ux[0::n_skip_plot],
         uy[0::n_skip_plot],
     )
-    plt.axis("equal")
     plt.title("$u_x$")
 
-    plt.subplot(2, 2, 2)
-    plt.pcolor(
+    plt.subplot(2, 3, 2)
+    plt.contourf(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         uy.reshape(n_obs, n_obs),
         cmap="coolwarm",
     )
-    plot_els(els)
-    # for element in elements:
-    #     plt.plot(
-    #         [element["x1"], element["x2"]],
-    #         [element["y1"], element["y2"]],
-    #         ".-k",
-    #         linewidth=1.0,
-    #     )
-    plt.clim(-0.5, 0.5)
     plt.colorbar()
+    plt.contour(
+        x_obs.reshape(n_obs, n_obs),
+        y_obs.reshape(n_obs, n_obs),
+        uy.reshape(n_obs, n_obs),
+        linewidths=0.25,
+        colors="k",
+    )
+    plot_els(els)
+    plt.xlim([np.min(x_obs), np.max(x_obs)])
+    plt.ylim([np.min(y_obs), np.max(y_obs)])
+    plt.gca().set_aspect("equal", adjustable="box")
     plt.quiver(
         x_obs[0::n_skip_plot],
         y_obs[0::n_skip_plot],
@@ -2496,81 +2506,73 @@ def plot_displacements_stresses_els(
         uy[0::n_skip_plot],
     )
     plt.title("$u_y$")
-    plt.axis("equal")
 
     # Plot stresses
-    plt.figure(figsize=(22, 6))
-    plt.subplot(2, 3, 1)
+    plt.subplot(2, 3, 4)
     toplot = sxx
     plt.contourf(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         toplot.reshape(n_obs, n_obs),
-        levels=np.linspace(-2.5, 2.5, 21),
         cmap="RdYlBu",
-        vmin=-1.5,
-        vmax=1.5,
+    )
+    plt.colorbar()
+    plt.contour(
+        x_obs.reshape(n_obs, n_obs),
+        y_obs.reshape(n_obs, n_obs),
+        toplot.reshape(n_obs, n_obs),
+        linewidths=0.25,
+        colors="k",
     )
     plot_els(els)
-    # for element in elements:
-    #     plt.plot(
-    #         [element["x1"], element["x2"]],
-    #         [element["y1"], element["y2"]],
-    #         ".-k",
-    #         linewidth=1.0,
-    #     )
-    plt.colorbar()
-    plt.clim(-2, 2)
-    plt.axis("equal")
+    plt.xlim([np.min(x_obs), np.max(x_obs)])
+    plt.ylim([np.min(y_obs), np.max(y_obs)])
+    plt.gca().set_aspect("equal", adjustable="box")
     plt.title("$\sigma_{xx}$")
 
-    plt.subplot(2, 3, 2)
+    plt.subplot(2, 3, 5)
     toplot = syy
     plt.contourf(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         toplot.reshape(n_obs, n_obs),
-        levels=np.linspace(-2.5, 2.5, 21),
         cmap="RdYlBu",
-        vmin=-1.5,
-        vmax=1.5,
+    )
+    plt.colorbar()
+    plt.contour(
+        x_obs.reshape(n_obs, n_obs),
+        y_obs.reshape(n_obs, n_obs),
+        toplot.reshape(n_obs, n_obs),
+        linewidths=0.25,
+        colors="k",
     )
     plot_els(els)
-    # for element in elements:
-    #     plt.plot(
-    #         [element["x1"], element["x2"]],
-    #         [element["y1"], element["y2"]],
-    #         ".-k",
-    #         linewidth=1.0,
-    #     )
-    plt.colorbar()
-    plt.clim(-1, 1)
-    plt.axis("equal")
+    plt.xlim([np.min(x_obs), np.max(x_obs)])
+    plt.ylim([np.min(y_obs), np.max(y_obs)])
+    plt.gca().set_aspect("equal", adjustable="box")
     plt.title("$\sigma_{yy}$")
 
-    plt.subplot(2, 3, 3)
+    plt.subplot(2, 3, 6)
     toplot = sxy
     plt.contourf(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         toplot.reshape(n_obs, n_obs),
-        levels=np.linspace(-2.5, 2.5, 21),
         cmap="RdYlBu",
-        vmin=-1.5,
-        vmax=1.5,
+    )
+    plt.colorbar()
+    plt.contour(
+        x_obs.reshape(n_obs, n_obs),
+        y_obs.reshape(n_obs, n_obs),
+        toplot.reshape(n_obs, n_obs),
+        linewidths=0.25,
+        colors="k",
     )
     plot_els(els)
-    # for element in elements:
-    #     plt.plot(
-    #         [element["x1"], element["x2"]],
-    #         [element["y1"], element["y2"]],
-    #         ".-k",
-    #         linewidth=1.0,
-    #     )
-    plt.colorbar()
-    plt.clim(-1, 1)
-    plt.axis("equal")
-    plt.title("$\sigma_{xy}$ (1a)")
+    plt.xlim([np.min(x_obs), np.max(x_obs)])
+    plt.ylim([np.min(y_obs), np.max(y_obs)])
+    plt.gca().set_aspect("equal", adjustable="box")
+    plt.title("$\sigma_{xy}$")
     plt.show()
 
 
