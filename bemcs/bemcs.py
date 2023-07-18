@@ -1785,9 +1785,7 @@ def get_quadratic_coefficients_for_linear_slip(
     physical_displacements = np.array(
         [end_displacement_1, center_displacment, end_displacement_2]
     )
-    print(f"IN BEMCS - {physical_displacements=}")
     quadratic_coefficients = phicoef(node_coordinates, physical_displacements, a)
-    print(f"IN BEMCS - {quadratic_coefficients=}")
     return quadratic_coefficients
 
 
