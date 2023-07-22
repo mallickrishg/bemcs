@@ -53,66 +53,53 @@ axis("equal")
 colormap(parula(10))
 title("analytical solution")
 
-%% numerical integration
-% Uniform numeric integration
+%% numerical integration (GL quadrature)
+
 ux_numeric_mat_total = zeros(size(x_mat));
 ux_numeric_mat = zeros(size(x_mat));
-point_vec = linspace(-1.0, 1.0, 100);
+% point_vec = linspace(-1.0, 1.0, 100);
 y0 = 0;
 
+N_gl = 39;
+[xk,wk] = calc_gausslegendre_weights(N_gl);
 tic
-for k=1:numel(point_vec)
+for k=1:numel(xk)
     for i=1:n_pts
         for j=1:n_pts
-            [n_ux, ~] = kelvin_point(x_mat(i, j), y_mat(i, j), point_vec(k), y0, 1, 0, 1, 0.25);
-            ux_numeric_mat(i, j) = n_ux;
+            [n_ux, ~] = kelvin_point(x_mat(i, j), y_mat(i, j), xk(k), y0, 1, 0, 1, 0.25);
+            ux_numeric_mat(i, j) = n_ux*wk(k);
         end
     end
     ux_numeric_mat_total = ux_numeric_mat_total + ux_numeric_mat;
 end
 toc
-ux_numeric_mat_total = ux_numeric_mat_total / numel(point_vec);
 
 figure(2),clf
-contourf(x_mat, y_mat, ux_numeric_mat_total)
+
+subplot(3,1,1)
+contourf(x_mat, y_mat, ux_mat)
 colorbar;
-clim([-1,1].*max(abs(ux_numeric_mat_total(:))))
+clim([-1,1].*max(abs(ux_mat(:))))
 axis("equal")
 colormap(parula(10))
-title("uniform numerical integration")
+title("analytical solution")
 
-%% testing
-% Define the function f(x, y)
-f = @(x, y) 1./(x.^2 + y.^2).^(0.5);
+subplot(3,1,2)
+contourf(x_mat, y_mat, ux_numeric_mat_total)
+colorbar;
+clim([-1,1].*max(abs(ux_mat(:))))
+axis("equal")
+colormap(parula(10))
+title(['Gauss-Legendre numerical integration of order ' num2str(N_gl)])
 
-% Define the limits of integration
-x_min = -1;  % Minimum x value
-x_max = 1;   % Maximum x value
-y_min = -1; % Minimum y value (adjust as needed for the non-point source region)
-y_max = 1;  % Maximum y value (adjust as needed for the non-point source region)
-
-% Perform the double integral using integral2
-result_point_sources = integral2(@(x, y) f(x, y) .* is_within_point_sources(x, y), x_min, x_max, y_min, y_max, 'AbsTol', 1e-8);
-result_non_point_sources = integral2(@(x, y) f(x, y) .* ~is_within_point_sources(x, y), x_min, x_max, y_min, y_max, 'AbsTol', 1e-8);
-
-% Combine the results
-result = result_point_sources + result_non_point_sources;
-
-disp(['The result of the double integral is: ', num2str(result)]);
-
-% Function to check if the point (x, y) is within the region of the point sources
-function inside = is_within_point_sources(x, y)
-    % Define the x-range of the point sources
-    x_min_sources = -1;
-    x_max_sources = 1;
-    
-    % Define the y-range of the point sources
-    y_min_sources = 0;
-    y_max_sources = 0;
-    
-    % Check if the point (x, y) is within the region of the point sources
-    inside = (x >= x_min_sources) & (x <= x_max_sources) & (y >= y_min_sources) & (y <= y_max_sources);
-end
+% plot residuals as % of analytical solution
+subplot(3,1,3)
+contourf(x_mat, y_mat, 100.*(ux_mat - ux_numeric_mat_total)./ux_mat)
+cb=colorbar;cb.Label.String = '% residuals';
+clim([-1,1].*10)
+axis("equal")
+colormap(parula(10))
+set(gca,'Fontsize',15)
 
 %% define kelvin point source function
 function [ux, sxx] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy, mu, nu)
