@@ -82,19 +82,31 @@ else
 end
 %% numerical integration (GL quadrature)
 
-ux_numeric_mat_total = zeros(size(x_mat));
+ux_numeric_GL = zeros(size(x_mat));
+ux_numeric_GL2 = zeros(size(x_mat));
 ux_numeric_mat = zeros(size(x_mat));
 % point_vec = linspace(-1.0, 1.0, 100);
 y0 = 0;
 
-N_gl = 15;
+N_gl = 11;
 [xk,wk] = calc_gausslegendre_weights(N_gl);
 
 tic
 for k=1:numel(xk)
     [n_ux, ~] = kelvin_point(x_mat, y_mat, xk(k), y0, 1, 0, 1, 0.25);
     ux_numeric_mat = n_ux.*wk(k);
-    ux_numeric_mat_total = ux_numeric_mat_total + ux_numeric_mat;
+    ux_numeric_GL = ux_numeric_GL + ux_numeric_mat;
+end
+toc
+
+N_gl = 39;
+[xk,wk] = calc_gausslegendre_weights(N_gl);
+
+tic
+for k=1:numel(xk)
+    [n_ux, ~] = kelvin_point(x_mat, y_mat, xk(k), y0, 1, 0, 1, 0.25);
+    ux_numeric_mat = n_ux.*wk(k);
+    ux_numeric_GL2 = ux_numeric_GL2 + ux_numeric_mat;
 end
 toc
 
@@ -110,7 +122,7 @@ if eval_type==1
     set(gca,'Fontsize',12)
 
     subplot(3,1,2)
-    contourf(x_mat, y_mat, ux_numeric_mat_total)
+    contourf(x_mat, y_mat, ux_numeric_GL)
     colorbar;
     clim([-1,1].*max(abs(ux_mat(:))))
     axis("equal")
@@ -120,7 +132,7 @@ if eval_type==1
 
     % plot residuals as % of analytical solution
     subplot(3,1,3)
-    contourf(x_mat, y_mat, 100.*(ux_mat - ux_numeric_mat_total)./ux_mat)
+    contourf(x_mat, y_mat, 100.*(ux_mat - ux_numeric_GL)./ux_mat)
     cb=colorbar;cb.Label.String = '% residuals';
     clim([-1,1].*10)
     axis("equal")
@@ -129,12 +141,13 @@ if eval_type==1
     set(gca,'Fontsize',12)
 else
     plot(x_mat,ux_mat,'-','LineWidth',4), hold on
-    plot(x_mat,ux_numeric_mat_total,'-','LineWidth',2)
+    plot(x_mat,ux_numeric_GL,'-','LineWidth',1)
+    plot(x_mat,ux_numeric_GL2,'k-','LineWidth',1)
     plot([-1,1],[0,0],'k-','Linewidth',2)
     axis tight, grid on
     xlabel('x'), ylabel('u_x(x)')
     % ylim([-1,1].*max(abs(ux_mat(:)))*1.1)
-    legend('analytical','GL-quadrature')
+    legend('analytical','GL-quadrature (small N)','GL-quadrature (large N)')
     set(gca,'FontSize',15)
 end
 
