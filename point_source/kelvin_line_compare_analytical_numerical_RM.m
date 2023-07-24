@@ -118,8 +118,8 @@ ux_numeric_TS = zeros(size(x_mat));
 uy_numeric_TS = zeros(size(x_mat));
 
 % numerical solution
-h=0.1;
-n=fix(1/h*3);
+h=0.05;% step size for tanh-sinh
+n=fix(2/h);
 
 for k=-n:n    
     wk=(0.5*h*pi*cosh(k*h))./(cosh(0.5*pi*sinh(k*h))).^2;
