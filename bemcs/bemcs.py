@@ -2359,6 +2359,47 @@ def compute_tractionkernels(elements, kernels):
 
     return tx, ty
 
+def get_traction_kernels(els, kernels):
+    """Function to calculate kernels of traction vector from a set of stress kernels and unit vectors.
+
+    Provide elements as a list with ["x_normal"] & ["y_normal"] for the unit normal vector.
+
+    kernels must be provided as kernels[0] = Kxx, kernels[1] = Kyy, kernels[2] = Kxy
+    """
+    Kxx = kernels[0]
+    Kyy = kernels[1]
+    Kxy = kernels[2]
+    nrows = np.shape(Kxx)[
+        0
+    ]  # this is typically the same as number of elements because stress kernels are calculated ONLY at the center of a given element
+    # nrows = len(elements)
+    # ncols = np.shape(Kxx)[1]
+
+    tx = np.zeros_like(Kxx)
+    ty = np.zeros_like(Kxx)
+    # unit vector in normal direction
+    nvec = np.zeros((nrows, 2))
+    # for i in range(nrows):
+    #     nvec[i, :] = np.array((elements[i]["x_normal"], elements[i]["y_normal"]))
+
+    for i in range(nrows):
+        nvec[i, :] = np.array([els.x_normals[i], els.y_normals[i]])
+    nx_matrix = np.zeros_like(Kxx)
+    ny_matrix = np.zeros_like(Kxx)
+
+    # TODO: This is definitely incorrect - need to fix
+    nx_matrix[:, 0::3] = nvec[:, 0].reshape(-1, 1)
+    nx_matrix[:, 1::3] = nvec[:, 0].reshape(-1, 1)
+    nx_matrix[:, 2::3] = nvec[:, 0].reshape(-1, 1)
+    ny_matrix[:, 0::3] = nvec[:, 1].reshape(-1, 1)
+    ny_matrix[:, 1::3] = nvec[:, 1].reshape(-1, 1)
+    ny_matrix[:, 2::3] = nvec[:, 1].reshape(-1, 1)
+
+    # traction vector t = n.σ
+    tx = Kxx * nx_matrix + Kxy * ny_matrix
+    ty = Kxy * nx_matrix + Kyy * ny_matrix
+    return tx, ty
+
 
 def plot_displacements_stresses(
     elements, n_obs, ux, uy, sxx, syy, sxy, x_obs, y_obs, n_skip_plot
@@ -2564,7 +2605,7 @@ def plot_displacements_stresses_els(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         toplot.reshape(n_obs, n_obs),
-        cmap="RdYlBu",
+        cmap="RdYlBu_r",
     )
     plt.colorbar()
     plt.contour(
@@ -2586,7 +2627,7 @@ def plot_displacements_stresses_els(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         toplot.reshape(n_obs, n_obs),
-        cmap="RdYlBu",
+        cmap="RdYlBu_r",
     )
     plt.colorbar()
     plt.contour(
@@ -2608,7 +2649,7 @@ def plot_displacements_stresses_els(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         toplot.reshape(n_obs, n_obs),
-        cmap="RdYlBu",
+        cmap="RdYlBu_r",
     )
     plt.colorbar()
     plt.contour(
