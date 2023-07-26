@@ -11,16 +11,16 @@ clear
 mu_val = 1;
 nu_val = 0.25;
 
-fx_val = 0;
+fx_val = 1;
 fy_val = -1;
 y0_val = 0;
 
 % provide plotting type (2-d grid or 1-d line)
 % 0 - line, 
 % 1 - xy grid
-eval_type = 1;
+eval_type = 0;
 
-n_pts = 51;
+n_pts = 1001;
 x_vec = linspace(-2, 2, n_pts);
 y_vec = linspace(-1.5, 1.5, n_pts);
 
@@ -136,7 +136,7 @@ for k=-n:n
     uy_numeric_TS = uy_numeric_TS + n_uy.*wk;
 end
 
-%% compute solution using integral
+%% compute solution using integral (adaptive quadrature)
 ux_numeric_int = zeros(size(x_mat));
 uy_numeric_int = zeros(size(x_mat));
 

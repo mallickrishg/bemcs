@@ -27,7 +27,7 @@ fy_val = -1;
 eval_type = 1;
 
 n_pts = 100;
-x_vec = linspace(-2, 2, n_pts);
+x_vec = linspace(-4, 4, n_pts);
 y_vec = linspace(-1.5, 1.5, n_pts);
 
 if eval_type == 1
@@ -41,7 +41,7 @@ end
 %% rectangle domain
 n_eval = 4; % must be an even number
 
-rectangle_x = 2*ones(n_eval,1);
+rectangle_x = 1*ones(n_eval,1);
 rectangle_y = logspace(-1,0,n_eval)';
 
 %% numerical integration (with matlab integral)
