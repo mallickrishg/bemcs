@@ -24,7 +24,6 @@ from .bemcs import (
     get_designmatrix_xy_3qn,
     rotate_displacement_stress,
     get_quadratic_displacement_stress_kernel,
-    compute_tractionkernels,
     initialize_els,
     standardize_els_geometry,
     plot_els_geometry,
