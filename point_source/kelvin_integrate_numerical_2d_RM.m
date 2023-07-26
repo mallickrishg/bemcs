@@ -1,32 +1,16 @@
+% using matlab's adaptive integral to solve the Kelvin integral over a 2-d
+% triangular source
+% 
+% Rishav Mallick, 2023, Caltech Seismolab
+
 clear 
 
-% construct the source
-A = [-1,0];
-B = [1,0];
-C = [0,1];
-
-% unit vectors
-nA = [C(2)-B(2);
-      B(1)-C(1)]/norm(C-B);
-nB = [C(2)-A(2);
-      A(1)-C(1)]/norm(C-A);
-nC = [B(2)-A(2);
-      A(1)-B(1)]/norm(B-A);
-  
-% check that unit vectors are pointing outward
-if (nA'*(A(:)-(B(:)+C(:))/2))>0
-    nA=-nA;
-end
-if (nB'*(B(:)-(A(:)+C(:))/2))>0
-    nB=-nB;
-end
-if (nC'*(C(:)-(A(:)+B(:))/2))>0
-    nC=-nC;
-end
-
-% parameterized line integral
-y2=@(t,A,B) (A(1)+B(1))/2+t*(B(1)-A(1))/2;
-y3=@(t,A,B) (A(2)+B(2))/2+t*(B(2)-A(2))/2;
+% need to provide this triangle in terms of a double integral over x and f(x)
+% default experiment sets a triangle with a base from -1<=x<=1, and provide
+% y(x) as a function
+ymax = @(x) (1-abs(x));% defines the shape of a triangle
+% In this script I don't use triangles - but am simple playing with various
+% size of rectangles
 
 %% Set model parameters 
 % Elasticity parameters
@@ -35,14 +19,13 @@ nu_val = 0.25;
 
 fx_val = 0;
 fy_val = -1;
-y0_val = 0;
 
 % provide plotting type (2-d grid or 1-d line)
 % 0 - line, 
 % 1 - xy grid
 eval_type = 1;
 
-n_pts = 100;
+n_pts = 101;
 x_vec = linspace(-2, 2, n_pts);
 y_vec = linspace(-1.5, 1.5, n_pts);
 
@@ -54,66 +37,97 @@ else
     x_mat = x_vec;
     y_mat = x_vec.*0;
 end
+%% rectangle domain
+n_eval = 6; % must be an even number
 
-%% need to construct this function correctly
-% construct function for integration
-Int_func_x = @(t) ...
-    (fx_val*nC(1)+fy_val*nC(2)) * norm(B-A) .* Greenfunc_x(y2(t,A,B),y3(t,A,B)) ...
-   +(fx_val*nA(1)+fy_val*nA(2)) * norm(C-B) .* Greenfunc_x(y2(t,B,C),y3(t,B,C)) ...
-   +(fx_val*nB(1)+fy_val*nB(2)) * norm(A-C) .* Greenfunc_x(y2(t,C,A),y3(t,C,A));
+rectangle_x = 2*ones(n_eval,1);
+rectangle_y = linspace(0.1,1,n_eval)';
 
-Int_func_y = @(t) ...
-    (fx_val*nC(1)+fy_val*nC(2)) * norm(B-A) .* Greenfunc_y(y2(t,A,B),y3(t,A,B)) ...
-   +(fx_val*nA(1)+fy_val*nA(2)) * norm(C-B) .* Greenfunc_y(y2(t,B,C),y3(t,B,C)) ...
-   +(fx_val*nB(1)+fy_val*nB(2)) * norm(A-C) .* Greenfunc_y(y2(t,C,A),y3(t,C,A));
+%% numerical integration (with matlab integral)
 
-%% numerical integration (GL quadrature)
+ux_vals = zeros(n_pts,n_pts,n_eval);
+uy_vals = zeros(n_pts,n_pts,n_eval);
 
-ux_numeric_GL = zeros(size(x_mat));
-uy_numeric_GL = zeros(size(x_mat));
-
-N_gl = 39;
-[xk,wk] = calc_gausslegendre_weights(N_gl);
+ux_numeric_int = zeros(size(x_mat));
+uy_numeric_int = zeros(size(x_mat));
 
 tic
-for k=1:numel(xk)
-    [n_ux, n_uy] = kelvin_point(x_mat, y_mat, xk(k), y0_val, fx_val, fy_val, mu_val, nu_val);
-    ux_numeric_GL = ux_numeric_GL + n_ux.*wk(k);
-    uy_numeric_GL = uy_numeric_GL + n_uy.*wk(k);
+for i = 1:n_eval
+    area_source = rectangle_x(i)*rectangle_y(i);
+    Rx = rectangle_x(i);
+    Ry = rectangle_y(i);
+    parfor k=1:numel(x_mat)
+        fun_x = @(x0,y0) gf_x(x_mat(k),y_mat(k),x0, y0, fx_val, fy_val, mu_val, nu_val);
+        fun_y = @(x0,y0) gf_y(x_mat(k),y_mat(k),x0, y0, fx_val, fy_val, mu_val, nu_val);
+                
+        ux_numeric_int(k) = integral2(fun_x,-Rx/2,Rx/2,-Ry/2,Ry/2)./area_source;
+        uy_numeric_int(k) = integral2(fun_y,-Rx/2,Rx/2,-Ry/2,Ry/2)./area_source;
+    end
+
+    ux_vals(:,:,i) = ux_numeric_int;
+    uy_vals(:,:,i) = uy_numeric_int;
 end
 toc
 
 
-%% plot comparison of solutions
+%% plot solutions
+figure(1),clf
+if eval_type==1
+    for i = 1:n_eval
+        subplot(n_eval/2,2,i)
+        n_skip = 23;
+        
+        ux = squeeze(ux_vals(:,:,i));
+        uy = squeeze(uy_vals(:,:,i));
+
+        toplot_n = sqrt(ux.^2 + uy.^2);
+        contourf(x_mat, y_mat, toplot_n,5), hold on
+        quiver(x_mat(1:n_skip:end), y_mat(1:n_skip:end),ux(1:n_skip:end),uy(1:n_skip:end),'r','Linewidth',1)
+        cb=colorbar;cb.Label.String = 'Displacement |U|';
+        clim([0,1].*0.1)
+        axis("equal")
+        title(['Source area = ' num2str(rectangle_x(i)*rectangle_y(i))])
+        colormap(sky(10))
+        xlabel('x'), ylabel('y')
+        set(gca,'Fontsize',15)
+    end
+end
+
+% solution from last run only
 figure(2),clf
 if eval_type==1
     n_skip = 13;
-    toplot_n = sqrt(ux_numeric_GL.^2 + uy_numeric_GL.^2);
+    toplot_n = sqrt(ux_numeric_int.^2 + uy_numeric_int.^2);
     contourf(x_mat, y_mat, toplot_n), hold on
-    quiver(x_mat(1:n_skip:end), y_mat(1:n_skip:end),ux_numeric_GL(1:n_skip:end),uy_numeric_GL(1:n_skip:end),'r','Linewidth',1)
+    quiver(x_mat(1:n_skip:end), y_mat(1:n_skip:end),ux_numeric_int(1:n_skip:end),uy_numeric_int(1:n_skip:end),'r','Linewidth',1)
     colorbar;
     clim([0,1].*max(abs(toplot_n(:))))
     axis("equal")
-    title(['Gauss-Legendre numerical integration of order ' num2str(N_gl)])
+    title('Adaptive quadrature')
     set(gca,'Fontsize',12)
 
 else
     subplot(2,1,1)
-    plot(x_mat,ux_numeric_GL,'-','LineWidth',2)
-    plot([-1,1],[0,0],'k-','Linewidth',2)
+    plot(x_mat,ux_numeric_int,'-','LineWidth',2)
     axis tight, grid on
     xlabel('x'), ylabel('u_x')
     set(gca,'FontSize',15)
 
     subplot(2,1,2)
-    plot(x_mat,uy_numeric_GL,'-','LineWidth',2)
-    plot([-1,1],[0,0],'k-','Linewidth',2)
+    plot(x_mat,uy_numeric_int,'-','LineWidth',2)
     axis tight, grid on
     xlabel('x'), ylabel('u_y')
     set(gca,'FontSize',15)
 end
 
 %% define kelvin point source function
+function ux = gf_x(x0, y0, xoffset, yoffset, fx, fy, mu, nu)
+[ux, ~] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy, mu, nu);
+end
+function uy = gf_y(x0, y0, xoffset, yoffset, fx, fy, mu, nu)
+[~, uy] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy, mu, nu);
+end
+
 function [ux, uy] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy, mu, nu)
     x = x0 - xoffset;
     y = y0 - yoffset;
