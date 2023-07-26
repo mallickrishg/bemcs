@@ -1,3 +1,9 @@
+% script to evluate analytically and with various popular numerical
+% integration techniques a Kelvin point source with uniform strength
+% integrated over a line from -1<=x<=1 and y = 0
+% 
+% Rishav Mallick, 2023, Caltech Seismolab
+
 clear 
 
 %% Set model parameters 
@@ -129,6 +135,17 @@ for k=-n:n
     uy_numeric_TS = uy_numeric_TS + n_uy.*wk;
 end
 
+%% compute solution using integral
+ux_numeric_int = zeros(size(x_mat));
+uy_numeric_int = zeros(size(x_mat));
+
+tic
+for k=1:numel(x_mat)    
+    ux_numeric_int(k) = integral(@(x0) gf_x(x_mat(k),y_mat(k),x0, y0_val, fx_val, fy_val, mu_val, nu_val),-1,1);
+    uy_numeric_int(k) = integral(@(x0) gf_y(x_mat(k),y_mat(k),x0, y0_val, fx_val, fy_val, mu_val, nu_val),-1,1);
+end
+toc
+
 %% plot comparison of solutions
 figure(2),clf
 if eval_type==1
@@ -165,32 +182,49 @@ else
     plot(x_mat,ux_mat,'-','LineWidth',4), hold on
     plot(x_mat,ux_numeric_GL,'-','LineWidth',1)
     plot(x_mat,ux_numeric_TS,'k-','LineWidth',1)
+    plot(x_mat,ux_numeric_int,'g--','LineWidth',2)
     plot([-1,1],[0,0],'k-','Linewidth',2)
     axis tight, grid on
     xlabel('x'), ylabel('u_x')
-    legend('analytical','GL-quadrature','TS-quadrature')
+    legend('analytical','GL-quadrature','TS-quadrature','adaptive')
     set(gca,'FontSize',15)
 
     subplot(2,1,2)
     plot(x_mat,uy_mat,'-','LineWidth',4), hold on
     plot(x_mat,uy_numeric_GL,'-','LineWidth',1)
     plot(x_mat,uy_numeric_TS,'k-','LineWidth',1)
+    plot(x_mat,uy_numeric_int,'g--','LineWidth',2)
     plot([-1,1],[0,0],'k-','Linewidth',2)
     axis tight, grid on
     xlabel('x'), ylabel('u_y')
-    legend('analytical','GL-quadrature','TS-quadrature')
     set(gca,'FontSize',15)
+
+    figure(10),clf
+    plot(x_mat,ux_mat-ux_numeric_TS,'k-','LineWidth',1), hold on
+    plot(x_mat,ux_mat-ux_numeric_int,'g--','LineWidth',2)
+    axis tight, grid on
+    xlabel('x'), ylabel('residual u_x')
+    legend('TS-quadrature','adaptive')
+    set(gca,'FontSize',15)
+
 end
 
 %% define kelvin point source function
+function ux = gf_x(x0, y0, xoffset, yoffset, fx, fy, mu, nu)
+[ux, ~] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy, mu, nu);
+end
+function uy = gf_y(x0, y0, xoffset, yoffset, fx, fy, mu, nu)
+[~, uy] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy, mu, nu);
+end
+
 function [ux, uy] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy, mu, nu)
-    x = x0 - xoffset;
-    y = y0 - yoffset;
-    C = 1 / (4 * pi * (1 - nu));
-    r = sqrt(x.^2 + y.^2);
-    g = -C .* log(r);
-    gx = -C .* x ./ (x.^2 + y.^2);
-    gy = -C .* y ./ (x.^2 + y.^2);
-    ux = fx / (2 * mu) * ((3 - 4 * nu) .* g - x .* gx) + fy / (2 * mu) .* (-y .* gx);
-    uy = fx / (2 * mu) * (-x .* gy) + fy / (2 * mu) * ((3 - 4 * nu) .* g - y .* gy);
+x = x0 - xoffset;
+y = y0 - yoffset;
+C = 1 / (4 * pi * (1 - nu));
+r = sqrt(x.^2 + y.^2);
+g = -C .* log(r);
+gx = -C .* x ./ (x.^2 + y.^2);
+gy = -C .* y ./ (x.^2 + y.^2);
+ux = fx / (2 * mu) * ((3 - 4 * nu) .* g - x .* gx) + fy / (2 * mu) .* (-y .* gx);
+uy = fx / (2 * mu) * (-x .* gy) + fy / (2 * mu) * ((3 - 4 * nu) .* g - y .* gy);
 end
