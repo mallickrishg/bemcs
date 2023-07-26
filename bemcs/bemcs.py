@@ -1875,58 +1875,6 @@ def get_individualdesignmatrix_3qn(elements):
     return designmatrix_slip, designmatrix_slipgradient
 
 
-def get_design_matrix(els, flag="node"):
-    """Assemble design matrix in (x,y) coordinate system for 2 slip components (s,n) for a
-    linear system of equations to calculate quadratic coefficients from applied boundary conditions for an ordered list of fault elements.
-
-    flag = "node" : slip is applied at each node of a fault element
-
-    flag = "mean" : slip is applied as a mean value over the entire fault element, not just at nodes
-
-    Unit vectors for each patch are used to premultiply the input matrices
-    [dx nx] [f1 f2 f3 0  0  0]
-    [dy ny] [0  0  0  f1 f2 f3]"""
-
-    n_els = len(els.x1)
-    stride = 6
-    design_matrix_slip = np.zeros((stride * n_els, stride * n_els))
-    design_matrix_slip_gradient = np.zeros((stride * n_els, stride * n_els))
-
-    for i in range(n_els):
-        slip_matrix_stack = np.zeros((stride, stride))
-        slip_gradient_matrix_stack = np.zeros((stride, stride))
-        unit_vec_matrix = np.array(
-            [
-                [els.x_shears[i], els.x_normals[i]],
-                [els.y_shears[i], els.y_normals[i]],
-            ]
-        )
-        unit_vec_matrix_stack = np.kron(np.eye(3), unit_vec_matrix)
-
-        # Set x_obs to be oriented along the fault
-        x_obs = np.array((-els.half_lengths[i], 0.0, els.half_lengths[i]))
-
-        if flag == "node":
-            slip_matrix = slip_functions(x_obs, els.half_lengths[i])
-        elif flag == "mean":
-            slip_matrix = slip_functions_mean(x_obs)
-        else:
-            raise ValueError("Invalid flag. Use either 'node' or 'mean'.")
-
-        slip_gradient_matrix = slipgradient_functions(x_obs, els.half_lengths[i])
-        slip_matrix_stack[0::2, 0:3] = slip_matrix
-        slip_matrix_stack[1::2, 3:] = slip_matrix
-        slip_gradient_matrix_stack[0::2, 0:3] = slip_gradient_matrix
-        slip_gradient_matrix_stack[1::2, 3:] = slip_gradient_matrix
-        design_matrix_slip[stride * i : stride * (i + 1), stride * i : stride * (i + 1)] = (
-            unit_vec_matrix_stack @ slip_matrix_stack
-        )
-        design_matrix_slip_gradient[stride * i : stride * (i + 1), stride * i : stride * (i + 1)] = (
-            unit_vec_matrix_stack @ slip_gradient_matrix_stack
-        )
-    return design_matrix_slip, design_matrix_slip_gradient
-
-
 def get_designmatrix_xy_3qn(elements, flag="node"):
     """Assemble design matrix in (x,y) coordinate system for 2 slip components (s,n) for a
     linear system of equations to calculate quadratic coefficients from applied boundary conditions for an ordered list of fault elements.
