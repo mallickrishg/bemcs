@@ -11,16 +11,16 @@ clear
 mu_val = 1;
 nu_val = 0.25;
 
-fx_val = 1;
+fx_val = 0;
 fy_val = -1;
 y0_val = 0;
 
 % provide plotting type (2-d grid or 1-d line)
 % 0 - line, 
 % 1 - xy grid
-eval_type = 0;
+eval_type = 1;
 
-n_pts = 501;
+n_pts = 51;
 x_vec = linspace(-2, 2, n_pts);
 y_vec = linspace(-1.5, 1.5, n_pts);
 
@@ -83,12 +83,13 @@ figure(1),clf
 if eval_type == 1
     figure(1)
     toplot = sqrt(ux_mat.^2 + uy_mat.^2);
-    contourf(x_mat, y_mat, toplot), hold on
+    contourf(x_mat, y_mat, toplot,5), hold on
     quiver(x_mat(:),y_mat(:),ux_mat(:),uy_mat(:),'r','Linewidth',1)
     cb=colorbar;cb.Label.String = '|u|';
-    clim([0,1].*max(abs(toplot(:))))
+    % clim([0,1].*max(abs(toplot(:))))
+    clim([0,1*0.2])
     axis("equal")
-    colormap(parula(40))
+    colormap(sky(10))
     title('(u_x,u_y) analytical solution')
     set(gca,'Fontsize',15)    
 else
@@ -174,7 +175,7 @@ if eval_type==1
     cb=colorbar;cb.Label.String = '% residuals';
     clim([-1,1].*10)
     axis("equal")
-    colormap(bluewhitered(40))
+    colormap(parula(40))
     title('Residuals %(analytical - numerical)')
     set(gca,'Fontsize',12)
 else

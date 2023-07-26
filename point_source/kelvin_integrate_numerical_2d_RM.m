@@ -17,6 +17,7 @@ ymax = @(x) (1-abs(x));% defines the shape of a triangle
 mu_val = 1;
 nu_val = 0.25;
 
+% Kelvin force vector (for gravity set fx,fy = 0,-1
 fx_val = 0;
 fy_val = -1;
 
@@ -38,15 +39,15 @@ else
     y_mat = x_vec.*0;
 end
 %% rectangle domain
-n_eval = 6; % must be an even number
+n_eval = 4; % must be an even number
 
 rectangle_x = 2*ones(n_eval,1);
-rectangle_y = linspace(0.1,1,n_eval)';
+rectangle_y = logspace(-2,0,n_eval)';
 
 %% numerical integration (with matlab integral)
 
-ux_vals = zeros(n_pts,n_pts,n_eval);
-uy_vals = zeros(n_pts,n_pts,n_eval);
+ux_vals = zeros(length(x_mat(:,1)),length(x_mat(1,:)),n_eval);
+uy_vals = zeros(length(x_mat(:,1)),length(x_mat(1,:)),n_eval);
 
 ux_numeric_int = zeros(size(x_mat));
 uy_numeric_int = zeros(size(x_mat));
@@ -71,7 +72,7 @@ toc
 
 
 %% plot solutions
-figure(1),clf
+figure(11),clf
 if eval_type==1
     for i = 1:n_eval
         subplot(n_eval/2,2,i)
@@ -91,10 +92,27 @@ if eval_type==1
         xlabel('x'), ylabel('y')
         set(gca,'Fontsize',15)
     end
+else
+    cspec = cool(n_eval);
+    for i = 1:n_eval        
+        ux = squeeze(ux_vals(:,:,i));
+        uy = squeeze(uy_vals(:,:,i));
+        subplot(2,1,1)
+        plot(x_mat,ux,'-','LineWidth',2,'Color',cspec(i,:)), hold on
+        axis tight, grid on
+        xlabel('x'), ylabel('u_x')
+        set(gca,'FontSize',15)
+
+        subplot(2,1,2)
+        plot(x_mat,uy,'-','LineWidth',2,'Color',cspec(i,:)), hold on
+        axis tight, grid on
+        xlabel('x'), ylabel('u_y')
+        set(gca,'FontSize',15)
+    end
 end
 
 % solution from last run only
-figure(2),clf
+figure(12),clf
 if eval_type==1
     n_skip = 13;
     toplot_n = sqrt(ux_numeric_int.^2 + uy_numeric_int.^2);
