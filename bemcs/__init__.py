@@ -32,7 +32,6 @@ from .bemcs import (
     get_displacement_stress_kernel,
     coeffs_to_disp_stress,
     plot_displacements_stresses_els,
-    get_design_matrix,
     get_traction_kernels,
 )
 
