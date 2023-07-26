@@ -11,7 +11,7 @@ clear
 mu_val = 1;
 nu_val = 0.25;
 
-fx_val = 1;
+fx_val = 0;
 fy_val = -1;
 y0_val = 0;
 

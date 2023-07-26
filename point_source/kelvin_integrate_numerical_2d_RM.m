@@ -24,10 +24,10 @@ fy_val = -1;
 % provide plotting type (2-d grid or 1-d line)
 % 0 - line, 
 % 1 - xy grid
-eval_type = 1;
+eval_type = 0;
 
 n_pts = 100;
-x_vec = linspace(-4, 4, n_pts);
+x_vec = linspace(-2, 2, n_pts);
 y_vec = linspace(-1.5, 1.5, n_pts);
 
 if eval_type == 1
