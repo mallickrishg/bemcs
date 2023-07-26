@@ -2151,7 +2151,9 @@ def get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, flag):
         flag_strike_slip = 0.0
         flag_tensile_slip = 1.0
     else:
-        raise ValueError("shear/tensile flag must be 'shear' or 'normal', no other values allowed")
+        raise ValueError(
+            "shear/tensile flag must be 'shear' or 'normal', no other values allowed"
+        )
 
     for i in range(n_els):
         # Center observation locations (no translation needed)
@@ -2259,6 +2261,10 @@ def get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, flag):
 
 
 def coeffs_to_disp_stress(kernels_s, kernels_n, coeffs_s, coeffs_n):
+    """Function to compute displacements and stresses from 3qn coefficients.
+
+    Provide separate shear (k_s) and normal (k_n) stress kernels and appropriate 3qn coefficients
+    """
     ux = kernels_s[3] @ coeffs_s + kernels_n[3] @ coeffs_n
     uy = kernels_s[4] @ coeffs_s + kernels_n[4] @ coeffs_n
     sxx = kernels_s[0] @ coeffs_s + kernels_n[0] @ coeffs_n
@@ -2293,7 +2299,6 @@ def compute_tractionkernels(elements, kernels):
     nx_matrix = np.zeros_like(Kxx)
     ny_matrix = np.zeros_like(Kxx)
 
-    # this is definitely incorrect - need to fix
     nx_matrix[:, 0::3] = nvec[:, 0].reshape(-1, 1)
     nx_matrix[:, 1::3] = nvec[:, 0].reshape(-1, 1)
     nx_matrix[:, 2::3] = nvec[:, 0].reshape(-1, 1)
@@ -2306,6 +2311,7 @@ def compute_tractionkernels(elements, kernels):
     ty = Kxy * nx_matrix + Kyy * ny_matrix
 
     return tx, ty
+
 
 def get_traction_kernels(els, kernels):
     """Function to calculate kernels of traction vector from a set of stress kernels and unit vectors.
@@ -2320,8 +2326,6 @@ def get_traction_kernels(els, kernels):
     nrows = np.shape(Kxx)[
         0
     ]  # this is typically the same as number of elements because stress kernels are calculated ONLY at the center of a given element
-    # nrows = len(elements)
-    # ncols = np.shape(Kxx)[1]
 
     tx = np.zeros_like(Kxx)
     ty = np.zeros_like(Kxx)
@@ -2335,7 +2339,6 @@ def get_traction_kernels(els, kernels):
     nx_matrix = np.zeros_like(Kxx)
     ny_matrix = np.zeros_like(Kxx)
 
-    # TODO: This is definitely incorrect - need to fix
     nx_matrix[:, 0::3] = nvec[:, 0].reshape(-1, 1)
     nx_matrix[:, 1::3] = nvec[:, 0].reshape(-1, 1)
     nx_matrix[:, 2::3] = nvec[:, 0].reshape(-1, 1)
