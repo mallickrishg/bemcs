@@ -46,6 +46,11 @@ end
 
 
 function [ux, uy, sxx, syy, sxy] = trac2dispstress(xcomp, ycomp, f, y, mu, nu)
+    ux = zeros(size(y));
+    uy = zeros(size(y));
+    sxx = zeros(size(y));
+    syy = zeros(size(y));
+    sxy = zeros(size(y));
     for i=1:length(y)
         ux(i) = xcomp / (2.0 * mu) * ((3.0 - 4.0 * nu) * f(i, 1) + y(i) * f(i, 2)) + ycomp / (2.0 * mu) * (-y(i) * f(i, 3));
         uy(i) = xcomp / (2.0 * mu) * (-y(i) * f(i, 3)) + ycomp / (2.0 * mu) * ((3.0 - 4.0 * nu) * f(i, 1) - y(i) * f(i, 2));

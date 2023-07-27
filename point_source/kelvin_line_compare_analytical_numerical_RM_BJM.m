@@ -2,6 +2,8 @@
 % integration techniques a Kelvin point source with uniform strength
 % integrated over a line from -1<=x<=1 and y = 0
 % 
+% We also compare the solution to Crouch & Starfield 1983 analytical
+% solutions (there is a constant offset b/w the C&S solutions and all the others)
 % Rishav Mallick, 2023, Caltech Seismolab
 
 clear 
@@ -11,7 +13,7 @@ clear
 mu_val = 1;
 nu_val = 0.25;
 
-fx_val = 0;
+fx_val = 1;
 fy_val = -1;
 y0_val = 0;
 
@@ -35,6 +37,10 @@ end
 
 %% analytical solution
 tic
+% Crouch and Starfield closed form solution
+f_CS = constkernel(x_mat, y_mat, 1, nu_val);
+[ux_cs, uy_cs, sxx_cs, syy_cs, sxy_cs] = trac2dispstress(fx_val, fy_val, f_CS, y_mat, mu_val, nu_val);
+
 % Declare symbols and build functions to integrate
 syms x0 y0 g nu mu xoffset yoffset fx fy
 x = x0 - xoffset;
@@ -47,10 +53,6 @@ gy = -C * y / (x^2 + y^2);
 
 ux = fx / (2 * mu) * ((3 - 4 * nu) * g - x * gx) + fy / (2 * mu) * (-y * gx);
 uy = fx / (2 * mu) * (-x * gy) + fy / (2 * mu) * ((3 - 4 * nu) * g - y * gy);
-
-% Crouch and Starfield closed form solution
-f = constkernel(x_obs, y_obs, a, nu);
-[ux_cs, uy_cs, sxx_cs, syy_cs, sxy_cs] = trac2dispstress(1, 0, f, y_obs, mu, nu);
 
 % Try integrating the various displacement & stress components along a line
 % defined as 1-<= x0 <= 1, y0 = 0
@@ -99,6 +101,8 @@ else
     figure(1)
     plot(x_mat,ux_mat,'-','LineWidth',3), hold on
     plot(x_mat,uy_mat,'-','LineWidth',3)
+    plot(x_mat,ux_cs + 0.3,'k-','LineWidth',1)
+    plot(x_mat,uy_cs - 0.2,'k-','LineWidth',1)
     plot([-1,1],[0,0],'k-','Linewidth',2)
     axis tight, grid on
     xlabel('x'), ylabel('u')  
@@ -272,6 +276,7 @@ function [ux, uy, sxx, syy, sxy] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy
 end
 
 function f = constkernel(x, y, a, nu)
+% a - half-length of the line element
     f = zeros(length(x), 7);
     leadingconst = 1/(4*pi*(1-nu));
 
@@ -300,6 +305,11 @@ function f = constkernel(x, y, a, nu)
 end
 
 function [ux, uy, sxx, syy, sxy] = trac2dispstress(xcomp, ycomp, f, y, mu, nu)
+    ux = zeros(size(y));
+    uy = zeros(size(y));
+    sxx = zeros(size(y));
+    syy = zeros(size(y));
+    sxy = zeros(size(y));
     for i=1:length(y)
         ux(i) = xcomp / (2.0 * mu) * ((3.0 - 4.0 * nu) * f(i, 1) + y(i) * f(i, 2)) + ycomp / (2.0 * mu) * (-y(i) * f(i, 3));
         uy(i) = xcomp / (2.0 * mu) * (-y(i) * f(i, 3)) + ycomp / (2.0 * mu) * ((3.0 - 4.0 * nu) * f(i, 1) - y(i) * f(i, 2));
