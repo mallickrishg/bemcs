@@ -86,8 +86,7 @@ if eval_type == 1
     contourf(x_mat, y_mat, toplot,5), hold on
     quiver(x_mat(:),y_mat(:),ux_mat(:),uy_mat(:),'r','Linewidth',1)
     cb=colorbar;cb.Label.String = '|u|';
-    % clim([0,1].*max(abs(toplot(:))))
-    clim([0,1*0.2])
+    clim([0,1].*max(abs(toplot(:))))
     axis("equal")
     colormap(sky(10))
     title('(u_x,u_y) analytical solution')
@@ -113,7 +112,7 @@ N_gl = 39;
 
 tic
 for k=1:numel(xk)
-    [n_ux, n_uy] = kelvin_point(x_mat, y_mat, xk(k), y0_val, fx_val, fy_val, mu_val, nu_val);
+    [n_ux, n_uy,~,~,~] = kelvin_point(x_mat, y_mat, xk(k), y0_val, fx_val, fy_val, mu_val, nu_val);
     ux_numeric_GL = ux_numeric_GL + n_ux.*wk(k);
     uy_numeric_GL = uy_numeric_GL + n_uy.*wk(k);
 end
@@ -131,7 +130,7 @@ n=fix(2/h);
 for k=-n:n    
     wk=(0.5*h*pi*cosh(k*h))./(cosh(0.5*pi*sinh(k*h))).^2;
     xk=tanh(0.5*pi*sinh(k*h));
-    [n_ux, n_uy] = kelvin_point(x_mat, y_mat, xk, y0_val, fx_val, fy_val, mu_val, nu_val);
+    [n_ux, n_uy,~,~,~] = kelvin_point(x_mat, y_mat, xk, y0_val, fx_val, fy_val, mu_val, nu_val);
     ux_numeric_TS = ux_numeric_TS + n_ux.*wk;
     uy_numeric_TS = uy_numeric_TS + n_uy.*wk;
 end
@@ -139,11 +138,19 @@ end
 %% compute solution using integral (adaptive quadrature)
 ux_numeric_int = zeros(size(x_mat));
 uy_numeric_int = zeros(size(x_mat));
+sxy_numeric_int = zeros(size(x_mat));
+
+% need to shift y-evaluation pt to avoid blow up
+delta_y = 1e-11;
 
 tic
-for k=1:numel(x_mat)    
-    ux_numeric_int(k) = integral(@(x0) gf_x(x_mat(k),y_mat(k),x0, y0_val, fx_val, fy_val, mu_val, nu_val),-1,1);
-    uy_numeric_int(k) = integral(@(x0) gf_y(x_mat(k),y_mat(k),x0, y0_val, fx_val, fy_val, mu_val, nu_val),-1,1);
+parfor k=1:numel(x_mat)    
+    ux_numeric_int(k) = integral(@(x0) gf_ux(x_mat(k),y_mat(k),x0, y0_val, fx_val, fy_val, mu_val, nu_val),-1,1);
+    uy_numeric_int(k) = integral(@(x0) gf_uy(x_mat(k),y_mat(k),x0, y0_val, fx_val, fy_val, mu_val, nu_val),-1,1);
+    
+    % 
+    sxy_numeric_int(k) = quadgk(@(x0) gf_sxy(x_mat(k),y_mat(k),x0, y0_val + delta_y, fx_val, fy_val, mu_val, nu_val),-1,1);
+    
 end
 toc
 
@@ -201,6 +208,7 @@ else
     set(gca,'FontSize',15)
 
     figure(10),clf
+    subplot(211)
     plot(x_mat,ux_mat-ux_numeric_TS,'k-','LineWidth',1), hold on
     plot(x_mat,ux_mat-ux_numeric_int,'g--','LineWidth',2)
     axis tight, grid on
@@ -208,24 +216,53 @@ else
     legend('TS-quadrature','adaptive')
     set(gca,'FontSize',15)
 
+    subplot(212)
+    plot(x_mat,uy_mat-uy_numeric_TS,'k-','LineWidth',1), hold on
+    plot(x_mat,uy_mat-uy_numeric_int,'g--','LineWidth',2)
+    axis tight, grid on
+    xlabel('x'), ylabel('residual u_x')
+    legend('TS-quadrature','adaptive')
+    set(gca,'FontSize',15)
+    
+    figure(11),clf
+    plot(x_mat,sxy_numeric_int,'-','LineWidth',2)
+    axis tight
+    xlabel('x'), ylabel('\sigma_{xy}')
+    set(gca,'FontSize',15)
+    title(['y_0 shifted by ' num2str(delta_y)],'FontWeight','normal')
 end
 
 %% define kelvin point source function
-function ux = gf_x(x0, y0, xoffset, yoffset, fx, fy, mu, nu)
-[ux, ~] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy, mu, nu);
+function ux = gf_ux(x0, y0, xoffset, yoffset, fx, fy, mu, nu)
+[ux, ~, ~, ~, ~] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy, mu, nu);
 end
-function uy = gf_y(x0, y0, xoffset, yoffset, fx, fy, mu, nu)
-[~, uy] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy, mu, nu);
+function uy = gf_uy(x0, y0, xoffset, yoffset, fx, fy, mu, nu)
+[~, uy, ~, ~, ~] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy, mu, nu);
+end
+function sxx = gf_sxx(x0, y0, xoffset, yoffset, fx, fy, mu, nu)
+[~, ~, sxx, ~, ~] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy, mu, nu);
+end
+function syy = gf_syy(x0, y0, xoffset, yoffset, fx, fy, mu, nu)
+[~, ~, ~, syy, ~] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy, mu, nu);
+end
+function sxy = gf_sxy(x0, y0, xoffset, yoffset, fx, fy, mu, nu)
+[~, ~, ~, ~, sxy] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy, mu, nu);
 end
 
-function [ux, uy] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy, mu, nu)
-x = x0 - xoffset;
-y = y0 - yoffset;
-C = 1 / (4 * pi * (1 - nu));
-r = sqrt(x.^2 + y.^2);
-g = -C .* log(r);
-gx = -C .* x ./ (x.^2 + y.^2);
-gy = -C .* y ./ (x.^2 + y.^2);
-ux = fx / (2 * mu) * ((3 - 4 * nu) .* g - x .* gx) + fy / (2 * mu) .* (-y .* gx);
-uy = fx / (2 * mu) * (-x .* gy) + fy / (2 * mu) * ((3 - 4 * nu) .* g - y .* gy);
+function [ux, uy, sxx, syy, sxy] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy, mu, nu)
+    x = x0 - xoffset;
+    y = y0 - yoffset;
+    C = 1 / (4 * pi * (1 - nu));
+    r = sqrt(x.^2 + y.^2);
+    g = -C .* log(r);
+    gx = -C .* x ./ (x.^2 + y.^2);
+    gy = -C .* y ./ (x.^2 + y.^2);
+    gxy = C .* 2 .* x .* y ./ (x.^2 + y.^2).^2;
+    gxx = C .* (x.^2 - y.^2) ./ (x.^2 + y.^2).^2;
+    gyy = -gxx;
+    ux = fx / (2 * mu) * ((3 - 4 * nu) .* g - x .* gx) + fy / (2 * mu) .* (-y .* gx);
+    uy = fx / (2 * mu) * (-x .* gy) + fy / (2 * mu) * ((3 - 4 * nu) .* g - y .* gy);
+    sxx = fx .* (2 * (1 - nu) .* gx - x .* gxx) + fy .* (2 * nu .* gy - y .* gxx);
+    syy = fx .* (2 * nu .* gx - x .* gyy) + fy .* (2 * (1 - nu) .* gy - y .* gyy);
+    sxy = fx .* ((1 - 2 * nu) .* gy - x .* gxy) + fy .* ((1 - 2 * nu) .* gx - y .* gxy);
 end
