@@ -1,12 +1,6 @@
 import pkg_resources
 
 from .bemcs import (
-    plot_fields_no_elements,
-    plot_fields,
-    plot_element_geometry,
-    plot_nine_fields,
-    plot_displacements_stresses,
-    standardize_elements,
     discretized_line,
     constant_kernel,
     quadratic_kernel_farfield,
@@ -20,10 +14,7 @@ from .bemcs import (
     slip_functions_mean,
     slipgradient_functions,
     get_slip_slipgradient,
-    get_individualdesignmatrix_3qn,
-    get_designmatrix_xy_3qn,
     rotate_displacement_stress,
-    get_quadratic_displacement_stress_kernel,
     initialize_els,
     standardize_els_geometry,
     plot_els_geometry,
