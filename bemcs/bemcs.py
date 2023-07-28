@@ -1723,12 +1723,14 @@ def coeffs_to_disp_stress(kernels_s, kernels_n, coeffs_s, coeffs_n):
     sxy = kernels_s[2] @ coeffs_s + kernels_n[2] @ coeffs_n
     return ux, uy, sxx, syy, sxy
 
-def get_traction_kernels(els, kernels):
+def get_traction_kernels(els, kernels, flag = "global"):
     """Function to calculate kernels of traction vector from a set of stress kernels and unit vectors.
 
     Provide elements as a list with ["x_normal"] & ["y_normal"] for the unit normal vector.
 
     kernels must be provided as kernels[0] = Kxx, kernels[1] = Kyy, kernels[2] = Kxy
+
+    flag can be either "global" for (x,y) coordinates or "local" for (shear,normal) coordinates
     """
     Kxx = kernels[0]
     Kyy = kernels[1]
@@ -1741,11 +1743,16 @@ def get_traction_kernels(els, kernels):
     ty = np.zeros_like(Kxx)
     # unit vector in normal direction
     nvec = np.zeros((nrows, 2))
-
+    # unit vector in shear direction
+    svec = np.zeros((nrows, 2))
+    svec = np.vstack((els.x_shears,els.y_shears)).T
     for i in range(nrows):
         nvec[i, :] = np.array([els.x_normals[i], els.y_normals[i]])
+
     nx_matrix = np.zeros_like(Kxx)
     ny_matrix = np.zeros_like(Kxx)
+    sx_matrix = np.zeros_like(Kxx)
+    sy_matrix = np.zeros_like(Kxx)
 
     nx_matrix[:, 0::3] = nvec[:, 0].reshape(-1, 1)
     nx_matrix[:, 1::3] = nvec[:, 0].reshape(-1, 1)
@@ -1754,10 +1761,26 @@ def get_traction_kernels(els, kernels):
     ny_matrix[:, 1::3] = nvec[:, 1].reshape(-1, 1)
     ny_matrix[:, 2::3] = nvec[:, 1].reshape(-1, 1)
 
+    sx_matrix[:, 0::3] = svec[:, 0].reshape(-1, 1)
+    sx_matrix[:, 1::3] = svec[:, 0].reshape(-1, 1)
+    sx_matrix[:, 2::3] = svec[:, 0].reshape(-1, 1)
+    sy_matrix[:, 0::3] = svec[:, 1].reshape(-1, 1)
+    sy_matrix[:, 1::3] = svec[:, 1].reshape(-1, 1)
+    sy_matrix[:, 2::3] = svec[:, 1].reshape(-1, 1)
+
     # traction vector t = n.σ
     tx = Kxx * nx_matrix + Kxy * ny_matrix
     ty = Kxy * nx_matrix + Kyy * ny_matrix
-    return tx, ty
+
+    ts = tx * sx_matrix + ty * sy_matrix
+    tn = tx * nx_matrix + ty * ny_matrix
+    
+    if flag == "global":
+        return tx, ty
+    elif flag == "local":
+        return ts, tn
+    else:
+        ValueError('flag must be either global or local')
 
 
 def plot_displacements_stresses_els(
