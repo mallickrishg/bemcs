@@ -36,31 +36,38 @@ end
 %% analytical solution
 tic
 % Declare symbols and build functions to integrate
-syms x0 y0 g nu mu xoffset yoffset fx fy
-x = x0 - xoffset;
-y = y0 - yoffset;
+syms x0 y0 g nu mu xs ys fx fy
+x = x0 - xs;
+y = y0 - ys;
 C = 1 / (4 * pi * (1 - nu));
 r = sqrt(x^2 + y^2);
 g = -C * log(r);
 gx = -C * x / (x^2 + y^2);
 gy = -C * y / (x^2 + y^2);
+gxy = C * 2 * x * y / (x^2 + y^2)^2;
+gxx = C * (x^2 - y^2) / (x^2 + y^2)^2;
+gyy = -gxx;
 
 ux = fx / (2 * mu) * ((3 - 4 * nu) * g - x * gx) + fy / (2 * mu) * (-y * gx);
 uy = fx / (2 * mu) * (-x * gy) + fy / (2 * mu) * ((3 - 4 * nu) * g - y * gy);
+sxy = fx * ((1 - 2 * nu) * gy - x * gxy) + fy * ((1 - 2 * nu) * gx - y * gxy);
 
 % Try integrating the various displacement & stress components along a line
 % defined as 1-<= x0 <= 1, y0 = 0
-ux_definite = int(ux, x0, [-1.0 1.0]);
-uy_definite = int(uy, x0, [-1.0 1.0]);
+ux_definite = int(ux, xs, [-1.0 1.0]);
+uy_definite = int(uy, xs, [-1.0 1.0]);
+sxy_definite = int(sxy, xs, [-1.0 1.0]);
 toc
 
 % Convert to function
 ux_function_handle = matlabFunction(ux_definite);
 uy_function_handle = matlabFunction(uy_definite);
+sxy_function_handle = matlabFunction(sxy_definite);
 
-% evaluate expressions at points
+%% evaluate expressions at points
 ux_mat = zeros(size(x_mat));
 uy_mat = zeros(size(x_mat));
+sxy_mat = zeros(size(x_mat));
 
 tic
 if eval_type == 1
@@ -68,12 +75,14 @@ if eval_type == 1
         for j=1:n_pts            
             ux_mat(i, j) = ux_function_handle(fx_val, fy_val, mu_val, nu_val, x_mat(i, j), y0_val, y_mat(i, j));
             uy_mat(i, j) = uy_function_handle(fx_val, fy_val, mu_val, nu_val, x_mat(i, j), y0_val, y_mat(i, j));
+            sxy_mat(i, j) = sxy_function_handle(fx_val, fy_val, nu_val, x_mat(i, j), y0_val, y_mat(i, j));
         end
     end
 else
     for i = 1:n_pts
         ux_mat(i) = ux_function_handle(fx_val, fy_val, mu_val, nu_val , x_mat(i), y0_val, y_mat(i));
         uy_mat(i) = uy_function_handle(fx_val, fy_val, mu_val, nu_val , x_mat(i), y0_val, y_mat(i));
+        sxy_mat(i) = sxy_function_handle(fx_val, fy_val, nu_val , x_mat(i), y0_val, y_mat(i));
     end
 end
 toc
@@ -104,17 +113,23 @@ end
 
 %% numerical integration (GL quadrature)
 
+% need to shift y-evaluation pt to avoid blow up
+delta_y = 1e-7;
+
 ux_numeric_GL = zeros(size(x_mat));
 uy_numeric_GL = zeros(size(x_mat));
+sxy_numeric_GL = zeros(size(x_mat));
 
-N_gl = 39;
+N_gl = 61;
 [xk,wk] = calc_gausslegendre_weights(N_gl);
 
 tic
 for k=1:numel(xk)
-    [n_ux, n_uy,~,~,~] = kelvin_point(x_mat, y_mat, xk(k), y0_val, fx_val, fy_val, mu_val, nu_val);
+    [n_ux, n_uy,~,~, ~] = kelvin_point(x_mat, y_mat, xk(k), y0_val, fx_val, fy_val, mu_val, nu_val);
+    [~, ~,~,~, n_sxy] = kelvin_point(x_mat, y_mat, xk(k), y0_val + delta_y, fx_val, fy_val, mu_val, nu_val);
     ux_numeric_GL = ux_numeric_GL + n_ux.*wk(k);
     uy_numeric_GL = uy_numeric_GL + n_uy.*wk(k);
+    sxy_numeric_GL = sxy_numeric_GL + n_sxy.*wk(k);
 end
 toc
 
@@ -122,17 +137,20 @@ toc
 
 ux_numeric_TS = zeros(size(x_mat));
 uy_numeric_TS = zeros(size(x_mat));
+sxy_numeric_TS = zeros(size(x_mat));
 
 % numerical solution
-h=0.05;% step size for tanh-sinh
+h=1e-6;% step size for tanh-sinh
 n=fix(2/h);
 
-for k=-n:n    
+parfor k=-n:n    
     wk=(0.5*h*pi*cosh(k*h))./(cosh(0.5*pi*sinh(k*h))).^2;
     xk=tanh(0.5*pi*sinh(k*h));
-    [n_ux, n_uy,~,~,~] = kelvin_point(x_mat, y_mat, xk, y0_val, fx_val, fy_val, mu_val, nu_val);
+    [n_ux, n_uy,~,~, ~] = kelvin_point(x_mat, y_mat, xk, y0_val, fx_val, fy_val, mu_val, nu_val);
+    [~, ~,~,~, n_sxy] = kelvin_point(x_mat, y_mat, xk, y0_val + delta_y, fx_val, fy_val, mu_val, nu_val);
     ux_numeric_TS = ux_numeric_TS + n_ux.*wk;
     uy_numeric_TS = uy_numeric_TS + n_uy.*wk;
+    sxy_numeric_TS = sxy_numeric_TS + n_sxy.*wk;
 end
 
 %% compute solution using integral (adaptive quadrature)
@@ -140,17 +158,12 @@ ux_numeric_int = zeros(size(x_mat));
 uy_numeric_int = zeros(size(x_mat));
 sxy_numeric_int = zeros(size(x_mat));
 
-% need to shift y-evaluation pt to avoid blow up
-delta_y = 1e-11;
-
 tic
 parfor k=1:numel(x_mat)    
     ux_numeric_int(k) = integral(@(x0) gf_ux(x_mat(k),y_mat(k),x0, y0_val, fx_val, fy_val, mu_val, nu_val),-1,1);
     uy_numeric_int(k) = integral(@(x0) gf_uy(x_mat(k),y_mat(k),x0, y0_val, fx_val, fy_val, mu_val, nu_val),-1,1);
-    
-    % 
-    sxy_numeric_int(k) = quadgk(@(x0) gf_sxy(x_mat(k),y_mat(k),x0, y0_val + delta_y, fx_val, fy_val, mu_val, nu_val),-1,1);
-    
+    %
+    sxy_numeric_int(k) = quadgk(@(x0) gf_sxy(x_mat(k),y_mat(k),x0, y0_val + delta_y, fx_val, fy_val, mu_val, nu_val),-1,1);    
 end
 toc
 
@@ -225,10 +238,13 @@ else
     set(gca,'FontSize',15)
     
     figure(11),clf
-    plot(x_mat,sxy_numeric_int,'-','LineWidth',2)
+    plot(x_mat,sxy_mat,'-','LineWidth',2), hold on
+    plot(x_mat,sxy_numeric_TS,'k-','LineWidth',2)
+    plot(x_mat,sxy_numeric_int,'g-','LineWidth',1)
     axis tight
     xlabel('x'), ylabel('\sigma_{xy}')
     set(gca,'FontSize',15)
+    ylim([-1 1]*1)
     title(['y_0 shifted by ' num2str(delta_y)],'FontWeight','normal')
 end
 
@@ -249,9 +265,9 @@ function sxy = gf_sxy(x0, y0, xoffset, yoffset, fx, fy, mu, nu)
 [~, ~, ~, ~, sxy] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy, mu, nu);
 end
 
-function [ux, uy, sxx, syy, sxy] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy, mu, nu)
-    x = x0 - xoffset;
-    y = y0 - yoffset;
+function [ux, uy, sxx, syy, sxy] = kelvin_point(xobs, yobs, xs, ys, fx, fy, mu, nu)
+    x = xobs - xs;
+    y = yobs - ys;
     C = 1 / (4 * pi * (1 - nu));
     r = sqrt(x.^2 + y.^2);
     g = -C .* log(r);
