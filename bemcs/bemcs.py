@@ -2,6 +2,7 @@ import addict
 import numpy as np
 import matplotlib.pyplot as plt
 
+
 def plot_els_geometry(els):
     """Plot element geometry"""
     plt.figure()
@@ -1723,7 +1724,8 @@ def coeffs_to_disp_stress(kernels_s, kernels_n, coeffs_s, coeffs_n):
     sxy = kernels_s[2] @ coeffs_s + kernels_n[2] @ coeffs_n
     return ux, uy, sxx, syy, sxy
 
-def get_traction_kernels(els, kernels, flag = "global"):
+
+def get_traction_kernels(els, kernels, flag="global"):
     """Function to calculate kernels of traction vector from a set of stress kernels and unit vectors.
 
     Provide elements as a list with ["x_normal"] & ["y_normal"] for the unit normal vector.
@@ -1745,7 +1747,7 @@ def get_traction_kernels(els, kernels, flag = "global"):
     nvec = np.zeros((nrows, 2))
     # unit vector in shear direction
     svec = np.zeros((nrows, 2))
-    svec = np.vstack((els.x_shears,els.y_shears)).T
+    svec = np.vstack((els.x_shears, els.y_shears)).T
     for i in range(nrows):
         nvec[i, :] = np.array([els.x_normals[i], els.y_normals[i]])
 
@@ -1774,18 +1776,23 @@ def get_traction_kernels(els, kernels, flag = "global"):
 
     ts = tx * sx_matrix + ty * sy_matrix
     tn = tx * nx_matrix + ty * ny_matrix
-    
+
     if flag == "global":
         return tx, ty
     elif flag == "local":
         return ts, tn
     else:
-        ValueError('flag must be either global or local')
+        ValueError("flag must be either global or local")
 
 
 def plot_displacements_stresses_els(
-    els, n_obs, ux, uy, sxx, syy, sxy, x_obs, y_obs, n_skip_plot
+    els, n_obs, ux, uy, sxx, syy, sxy, x_obs, y_obs, n_skip_plot=1
 ):
+    """Plot 2 displacement (ux,uy) and 3 stress fields (sxx,syy,sxy) within a domain x_obs,y_obs
+
+    n_skip_plot is used for plotting displacement vectors - specify the number of points to skip
+    """
+
     def plot_els(els):
         n_els = len(els.x1)
         for i in range(n_els):
@@ -1799,11 +1806,14 @@ def plot_displacements_stresses_els(
     # Plot displacements
     plt.figure(figsize=(18, 8))
     plt.subplot(2, 3, 1)
+    maxval = np.max(np.abs(ux))
     plt.contourf(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         ux.reshape(n_obs, n_obs),
         cmap="coolwarm",
+        vmin=-maxval,
+        vmax=maxval,
     )
     plt.colorbar()
     plt.contour(
@@ -1826,11 +1836,14 @@ def plot_displacements_stresses_els(
     plt.title("$u_x$")
 
     plt.subplot(2, 3, 2)
+    maxval = np.max(np.abs(uy))
     plt.contourf(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         uy.reshape(n_obs, n_obs),
         cmap="coolwarm",
+        vmin=-maxval,
+        vmax=maxval,
     )
     plt.colorbar()
     plt.contour(
@@ -1855,11 +1868,14 @@ def plot_displacements_stresses_els(
     # Plot stresses
     plt.subplot(2, 3, 4)
     toplot = sxx
+    maxval = np.max(np.abs(toplot))
     plt.contourf(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         toplot.reshape(n_obs, n_obs),
         cmap="RdYlBu_r",
+        vmin=-maxval,
+        vmax=maxval,
     )
     plt.colorbar()
     plt.contour(
@@ -1869,6 +1885,7 @@ def plot_displacements_stresses_els(
         linewidths=0.25,
         colors="k",
     )
+    plt.clim(-maxval, maxval)
     plot_els(els)
     plt.xlim([np.min(x_obs), np.max(x_obs)])
     plt.ylim([np.min(y_obs), np.max(y_obs)])
@@ -1877,11 +1894,14 @@ def plot_displacements_stresses_els(
 
     plt.subplot(2, 3, 5)
     toplot = syy
+    maxval = np.max(np.abs(toplot))
     plt.contourf(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         toplot.reshape(n_obs, n_obs),
         cmap="RdYlBu_r",
+        vmin=-maxval,
+        vmax=maxval,
     )
     plt.colorbar()
     plt.contour(
@@ -1899,11 +1919,14 @@ def plot_displacements_stresses_els(
 
     plt.subplot(2, 3, 6)
     toplot = sxy
+    maxval = np.max(np.abs(toplot))
     plt.contourf(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         toplot.reshape(n_obs, n_obs),
         cmap="RdYlBu_r",
+        vmin=-maxval,
+        vmax=maxval,
     )
     plt.colorbar()
     plt.contour(
