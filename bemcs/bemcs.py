@@ -1807,21 +1807,23 @@ def plot_displacements_stresses_els(
     plt.figure(figsize=(18, 8))
     plt.subplot(2, 3, 1)
     maxval = np.max(np.abs(ux))
-    plt.contourf(
+    img = plt.contourf(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         ux.reshape(n_obs, n_obs),
         cmap="coolwarm",
         vmin=-maxval,
         vmax=maxval,
+        levels=np.linspace(-maxval, maxval, 11),
     )
-    plt.colorbar()
+    plt.colorbar(img)
     plt.contour(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         ux.reshape(n_obs, n_obs),
         linewidths=0.25,
         colors="k",
+        levels=np.linspace(-maxval, maxval, 11),
     )
     plot_els(els)
     plt.xlim([np.min(x_obs), np.max(x_obs)])
@@ -1837,21 +1839,23 @@ def plot_displacements_stresses_els(
 
     plt.subplot(2, 3, 2)
     maxval = np.max(np.abs(uy))
-    plt.contourf(
+    img = plt.contourf(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         uy.reshape(n_obs, n_obs),
         cmap="coolwarm",
+        levels=np.linspace(-maxval, maxval, 11),
         vmin=-maxval,
         vmax=maxval,
     )
-    plt.colorbar()
+    plt.colorbar(img)
     plt.contour(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         uy.reshape(n_obs, n_obs),
         linewidths=0.25,
         colors="k",
+        levels=np.linspace(-maxval, maxval, 11),
     )
     plot_els(els)
     plt.xlim([np.min(x_obs), np.max(x_obs)])
@@ -1869,21 +1873,23 @@ def plot_displacements_stresses_els(
     plt.subplot(2, 3, 4)
     toplot = sxx
     maxval = np.max(np.abs(toplot))
-    plt.contourf(
+    img = plt.contourf(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         toplot.reshape(n_obs, n_obs),
         cmap="RdYlBu_r",
         vmin=-maxval,
         vmax=maxval,
+        levels=np.linspace(-maxval, maxval, 11),
     )
-    plt.colorbar()
+    plt.colorbar(img)
     plt.contour(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         toplot.reshape(n_obs, n_obs),
         linewidths=0.25,
         colors="k",
+        levels=np.linspace(-maxval, maxval, 11),
     )
     plt.clim(-maxval, maxval)
     plot_els(els)
@@ -1895,21 +1901,23 @@ def plot_displacements_stresses_els(
     plt.subplot(2, 3, 5)
     toplot = syy
     maxval = np.max(np.abs(toplot))
-    plt.contourf(
+    img = plt.contourf(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         toplot.reshape(n_obs, n_obs),
+        levels=np.linspace(-maxval, maxval, 11),
         cmap="RdYlBu_r",
         vmin=-maxval,
         vmax=maxval,
     )
-    plt.colorbar()
+    plt.colorbar(img)
     plt.contour(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         toplot.reshape(n_obs, n_obs),
         linewidths=0.25,
         colors="k",
+        levels=np.linspace(-maxval, maxval, 11),
     )
     plot_els(els)
     plt.xlim([np.min(x_obs), np.max(x_obs)])
@@ -1920,19 +1928,21 @@ def plot_displacements_stresses_els(
     plt.subplot(2, 3, 6)
     toplot = sxy
     maxval = np.max(np.abs(toplot))
-    plt.contourf(
+    img = plt.contourf(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         toplot.reshape(n_obs, n_obs),
+        levels=np.linspace(-maxval, maxval, 11),
         cmap="RdYlBu_r",
         vmin=-maxval,
         vmax=maxval,
     )
-    plt.colorbar()
+    plt.colorbar(img)
     plt.contour(
         x_obs.reshape(n_obs, n_obs),
         y_obs.reshape(n_obs, n_obs),
         toplot.reshape(n_obs, n_obs),
+        levels=np.linspace(-maxval, maxval, 11),
         linewidths=0.25,
         colors="k",
     )
