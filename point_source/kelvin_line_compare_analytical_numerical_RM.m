@@ -126,7 +126,7 @@ N_gl = 61;
 tic
 for k=1:numel(xk)
     [n_ux, n_uy,~,~, ~] = kelvin_point(x_mat, y_mat, xk(k), y0_val, fx_val, fy_val, mu_val, nu_val);
-    [~, ~,~,~, n_sxy] = kelvin_point(x_mat, y_mat, xk(k), y0_val + delta_y, fx_val, fy_val, mu_val, nu_val);
+    [~, ~,~,~, n_sxy] = kelvin_point(x_mat, y_mat + delta_y, xk(k), y0_val, fx_val, fy_val, mu_val, nu_val);
     ux_numeric_GL = ux_numeric_GL + n_ux.*wk(k);
     uy_numeric_GL = uy_numeric_GL + n_uy.*wk(k);
     sxy_numeric_GL = sxy_numeric_GL + n_sxy.*wk(k);
@@ -140,14 +140,14 @@ uy_numeric_TS = zeros(size(x_mat));
 sxy_numeric_TS = zeros(size(x_mat));
 
 % numerical solution
-h=1e-6;% step size for tanh-sinh
+h=1e-7;% step size for tanh-sinh
 n=fix(2/h);
 
 parfor k=-n:n    
     wk=(0.5*h*pi*cosh(k*h))./(cosh(0.5*pi*sinh(k*h))).^2;
     xk=tanh(0.5*pi*sinh(k*h));
     [n_ux, n_uy,~,~, ~] = kelvin_point(x_mat, y_mat, xk, y0_val, fx_val, fy_val, mu_val, nu_val);
-    [~, ~,~,~, n_sxy] = kelvin_point(x_mat, y_mat, xk, y0_val + delta_y, fx_val, fy_val, mu_val, nu_val);
+    [~, ~,~,~, n_sxy] = kelvin_point(x_mat, y_mat + delta_y, xk, y0_val, fx_val, fy_val, mu_val, nu_val);
     ux_numeric_TS = ux_numeric_TS + n_ux.*wk;
     uy_numeric_TS = uy_numeric_TS + n_uy.*wk;
     sxy_numeric_TS = sxy_numeric_TS + n_sxy.*wk;
@@ -163,7 +163,7 @@ parfor k=1:numel(x_mat)
     ux_numeric_int(k) = integral(@(x0) gf_ux(x_mat(k),y_mat(k),x0, y0_val, fx_val, fy_val, mu_val, nu_val),-1,1);
     uy_numeric_int(k) = integral(@(x0) gf_uy(x_mat(k),y_mat(k),x0, y0_val, fx_val, fy_val, mu_val, nu_val),-1,1);
     %
-    sxy_numeric_int(k) = quadgk(@(x0) gf_sxy(x_mat(k),y_mat(k),x0, y0_val + delta_y, fx_val, fy_val, mu_val, nu_val),-1,1);    
+    sxy_numeric_int(k) = quadgk(@(x0) gf_sxy(x_mat(k),y_mat(k) + delta_y,x0, y0_val, fx_val, fy_val, mu_val, nu_val),-1,1);    
 end
 toc
 
@@ -201,23 +201,24 @@ if eval_type==1
 else
     subplot(2,1,1)
     plot(x_mat,ux_mat,'-','LineWidth',4), hold on
-    plot(x_mat,ux_numeric_GL,'-','LineWidth',1)
-    plot(x_mat,ux_numeric_TS,'k-','LineWidth',1)
-    plot(x_mat,ux_numeric_int,'g--','LineWidth',2)
+    % plot(x_mat,ux_numeric_GL,'-','LineWidth',1)
+    plot(x_mat,ux_numeric_TS,'k-','LineWidth',2)
+    plot(x_mat,ux_numeric_int,'r--','LineWidth',2)
     plot([-1,1],[0,0],'k-','Linewidth',2)
     axis tight, grid on
     xlabel('x'), ylabel('u_x')
-    legend('analytical','GL-quadrature','TS-quadrature','adaptive')
+    legend('analytical','TS-quadrature','adaptive')
     set(gca,'FontSize',15)
 
     subplot(2,1,2)
     plot(x_mat,uy_mat,'-','LineWidth',4), hold on
-    plot(x_mat,uy_numeric_GL,'-','LineWidth',1)
-    plot(x_mat,uy_numeric_TS,'k-','LineWidth',1)
-    plot(x_mat,uy_numeric_int,'g--','LineWidth',2)
+    % plot(x_mat,uy_numeric_GL,'-','LineWidth',1)
+    plot(x_mat,uy_numeric_TS,'k-','LineWidth',2)
+    plot(x_mat,uy_numeric_int,'r--','LineWidth',2)
     plot([-1,1],[0,0],'k-','Linewidth',2)
     axis tight, grid on
     xlabel('x'), ylabel('u_y')
+    legend('analytical','TS-quadrature','adaptive')
     set(gca,'FontSize',15)
 
     figure(10),clf
@@ -238,14 +239,15 @@ else
     set(gca,'FontSize',15)
     
     figure(11),clf
-    plot(x_mat,sxy_mat,'-','LineWidth',2), hold on
-    plot(x_mat,sxy_numeric_TS,'k-','LineWidth',2)
-    plot(x_mat,sxy_numeric_int,'g-','LineWidth',1)
+    % plot(x_mat,0.*sxy_mat,'-','LineWidth',2), hold on
+    plot(x_mat,sxy_numeric_TS,'k-','LineWidth',2), hold on
+    plot(x_mat,sxy_numeric_int,'r-','LineWidth',2)
     axis tight
     xlabel('x'), ylabel('\sigma_{xy}')
     set(gca,'FontSize',15)
     ylim([-1 1]*1)
-    title(['y_0 shifted by ' num2str(delta_y)],'FontWeight','normal')
+    legend('TS-quadrature','adaptive')
+    % title(['y_0 shifted by ' num2str(delta_y)],'FontWeight','normal')
 end
 
 %% define kelvin point source function

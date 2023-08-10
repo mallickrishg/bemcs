@@ -4,6 +4,7 @@
 % Rishav Mallick, 2023, Caltech Seismolab
 
 clear 
+addpath /Users/mallickrishg/Dropbox/scripts/topotoolbox/colormaps/
 
 % need to provide this triangle in terms of a double integral over x and f(x)
 % default experiment sets a triangle with a base from -1<=x<=1, and provide
@@ -28,7 +29,7 @@ eval_type = 0;
 
 n_pts = 100;
 x_vec = linspace(-2, 2, n_pts);
-y_vec = linspace(-1.5, 1.5, n_pts);
+y_vec = linspace(-2, 2, n_pts);
 
 if eval_type == 1
     % create a box grid of points
@@ -41,7 +42,7 @@ end
 %% rectangle domain
 n_eval = 4; % must be an even number
 
-rectangle_x = 1*ones(n_eval,1);
+rectangle_x = ones(n_eval,1);
 rectangle_y = logspace(-1,0,n_eval)';
 
 %% numerical integration (with matlab integral)
@@ -50,11 +51,13 @@ ux_vals = zeros(length(x_mat(:,1)),length(x_mat(1,:)),n_eval);
 uy_vals = zeros(length(x_mat(:,1)),length(x_mat(1,:)),n_eval);
 sxx_vals = zeros(length(x_mat(:,1)),length(x_mat(1,:)),n_eval);
 syy_vals = zeros(length(x_mat(:,1)),length(x_mat(1,:)),n_eval);
+sxy_vals = zeros(length(x_mat(:,1)),length(x_mat(1,:)),n_eval);
 
 ux_numeric_int = zeros(size(x_mat));
 uy_numeric_int = zeros(size(x_mat));
 sxx_numeric_int = zeros(size(x_mat));
 syy_numeric_int = zeros(size(x_mat));
+sxy_numeric_int = zeros(size(x_mat));
 
 tic
 for i = 1:n_eval
@@ -66,17 +69,20 @@ for i = 1:n_eval
         fun_uy = @(x0,y0) gf_uy(x_mat(k),y_mat(k),x0, y0, fx_val, fy_val, mu_val, nu_val);
         fun_sxx = @(x0,y0) gf_sxx(x_mat(k),y_mat(k),x0, y0, fx_val, fy_val, mu_val, nu_val);
         fun_syy = @(x0,y0) gf_syy(x_mat(k),y_mat(k),x0, y0, fx_val, fy_val, mu_val, nu_val);
+        fun_sxy = @(x0,y0) gf_sxy(x_mat(k),y_mat(k),x0, y0, fx_val, fy_val, mu_val, nu_val);
 
         ux_numeric_int(k) = integral2(fun_ux,-Rx/2,Rx/2,-Ry/2,Ry/2)./area_source;
         uy_numeric_int(k) = integral2(fun_uy,-Rx/2,Rx/2,-Ry/2,Ry/2)./area_source;
-        % sxx_numeric_int(k) = integral2(fun_sxx,-Rx/2,Rx/2,-Ry/2,Ry/2)./area_source;
-        % syy_numeric_int(k) = integral2(fun_syy,-Rx/2,Rx/2,-Ry/2,Ry/2)./area_source;
+        sxx_numeric_int(k) = integral2(fun_sxx,-Rx/2,Rx/2,-Ry/2,Ry/2)./area_source;
+        syy_numeric_int(k) = integral2(fun_syy,-Rx/2,Rx/2,-Ry/2,Ry/2)./area_source;
+        sxy_numeric_int(k) = integral2(fun_sxy,-Rx/2,Rx/2,-Ry/2,Ry/2)./area_source;
     end
 
     ux_vals(:,:,i) = ux_numeric_int;
     uy_vals(:,:,i) = uy_numeric_int;
-    % sxx_vals(:,:,i) = sxx_numeric_int;
-    % syy_vals(:,:,i) = syy_numeric_int;
+    sxx_vals(:,:,i) = sxx_numeric_int;
+    syy_vals(:,:,i) = syy_numeric_int;
+    sxy_vals(:,:,i) = sxy_numeric_int;
 end
 toc
 
@@ -84,7 +90,10 @@ toc
 %% plot solutions
 figure(11),clf
 figure(12),clf
+
 if eval_type==1
+    figure(13),clf
+    figure(14),clf
     for i = 1:n_eval
         figure(11)
         subplot(n_eval/2,2,i)
@@ -103,23 +112,48 @@ if eval_type==1
         colormap(sky(10))
         xlabel('x'), ylabel('y')
         set(gca,'Fontsize',15)
-
+        
+        % plot stress components
         figure(12)
         subplot(n_eval/2,2,i)
-
         toplot_n = squeeze(sxx_vals(:,:,i));
-        contourf(x_mat, y_mat, toplot_n,5), hold on
+        contourf(x_mat, y_mat, toplot_n,11), hold on
         cb=colorbar;cb.Label.String = '\sigma_{xx}';
-        clim([-1,1].*0.02)
+        clim([-1,1].*max(abs(sxx_vals(:))))
         axis("equal")
         title(['Source area = ' num2str(rectangle_x(i)*rectangle_y(i))])
-        colormap(parula(100))
+        colormap(ttscm('vik',100))
+        xlabel('x'), ylabel('y')
+        set(gca,'Fontsize',15)
+
+        figure(13)
+        subplot(n_eval/2,2,i)
+        toplot_n = squeeze(syy_vals(:,:,i));
+        contourf(x_mat, y_mat, toplot_n,11), hold on
+        cb=colorbar;cb.Label.String = '\sigma_{yy}';
+        clim([-1,1].*max(abs(syy_vals(:))))
+        axis("equal")
+        title(['Source area = ' num2str(rectangle_x(i)*rectangle_y(i))])
+        colormap(ttscm('vik',100))
+        xlabel('x'), ylabel('y')
+        set(gca,'Fontsize',15)
+
+        figure(14)
+        subplot(n_eval/2,2,i)
+        toplot_n = squeeze(sxy_vals(:,:,i));
+        contourf(x_mat, y_mat, toplot_n,11), hold on
+        cb=colorbar;cb.Label.String = '\sigma_{xy}';
+        clim([-1,1].*max(abs(sxy_vals(:))))
+        axis("equal")
+        title(['Source area = ' num2str(rectangle_x(i)*rectangle_y(i))])
+        colormap(ttscm('vik',100))
         xlabel('x'), ylabel('y')
         set(gca,'Fontsize',15)
     end
 else
     cspec = cool(n_eval);
-    for i = 1:n_eval        
+    for i = 1:n_eval 
+        figure(11)
         ux = squeeze(ux_vals(:,:,i));
         uy = squeeze(uy_vals(:,:,i));
         subplot(2,1,1)
@@ -133,36 +167,62 @@ else
         axis tight, grid on
         xlabel('x'), ylabel('u_y')
         set(gca,'FontSize',15)
+
+        figure(12)
+        subplot(3,1,1)
+        toplot_n = squeeze(sxx_vals(:,:,i));
+        plot(x_mat,toplot_n,'-','LineWidth',2,'Color',cspec(i,:)), hold on
+        axis tight, grid on
+        xlabel('x'), ylabel('\sigma_{xx}')
+        set(gca,'FontSize',15)
+
+        subplot(3,1,2)
+        toplot_n = squeeze(syy_vals(:,:,i));
+        plot(x_mat,toplot_n,'-','LineWidth',2,'Color',cspec(i,:)), hold on
+        axis tight, grid on
+        xlabel('x'), ylabel('\sigma_{yy}')
+        set(gca,'FontSize',15)
+
+        subplot(3,1,3)
+        toplot_n = squeeze(sxy_vals(:,:,i));
+        plot(x_mat,toplot_n,'-','LineWidth',2,'Color',cspec(i,:)), hold on
+        axis tight, grid on
+        xlabel('x'), ylabel('\sigma_{xy}')
+        set(gca,'FontSize',15)
+        
+
     end
 end
 
-% solution from last run only
-figure(21),clf
-if eval_type==1
-    n_skip = 13;
-    toplot_n = sqrt(ux_numeric_int.^2 + uy_numeric_int.^2);
-    contourf(x_mat, y_mat, toplot_n), hold on
-    quiver(x_mat(1:n_skip:end), y_mat(1:n_skip:end),ux_numeric_int(1:n_skip:end),uy_numeric_int(1:n_skip:end),'r','Linewidth',1)
-    colorbar;
-    clim([0,1].*max(abs(toplot_n(:))))
-    axis("equal")
-    title('Adaptive quadrature')
-    set(gca,'Fontsize',12)
 
-else
-    subplot(2,1,1)
-    plot(x_mat,ux_numeric_int,'-','LineWidth',2)
-    axis tight, grid on
-    xlabel('x'), ylabel('u_x')
-    set(gca,'FontSize',15)
+if false
+    % solution from last run only
+    figure(21),clf
+    if eval_type==1
+        n_skip = 13;
+        toplot_n = sqrt(ux_numeric_int.^2 + uy_numeric_int.^2);
+        contourf(x_mat, y_mat, toplot_n), hold on
+        quiver(x_mat(1:n_skip:end), y_mat(1:n_skip:end),ux_numeric_int(1:n_skip:end),uy_numeric_int(1:n_skip:end),'r','Linewidth',1)
+        colorbar;
+        clim([0,1].*max(abs(toplot_n(:))))
+        axis("equal")
+        title('Adaptive quadrature')
+        set(gca,'Fontsize',12)
 
-    subplot(2,1,2)
-    plot(x_mat,uy_numeric_int,'-','LineWidth',2)
-    axis tight, grid on
-    xlabel('x'), ylabel('u_y')
-    set(gca,'FontSize',15)
+    else
+        subplot(2,1,1)
+        plot(x_mat,ux_numeric_int,'-','LineWidth',2)
+        axis tight, grid on
+        xlabel('x'), ylabel('u_x')
+        set(gca,'FontSize',15)
+
+        subplot(2,1,2)
+        plot(x_mat,uy_numeric_int,'-','LineWidth',2)
+        axis tight, grid on
+        xlabel('x'), ylabel('u_y')
+        set(gca,'FontSize',15)
+    end
 end
-
 %% define kelvin point source function
 function ux = gf_ux(x0, y0, xoffset, yoffset, fx, fy, mu, nu)
 [ux, ~, ~, ~, ~] = kelvin_point(x0, y0, xoffset, yoffset, fx, fy, mu, nu);
