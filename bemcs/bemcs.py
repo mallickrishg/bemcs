@@ -1586,6 +1586,12 @@ def rotate_displacement_stress(displacement, stress, inverse_rotation_matrix):
 
 
 def get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, flag):
+    """Function to calculate displacement and stress kernels at a numpy array of locations [x_obs,y_obs]
+
+    flag can either be "shear" or "normal" for kernels resulting shear slip or tensile slip
+
+    kernels returned are u_x, u_y, stress_xx, stress_yy, stress_xy
+    """
     n_obs = len(x_obs)
     n_els = len(els.x1)
 
