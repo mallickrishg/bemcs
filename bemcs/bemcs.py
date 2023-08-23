@@ -1585,6 +1585,76 @@ def rotate_displacement_stress(displacement, stress, inverse_rotation_matrix):
     return displacement, stress
 
 
+def get_displacement_stress_kernel_constant(x_obs, y_obs, els, mu, nu, flag):
+    """Function to calculate displacement and stress kernels at a numpy array of locations [x_obs,y_obs]
+
+    flag can either be "shear" or "normal" for kernels resulting shear slip or tensile slip
+
+    kernels returned are u_x, u_y, stress_xx, stress_yy, stress_xy
+    """
+    n_obs = len(x_obs)
+    n_els = len(els.x1)
+    kernel_ux = np.zeros((n_obs, n_els))
+    kernel_uy = np.zeros((n_obs, n_els))
+    kernel_sxx = np.zeros((n_obs, n_els))
+    kernel_syy = np.zeros((n_obs, n_els))
+    kernel_sxy = np.zeros((n_obs, n_els))
+
+    # check for which slip component kernels the user wants
+    if flag == "shear":
+        flag_strike_slip = 1.0
+        flag_tensile_slip = 0.0
+    elif flag == "normal":
+        flag_strike_slip = 0.0
+        flag_tensile_slip = 1.0
+    else:
+        raise ValueError(
+            "shear/tensile flag must be 'shear' or 'normal', no other values allowed"
+        )
+
+    for i in range(n_els):
+        # Center observation locations (no translation needed)
+        x_trans = x_obs - els.x_centers[i]
+        y_trans = y_obs - els.y_centers[i]
+
+        # Rotate observations such that fault element is horizontal
+        rotated_coordinates = els.rot_mats_inv[i, :, :] @ np.vstack(
+            (x_trans.T, y_trans.T)
+        )
+        x_rot = rotated_coordinates[0, :].T + els.x_centers[i]
+        y_rot = rotated_coordinates[1, :].T + els.y_centers[i]
+
+        slip_vector = np.array([1.0])
+        strike_slip = slip_vector * flag_strike_slip
+        tensile_slip = slip_vector * flag_tensile_slip
+
+        # Calculate displacements and stresses for current element
+        (
+            displacement_local,
+            stress_local,
+        ) = displacements_stresses_constant_no_rotation(
+            x_rot,
+            y_rot,
+            els.half_lengths[i],
+            mu,
+            nu,
+            strike_slip,
+            tensile_slip,
+            els.x_centers[i],
+            els.y_centers[i],
+        )
+        displacement_eval, stress_eval = rotate_displacement_stress(
+            displacement_local, stress_local, els.rot_mats_inv[i, :, :]
+        )
+        # index = 3 * i
+        kernel_sxx[:, i] = stress_eval[0, :]
+        kernel_syy[:, i] = stress_eval[1, :]
+        kernel_sxy[:, i] = stress_eval[2, :]
+        kernel_ux[:, i] = displacement_eval[0, :]
+        kernel_uy[:, i] = displacement_eval[1, :]
+    return kernel_sxx, kernel_syy, kernel_sxy, kernel_ux, kernel_uy
+
+
 def get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, flag):
     """Function to calculate displacement and stress kernels at a numpy array of locations [x_obs,y_obs]
 

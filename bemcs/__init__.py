@@ -23,6 +23,7 @@ from .bemcs import (
     coeffs_to_disp_stress,
     plot_displacements_stresses_els,
     get_traction_kernels,
+    get_displacement_stress_kernel_constant,
 )
 
 try:
