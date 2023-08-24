@@ -11,4 +11,5 @@ dependencies:
   - tqdm
   - h5py
   - colorcet
+  - cmcrameri
   - rich
