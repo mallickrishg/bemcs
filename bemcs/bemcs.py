@@ -2100,3 +2100,42 @@ def standardize_els_geometry(els):
                 ]
             ),
         ).reshape(-1, 3)
+
+
+def get_strain_from_stress(sxx, syy, sxy, mu, nu, conversion="plane_strain"):
+    youngs_modulus = 2 * mu * (1 + nu)
+
+    if conversion == "plane_strain":
+        print(f"{conversion=}")
+        # Plane strain linear operator. I think this is Crouch and Starfield???
+        stress_from_strain_plane_strain = (
+            youngs_modulus
+            / ((1 + nu) * (1 - 2 * nu))
+            * np.array([[1 - nu, nu, 0], [nu, 1 - nu, 0], [0, 0, (1 - 2 * nu) / 2.0]])
+        )
+        strain_from_stress_plane_strain = np.linalg.inv(stress_from_strain_plane_strain)
+        operator = np.copy(strain_from_stress_plane_strain)
+
+    elif conversion == "plane_stress":
+        print(f"{conversion=}")
+        # Plane stress linear operator
+        strain_from_stress_plane_stress = (
+            1
+            / youngs_modulus
+            * np.array([[1, -nu, 0], [-nu, 1, 0], [0, 0, 2 * (1 + nu)]])
+        )
+        operator = np.copy(strain_from_stress_plane_stress)
+
+    print(f"{operator}")
+
+    # Calculate strains
+    exx = np.zeros_like(sxx)
+    exy = np.zeros_like(syy)
+    eyy = np.zeros_like(sxy)
+    for i in range(len(sxx)):
+        stresses = np.array([sxx[i], syy[i], sxy[i]])
+        exx[i], eyy[i], exy[i] = operator @ stresses
+
+    # Calculate strain energy
+    strain_energy = sxx * exx + syy * eyy + sxy * exy
+    return strain_energy

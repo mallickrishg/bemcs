@@ -24,6 +24,7 @@ from .bemcs import (
     plot_displacements_stresses_els,
     get_traction_kernels,
     get_displacement_stress_kernel_constant,
+    get_strain_from_stress,
 )
 
 try:
