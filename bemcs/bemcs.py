@@ -2050,6 +2050,12 @@ def initialize_els():
 
 def standardize_els_geometry(els):
     for i in range(len(els.x1)):
+        # If neccesary change order of end points so that
+        # x1 is closest to negative infinity
+        if els.x2[i] < els.x1[i]:
+            els.x2[i], els.x1[i] = els.x1[i], els.x2[i]
+            els.y2[i], els.y1[i] = els.y1[i], els.y2[i]
+            
         dx = els.x2[i] - els.x1[i]
         dy = els.y2[i] - els.y1[i]
         magnitude = np.sqrt(dx**2.0 + dy**2.0)
