@@ -2055,7 +2055,7 @@ def standardize_els_geometry(els):
         if els.x2[i] < els.x1[i]:
             els.x2[i], els.x1[i] = els.x1[i], els.x2[i]
             els.y2[i], els.y1[i] = els.y1[i], els.y2[i]
-            
+
         dx = els.x2[i] - els.x1[i]
         dy = els.y2[i] - els.y1[i]
         magnitude = np.sqrt(dx**2.0 + dy**2.0)
@@ -2145,3 +2145,58 @@ def get_strain_from_stress(sxx, syy, sxy, mu, nu, conversion="plane_strain"):
     # Calculate strain energy
     strain_energy = sxx * exx + syy * eyy + sxy * exy
     return strain_energy
+
+
+def get_slipvector_on_fault(els, coeffs, n_eval):
+    """Get slip vector evaluated ON the fault in (x,y) coordinate system.
+
+    Args:
+        els: fault geometry data structure
+        coeffs: quadratic slip coefficients ordered as [3 x shear_slip, 3 x tensile_slip] per fault element
+        n_eval: number of points to evaluate slip vector
+
+    Returns:
+        x_obs, y_obs: x,y coordinates of locations where slip vector is computed
+        fault_slip_x, fault_slip_y: components of slip vector, each of dimension [n_eval x n_els]
+    """
+
+    stride = 6
+    n_els = len(els.x1)
+
+    # calculate slip as a continuous function
+    fault_slip_s = np.zeros(n_els * n_eval)
+    fault_slip_n = np.zeros(n_els * n_eval)
+    fault_slip_x = np.zeros(n_els * n_eval)
+    fault_slip_y = np.zeros(n_els * n_eval)
+    # evaluation locations
+    x_obs = np.zeros_like(fault_slip_x)
+    y_obs = np.zeros_like(fault_slip_x)
+
+    # Extract (s, n) components and store them in two separate vectors
+    coeffs_s = np.zeros((3 * n_els))
+    coeffs_n = np.zeros((3 * n_els))
+    for i in range(n_els):
+        coeffs_s[3 * i : 3 * (i + 1)] = coeffs[stride * i : stride * i + 3]
+        coeffs_n[3 * i : 3 * (i + 1)] = coeffs[stride * i + 3 : stride * (i + 1)]
+
+    for i in range(n_els):
+        # evaluation locations on the fault
+        x_obs[i * n_eval : (i + 1) * n_eval] = np.linspace(els.x1[i], els.x2[i], n_eval)
+        y_obs[i * n_eval : (i + 1) * n_eval] = np.linspace(els.y1[i], els.y2[i], n_eval)
+
+        # calculate slip in (s,n) coordinates
+        xdummy = np.linspace(-0.5, 0.5, n_eval)
+        s_s = slip_functions(xdummy, 0.5) @ coeffs_s[3 * i : 3 * (i + 1)]
+        s_n = slip_functions(xdummy, 0.5) @ coeffs_n[3 * i : 3 * (i + 1)]
+        fault_slip_s[i * n_eval : (i + 1) * n_eval] = s_s
+        fault_slip_n[i * n_eval : (i + 1) * n_eval] = s_n
+
+        # rotate from (s,n) to (x,y)
+        slip_vector = np.vstack((s_s, s_n)).T
+        slip_vector_rotated = slip_vector @ els.rot_mats_inv[i, :, :]
+        s_x = slip_vector_rotated[:, 0]
+        s_y = slip_vector_rotated[:, 1]
+        fault_slip_x[i * n_eval : (i + 1) * n_eval] = s_x
+        fault_slip_y[i * n_eval : (i + 1) * n_eval] = s_y
+
+    return x_obs, y_obs, fault_slip_x, fault_slip_y
