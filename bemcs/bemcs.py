@@ -1660,7 +1660,7 @@ def get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, flag):
 
     flag can either be "shear" or "normal" for kernels resulting shear slip or tensile slip
 
-    kernels returned are u_x, u_y, stress_xx, stress_yy, stress_xy
+    kernels returned are stress_xx, stress_yy, stress_xy, u_x, u_y
     """
     n_obs = len(x_obs)
     n_els = len(els.x1)
