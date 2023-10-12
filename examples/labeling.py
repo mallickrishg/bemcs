@@ -20,9 +20,9 @@ def label_nodes(els):
     unique_points, id_unique = np.unique(points, axis=0, return_index=True)
 
     # Find number of open, 2-overlap & triple junction nodes
-    index_matrix1 = []
-    index_matrix2 = []
-    index_matrix3 = []
+    index_matrix1 = []  # open
+    index_matrix2 = []  # 2-overlap
+    index_matrix3 = []  # triple junction
     for i in range(len(unique_points)):
         pts = unique_points[i, :].reshape(1, -1)
 
@@ -37,7 +37,7 @@ def label_nodes(els):
         elif np.size(id2) == 2:
             id_combo = np.hstack((id1[0] * 3, -(id2[0] * 3 + 2)))
         else:
-            id_combo = np.hstack((id1[0] * 3, id2[0] * 3 + 2))
+            id_combo = np.hstack((id1[0] * 3, -(id2[0] * 3 + 2)))
 
         if np.size(id_combo) == 1:
             index_matrix1.append(id_combo)
@@ -79,7 +79,7 @@ def construct_smoothoperator(els, index_open, index_overlap, index_triple):
 
     # Linear operator for open nodes
     for i in range(int(N_o / 2)):
-        id1 = index_open[i]  # node number
+        id1 = np.abs(index_open[i])  # node number
         matrix_system_o[2 * i, :] = matrix_slip[2 * id1, :]  # x component
         matrix_system_o[2 * i + 1, :] = matrix_slip[2 * id1 + 1, :]  # y component
 
@@ -87,20 +87,24 @@ def construct_smoothoperator(els, index_open, index_overlap, index_triple):
     for i in range(int(N_i / 4)):
         idvals = index_overlap[i]  # node number
         # continuity condition
+        sign1 = np.sign(idvals[0])
+        sign2 = np.sign(idvals[1])
         matrix_system_i[4 * i, :] = (
-            matrix_slip[2 * idvals[0], :] - matrix_slip[2 * idvals[1], :]
+            sign1 * matrix_slip[2 * np.abs(idvals[0]), :]
+            + sign2 * matrix_slip[2 * np.abs(idvals[1]), :]
         )  # x
         matrix_system_i[4 * i + 1, :] = (
-            matrix_slip[2 * idvals[0] + 1, :] - matrix_slip[2 * idvals[1] + 1, :]
+            sign1 * matrix_slip[2 * np.abs(idvals[0]) + 1, :]
+            + sign2 * matrix_slip[2 * np.abs(idvals[1]) + 1, :]
         )  # y
         # smoothing constraints
         matrix_system_i[4 * i + 2, :] = (
-            matrix_slip_gradient[2 * idvals[0], :]
-            - matrix_slip_gradient[2 * idvals[1], :]
+            sign1 * matrix_slip_gradient[2 * np.abs(idvals[0]), :]
+            + sign2 * matrix_slip_gradient[2 * np.abs(idvals[1]), :]
         )  # x
         matrix_system_i[4 * i + 3, :] = (
-            matrix_slip_gradient[2 * idvals[0] + 1, :]
-            - matrix_slip_gradient[2 * idvals[1] + 1, :]
+            sign1 * matrix_slip_gradient[2 * np.abs(idvals[0]) + 1, :]
+            + sign2 * matrix_slip_gradient[2 * np.abs(idvals[1]) + 1, :]
         )  # y
 
     # Linear operator for triple junction nodes
