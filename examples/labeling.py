@@ -32,12 +32,18 @@ def label_nodes(els):
 
         # The negative signs are for the triple junction equations
         # s_1 + s_2 + s_3 = 0 with the negative sign going to any 2 elements that are both id1 or id2
-        if np.size(id1) == 2:
+        if (np.size(id1) == 2) & (np.size(id2) == 1):
             id_combo = np.hstack((-id1[0] * 3, id2[0] * 3 + 2))
-        elif np.size(id2) == 2:
+        elif (np.size(id2) == 2) & (np.size(id1) == 1):
             id_combo = np.hstack((id1[0] * 3, -(id2[0] * 3 + 2)))
+        elif (np.size(id2) == 1) & (np.size(id1) == 1):
+            id_combo = np.hstack((id1[0] * 3, -(id2[0] * 3 + 2)))
+        elif (np.size(id2) == 2) & (np.size(id1) == 0):
+            id_combo = np.hstack(((id2[0][0] * 3 + 2), -(id2[0][1] * 3 + 2)))
+        elif (np.size(id1) == 2) & (np.size(id2) == 0):
+            id_combo = np.hstack(((id1[0][0] * 3), -(id1[0][1] * 3)))
         else:
-            id_combo = np.hstack((id1[0] * 3, -(id2[0] * 3 + 2)))
+            id_combo = np.hstack((id1[0] * 3, (id2[0] * 3 + 2)))
 
         if np.size(id_combo) == 1:
             index_matrix1.append(id_combo)
