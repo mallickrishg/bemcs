@@ -26,6 +26,8 @@ from .bemcs import (
     get_displacement_stress_kernel_constant,
     get_strain_from_stress,
     get_slipvector_on_fault,
+    label_nodes,
+    construct_smoothoperator,
 )
 
 try:
