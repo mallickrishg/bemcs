@@ -1520,14 +1520,17 @@ def get_slip_slipgradient(x, a, phi):
     return slip, slipgradient
 
 
-def get_matrices_slip_slip_gradient(els, flag="node"):
+def get_matrices_slip_slip_gradient(els, flag="node", reference="global"):
     """Assemble design matrix in (x,y) coordinate system for 2 slip components (s,n) for a
     linear system of equations to calculate quadratic coefficients from applied boundary conditions for an ordered list of fault elements.
 
     flag = "node" : slip is applied at each node of a fault element
     flag = "mean" : slip is applied as a mean value over the entire fault element, not just at nodes
 
-    Unit vectors for each patch are used to premultiply the input matrices
+    reference = "global" : slip is applied in a global (x,y) coordinate system
+    reference = "local"  : slip is applied in a local (s,n) coordinate system
+
+    Unit vectors for each patch are used to premultiply the input matrices for the global reference frame
     [dx nx] [f1 f2 f3 0  0  0]
     [dy ny] [0  0  0  f1 f2 f3]"""
 
@@ -1560,12 +1563,25 @@ def get_matrices_slip_slip_gradient(els, flag="node"):
         slip_mat_stack[1::2, 3:] = slip_mat
         slip_gradient_mat_stack[0::2, 0:3] = slip_gradient_mat
         slip_gradient_mat_stack[1::2, 3:] = slip_gradient_mat
-        mat_slip[stride * i : stride * (i + 1), stride * i : stride * (i + 1)] = (
-            unit_vec_mat_stack @ slip_mat_stack
-        )
-        mat_slip_gradient[
-            stride * i : stride * (i + 1), stride * i : stride * (i + 1)
-        ] = (unit_vec_mat_stack @ slip_gradient_mat_stack)
+
+        if reference == "global":
+            mat_slip[stride * i : stride * (i + 1), stride * i : stride * (i + 1)] = (
+                unit_vec_mat_stack @ slip_mat_stack
+            )
+            mat_slip_gradient[
+                stride * i : stride * (i + 1), stride * i : stride * (i + 1)
+            ] = (unit_vec_mat_stack @ slip_gradient_mat_stack)
+        elif reference == "local":
+            mat_slip[
+                stride * i : stride * (i + 1), stride * i : stride * (i + 1)
+            ] = slip_mat_stack
+
+            mat_slip_gradient[
+                stride * i : stride * (i + 1), stride * i : stride * (i + 1)
+            ] = slip_gradient_mat_stack
+        else:
+            raise ValueError("Invalid reference frame. Use either 'global' or 'local'")
+
     return mat_slip, mat_slip_gradient
 
 
