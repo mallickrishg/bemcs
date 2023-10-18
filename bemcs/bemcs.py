@@ -2278,7 +2278,7 @@ def construct_smoothoperator(els, index_open, index_overlap, index_triple):
     n_els = len(els.x1)
     Nunknowns = 6 * n_els
     # Design matrices (in x,y coordinates) for slip and slip gradients at each 3qn
-    matrix_slip, matrix_slip_gradient = bemcs.get_matrices_slip_slip_gradient(els)
+    matrix_slip, matrix_slip_gradient = get_matrices_slip_slip_gradient(els)
 
     N_o = 2 * len(index_open)  # open node equations
     N_i = 4 * len(index_overlap)  # overlapping node equations
