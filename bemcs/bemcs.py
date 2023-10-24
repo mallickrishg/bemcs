@@ -2064,11 +2064,11 @@ def initialize_els():
     return els
 
 
-def standardize_els_geometry(els):
+def standardize_els_geometry(els, reorder=True):
     for i in range(len(els.x1)):
         # If neccesary change order of end points so that
         # x1 is closest to negative infinity
-        if els.x2[i] < els.x1[i]:
+        if (els.x2[i] < els.x1[i]) & (reorder == True):
             els.x2[i], els.x1[i] = els.x1[i], els.x2[i]
             els.y2[i], els.y1[i] = els.y1[i], els.y2[i]
 
