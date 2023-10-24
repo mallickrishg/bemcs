@@ -2314,8 +2314,16 @@ def construct_smoothoperator(els, index_open, index_overlap, index_triple):
     for i in range(int(N_i / 4)):
         idvals = index_overlap[i]  # node number
         # continuity condition
-        sign1 = np.sign(idvals[0])
-        sign2 = np.sign(idvals[1])
+        if (idvals[0] != 0) & (idvals[1] != 0):
+            sign1 = np.sign(idvals[0])
+            sign2 = np.sign(idvals[1])
+        elif (idvals[0] == 0) & (idvals[1] != 0):
+            sign1 = 1
+            sign2 = -1
+        else:
+            sign1 = -1
+            sign2 = 1
+
         matrix_system_i[4 * i, :] = (
             sign1 * matrix_slip[2 * np.abs(idvals[0]), :]
             + sign2 * matrix_slip[2 * np.abs(idvals[1]), :]
