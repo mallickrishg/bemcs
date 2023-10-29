@@ -13,3 +13,4 @@ dependencies:
   - colorcet
   - cmcrameri
   - rich
+  - pandas
