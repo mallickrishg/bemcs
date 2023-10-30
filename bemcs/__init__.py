@@ -28,6 +28,7 @@ from .bemcs import (
     get_slipvector_on_fault,
     label_nodes,
     construct_smoothoperator,
+    inpolygon,
 )
 
 try:

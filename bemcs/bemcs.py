@@ -1,6 +1,7 @@
 import addict
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib
 
 
 def plot_els_geometry(els):
@@ -2394,3 +2395,25 @@ def construct_smoothoperator(els, index_open, index_overlap, index_triple):
         )  # y
 
     return matrix_system_o, matrix_system_i, matrix_system_t
+
+
+def inpolygon(xq, yq, xv, yv):
+    """From: https://stackoverflow.com/questions/31542843/inpolygon-examples-of-matplotlib-path-path-contains-points-method
+
+    Args:
+        xq : x coordinates of points to test
+        yq : y coordinates of points to test
+        xv : x coordinates of polygon vertices
+        yv : y coordinates of polygon vertices
+
+    Returns:
+        _type_: Boolean like for in or out of polygon
+    """
+    shape = xq.shape
+    xq = xq.reshape(-1)
+    yq = yq.reshape(-1)
+    xv = xv.reshape(-1)
+    yv = yv.reshape(-1)
+    q = [(xq[i], yq[i]) for i in range(xq.shape[0])]
+    p = matplotlib.path.Path([(xv[i], yv[i]) for i in range(xv.shape[0])])
+    return p.contains_points(q).reshape(shape)
