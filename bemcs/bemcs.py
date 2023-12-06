@@ -2129,7 +2129,7 @@ def get_strain_from_stress(sxx, syy, sxy, mu, nu, conversion="plane_strain"):
     youngs_modulus = 2 * mu * (1 + nu)
 
     if conversion == "plane_strain":
-        print(f"{conversion=}")
+        # print(f"{conversion=}")
         # Plane strain linear operator. I think this is Crouch and Starfield???
         stress_from_strain_plane_strain = (
             youngs_modulus
@@ -2140,7 +2140,7 @@ def get_strain_from_stress(sxx, syy, sxy, mu, nu, conversion="plane_strain"):
         operator = np.copy(strain_from_stress_plane_strain)
 
     elif conversion == "plane_stress":
-        print(f"{conversion=}")
+        # print(f"{conversion=}")
         # Plane stress linear operator
         strain_from_stress_plane_stress = (
             1
@@ -2149,7 +2149,7 @@ def get_strain_from_stress(sxx, syy, sxy, mu, nu, conversion="plane_strain"):
         )
         operator = np.copy(strain_from_stress_plane_stress)
 
-    print(f"{operator}")
+    # print(f"{operator}")
 
     # Calculate strains
     exx = np.zeros_like(sxx)
