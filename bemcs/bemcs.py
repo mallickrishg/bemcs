@@ -2197,9 +2197,11 @@ def get_slipvector_on_fault(els, coeffs, n_eval):
         coeffs_n[3 * i : 3 * (i + 1)] = coeffs[stride * i + 3 : stride * (i + 1)]
 
     for i in range(n_els):
+        xvec = np.linspace(els.x1[i], els.x2[i], n_eval + 1)
+        yvec = np.linspace(els.y1[i], els.y2[i], n_eval + 1)
         # evaluation locations on the fault
-        x_obs[i * n_eval : (i + 1) * n_eval] = np.linspace(els.x1[i], els.x2[i], n_eval)
-        y_obs[i * n_eval : (i + 1) * n_eval] = np.linspace(els.y1[i], els.y2[i], n_eval)
+        x_obs[i * n_eval : (i + 1) * n_eval] = 0.5 * (xvec[1:] + xvec[0:-1])
+        y_obs[i * n_eval : (i + 1) * n_eval] = 0.5 * (yvec[1:] + yvec[0:-1])
 
         # calculate slip in (s,n) coordinates
         xdummy = np.linspace(-0.5, 0.5, n_eval)
