@@ -2204,9 +2204,10 @@ def get_slipvector_on_fault(els, coeffs, n_eval):
         y_obs[i * n_eval : (i + 1) * n_eval] = 0.5 * (yvec[1:] + yvec[0:-1])
 
         # calculate slip in (s,n) coordinates
-        xdummy = np.linspace(-0.5, 0.5, n_eval)
-        s_s = slip_functions(xdummy, 0.5) @ coeffs_s[3 * i : 3 * (i + 1)]
-        s_n = slip_functions(xdummy, 0.5) @ coeffs_n[3 * i : 3 * (i + 1)]
+        xmesh = np.linspace(-0.5, 0.5, n_eval + 1)
+        xeval = 0.5 * (xmesh[1:] + xmesh[0:-1])
+        s_s = slip_functions(xeval, 0.5) @ coeffs_s[3 * i : 3 * (i + 1)]
+        s_n = slip_functions(xeval, 0.5) @ coeffs_n[3 * i : 3 * (i + 1)]
         fault_slip_s[i * n_eval : (i + 1) * n_eval] = s_s
         fault_slip_n[i * n_eval : (i + 1) * n_eval] = s_n
 
