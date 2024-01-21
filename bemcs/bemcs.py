@@ -2125,7 +2125,7 @@ def standardize_els_geometry(els, reorder=True):
         ).reshape(-1, 3)
 
 
-def get_strain_from_stress(sxx, syy, sxy, mu, nu, conversion="plane_strain"):
+def get_strainenergy_from_stress(sxx, syy, sxy, mu, nu, conversion="plane_strain"):
     youngs_modulus = 2 * mu * (1 + nu)
 
     if conversion == "plane_strain":
