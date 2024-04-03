@@ -14,3 +14,4 @@ dependencies:
   - cmcrameri
   - rich
   - pandas
+  - pygmsh
