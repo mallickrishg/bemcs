@@ -1320,13 +1320,17 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
     INPUTS
 
     xo,yo - observation locations provided as individual vectors [Nobs x 1]
+
     x_center,y_center - source element center location (scalars)
+
     w - source element half-length
+
     mu - Shear modulus
 
     OUTPUTS
 
     Disp - displacement kernels [Nobs x 3 basis functions]
+
     Stress - 3-d stress_kernels     [Nobs x (sx or sy) x 3 basis functions]"""
 
     x = xo - x_center
@@ -1531,13 +1535,17 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
     INPUTS
 
     xo, yo - observation locations provided as individual vectors [Nobs x 1]
+
     x_center, y_center - source element center location (scalars)
+
     w - source element half-length
+
     mu - Elastic parameters
 
     OUTPUTS
 
     Disp - 2-d displacement kernels [Nobs x 2 basis functions]
+
     Stress - 3-d stress_kernels     [Nobs x (sx or sy) x 2 basis functions]"""
 
     n_obs = len(xo)
