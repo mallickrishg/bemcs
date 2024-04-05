@@ -95,10 +95,7 @@ def constant_kernel(x, y, a, nu):
     f[2, :] = (
         1
         / (4 * np.pi * (1 - nu))
-        * (
-            np.log(np.sqrt((x - a) ** 2 + y**2))
-            - np.log(np.sqrt((x + a) ** 2 + y**2))
-        )
+        * (np.log(np.sqrt((x - a) ** 2 + y**2)) - np.log(np.sqrt((x + a) ** 2 + y**2)))
     )
 
     f[3, :] = (
@@ -126,10 +123,7 @@ def constant_kernel(x, y, a, nu):
         2
         * y
         / (4 * np.pi * (1 - nu))
-        * (
-            (x - a) / ((x - a) ** 2 + y**2) ** 2
-            - (x + a) / ((x + a) ** 2 + y**2) ** 2
-        )
+        * ((x - a) / ((x - a) ** 2 + y**2) ** 2 - (x + a) / ((x + a) ** 2 + y**2) ** 2)
     )
     return f
 
@@ -353,18 +347,10 @@ def quadratic_kernel_farfield(x, y, a, nu):
             )
             * arctan_x_minus_a
             - 3
-            * (
-                y**5
-                + 2 * (a**2 + x**2) * y**3
-                + (a**4 - 2 * a**2 * x**2 + x**4) * y
-            )
+            * (y**5 + 2 * (a**2 + x**2) * y**3 + (a**4 - 2 * a**2 * x**2 + x**4) * y)
             * np.log(abs(a**2 + 2 * a * x + x**2 + y**2))
             + 3
-            * (
-                y**5
-                + 2 * (a**2 + x**2) * y**3
-                + (a**4 - 2 * a**2 * x**2 + x**4) * y
-            )
+            * (y**5 + 2 * (a**2 + x**2) * y**3 + (a**4 - 2 * a**2 * x**2 + x**4) * y)
             * np.log(abs(a**2 - 2 * a * x + x**2 + y**2))
         )
         / (
@@ -398,18 +384,10 @@ def quadratic_kernel_farfield(x, y, a, nu):
             - 18 * (a**4 * x - 2 * a**2 * x**3 + x**5) * arctan_x_plus_a
             - 18 * (a**4 * x - 2 * a**2 * x**3 + x**5) * arctan_x_minus_a
             + 9
-            * (
-                y**5
-                + 2 * (a**2 + x**2) * y**3
-                + (a**4 - 2 * a**2 * x**2 + x**4) * y
-            )
+            * (y**5 + 2 * (a**2 + x**2) * y**3 + (a**4 - 2 * a**2 * x**2 + x**4) * y)
             * np.log(abs(a**2 + 2 * a * x + x**2 + y**2))
             - 9
-            * (
-                y**5
-                + 2 * (a**2 + x**2) * y**3
-                + (a**4 - 2 * a**2 * x**2 + x**4) * y
-            )
+            * (y**5 + 2 * (a**2 + x**2) * y**3 + (a**4 - 2 * a**2 * x**2 + x**4) * y)
             * np.log(abs(a**2 - 2 * a * x + x**2 + y**2))
         )
         / (
@@ -464,18 +442,10 @@ def quadratic_kernel_farfield(x, y, a, nu):
             )
             * arctan_x_minus_a
             + 3
-            * (
-                y**5
-                + 2 * (a**2 + x**2) * y**3
-                + (a**4 - 2 * a**2 * x**2 + x**4) * y
-            )
+            * (y**5 + 2 * (a**2 + x**2) * y**3 + (a**4 - 2 * a**2 * x**2 + x**4) * y)
             * np.log(abs(a**2 + 2 * a * x + x**2 + y**2))
             - 3
-            * (
-                y**5
-                + 2 * (a**2 + x**2) * y**3
-                + (a**4 - 2 * a**2 * x**2 + x**4) * y
-            )
+            * (y**5 + 2 * (a**2 + x**2) * y**3 + (a**4 - 2 * a**2 * x**2 + x**4) * y)
             * np.log(abs(a**2 - 2 * a * x + x**2 + y**2))
         )
         / (
@@ -507,10 +477,7 @@ def quadratic_kernel_farfield(x, y, a, nu):
             - 12 * a * x**4
             - 12 * a * y**4
             + 12
-            * (
-                (a**2 + x**2) * arctan_x_plus_a
-                + (a**2 + x**2) * arctan_x_minus_a
-            )
+            * ((a**2 + x**2) * arctan_x_plus_a + (a**2 + x**2) * arctan_x_minus_a)
             * y**3
             - 2 * (9 * a**3 - 2 * a**2 * x + 12 * a * x**2) * y**2
             + 6
@@ -568,10 +535,7 @@ def quadratic_kernel_farfield(x, y, a, nu):
             - 36 * a * x**4
             - 36 * a * y**4
             + 36
-            * (
-                (a**2 + x**2) * arctan_x_plus_a
-                + (a**2 + x**2) * arctan_x_minus_a
-            )
+            * ((a**2 + x**2) * arctan_x_plus_a + (a**2 + x**2) * arctan_x_minus_a)
             * y**3
             - 2 * (31 * a**3 + 36 * a * x**2) * y**2
             + 18
@@ -627,10 +591,7 @@ def quadratic_kernel_farfield(x, y, a, nu):
             - 12 * a * x**4
             - 12 * a * y**4
             + 12
-            * (
-                (a**2 + x**2) * arctan_x_plus_a
-                + (a**2 + x**2) * arctan_x_minus_a
-            )
+            * ((a**2 + x**2) * arctan_x_plus_a + (a**2 + x**2) * arctan_x_minus_a)
             * y**3
             - 2 * (9 * a**3 + 2 * a**2 * x + 12 * a * x**2) * y**2
             + 6
@@ -692,9 +653,7 @@ def quadratic_kernel_farfield(x, y, a, nu):
             + 12 * a * x**7
             + 12 * a * x * y**6
             + 4 * (2 * a**4 + 12 * a**3 * x + 9 * a * x**3) * y**4
-            + 4
-            * (4 * a**6 + 3 * a**5 * x - 12 * a**4 * x**2 + 9 * a * x**5)
-            * y**2
+            + 4 * (4 * a**6 + 3 * a**5 * x - 12 * a**4 * x**2 + 9 * a * x**5) * y**2
             - 3
             * (
                 a**8
@@ -843,9 +802,7 @@ def quadratic_kernel_farfield(x, y, a, nu):
             - 12 * a * x**7
             - 12 * a * x * y**6
             + 4 * (2 * a**4 - 12 * a**3 * x - 9 * a * x**3) * y**4
-            + 4
-            * (4 * a**6 - 3 * a**5 * x - 12 * a**4 * x**2 - 9 * a * x**5)
-            * y**2
+            + 4 * (4 * a**6 - 3 * a**5 * x - 12 * a**4 * x**2 - 9 * a * x**5) * y**2
             + 3
             * (
                 a**8
@@ -916,10 +873,7 @@ def quadratic_kernel_farfield(x, y, a, nu):
             3 * y**8 * (arctan_x_plus_a + arctan_x_minus_a)
             - 6 * a * y**7
             + 12
-            * (
-                (a**2 + x**2) * arctan_x_plus_a
-                + (a**2 + x**2) * arctan_x_minus_a
-            )
+            * ((a**2 + x**2) * arctan_x_plus_a + (a**2 + x**2) * arctan_x_minus_a)
             * y**6
             - 6 * (4 * a**3 + 3 * a * x**2) * y**5
             + 6
@@ -932,8 +886,7 @@ def quadratic_kernel_farfield(x, y, a, nu):
             + 12
             * (
                 (a**6 - a**4 * x**2 - a**2 * x**4 + x**6) * arctan_x_plus_a
-                + (a**6 - a**4 * x**2 - a**2 * x**4 + x**6)
-                * arctan_x_minus_a
+                + (a**6 - a**4 * x**2 - a**2 * x**4 + x**6) * arctan_x_minus_a
             )
             * y**2
             - 2
@@ -947,22 +900,10 @@ def quadratic_kernel_farfield(x, y, a, nu):
             )
             * y
             + 3
-            * (
-                a**8
-                - 4 * a**6 * x**2
-                + 6 * a**4 * x**4
-                - 4 * a**2 * x**6
-                + x**8
-            )
+            * (a**8 - 4 * a**6 * x**2 + 6 * a**4 * x**4 - 4 * a**2 * x**6 + x**8)
             * arctan_x_plus_a
             + 3
-            * (
-                a**8
-                - 4 * a**6 * x**2
-                + 6 * a**4 * x**4
-                - 4 * a**2 * x**6
-                + x**8
-            )
+            * (a**8 - 4 * a**6 * x**2 + 6 * a**4 * x**4 - 4 * a**2 * x**6 + x**8)
             * arctan_x_minus_a
         )
         / (
@@ -1007,10 +948,7 @@ def quadratic_kernel_farfield(x, y, a, nu):
             9 * y**8 * (arctan_x_plus_a + arctan_x_minus_a)
             - 18 * a * y**7
             + 36
-            * (
-                (a**2 + x**2) * arctan_x_plus_a
-                + (a**2 + x**2) * arctan_x_minus_a
-            )
+            * ((a**2 + x**2) * arctan_x_plus_a + (a**2 + x**2) * arctan_x_minus_a)
             * y**6
             - 2 * (32 * a**3 + 27 * a * x**2) * y**5
             + 18
@@ -1023,30 +961,15 @@ def quadratic_kernel_farfield(x, y, a, nu):
             + 36
             * (
                 (a**6 - a**4 * x**2 - a**2 * x**4 + x**6) * arctan_x_plus_a
-                + (a**6 - a**4 * x**2 - a**2 * x**4 + x**6)
-                * arctan_x_minus_a
+                + (a**6 - a**4 * x**2 - a**2 * x**4 + x**6) * arctan_x_minus_a
             )
             * y**2
-            - 2
-            * (14 * a**7 + a**5 * x**2 - 24 * a**3 * x**4 + 9 * a * x**6)
-            * y
+            - 2 * (14 * a**7 + a**5 * x**2 - 24 * a**3 * x**4 + 9 * a * x**6) * y
             + 9
-            * (
-                a**8
-                - 4 * a**6 * x**2
-                + 6 * a**4 * x**4
-                - 4 * a**2 * x**6
-                + x**8
-            )
+            * (a**8 - 4 * a**6 * x**2 + 6 * a**4 * x**4 - 4 * a**2 * x**6 + x**8)
             * arctan_x_plus_a
             + 9
-            * (
-                a**8
-                - 4 * a**6 * x**2
-                + 6 * a**4 * x**4
-                - 4 * a**2 * x**6
-                + x**8
-            )
+            * (a**8 - 4 * a**6 * x**2 + 6 * a**4 * x**4 - 4 * a**2 * x**6 + x**8)
             * arctan_x_minus_a
         )
         / (
@@ -1091,10 +1014,7 @@ def quadratic_kernel_farfield(x, y, a, nu):
             3 * y**8 * (arctan_x_plus_a + arctan_x_minus_a)
             - 6 * a * y**7
             + 12
-            * (
-                (a**2 + x**2) * arctan_x_plus_a
-                + (a**2 + x**2) * arctan_x_minus_a
-            )
+            * ((a**2 + x**2) * arctan_x_plus_a + (a**2 + x**2) * arctan_x_minus_a)
             * y**6
             - 6 * (4 * a**3 + 3 * a * x**2) * y**5
             + 6
@@ -1107,8 +1027,7 @@ def quadratic_kernel_farfield(x, y, a, nu):
             + 12
             * (
                 (a**6 - a**4 * x**2 - a**2 * x**4 + x**6) * arctan_x_plus_a
-                + (a**6 - a**4 * x**2 - a**2 * x**4 + x**6)
-                * arctan_x_minus_a
+                + (a**6 - a**4 * x**2 - a**2 * x**4 + x**6) * arctan_x_minus_a
             )
             * y**2
             - 2
@@ -1122,22 +1041,10 @@ def quadratic_kernel_farfield(x, y, a, nu):
             )
             * y
             + 3
-            * (
-                a**8
-                - 4 * a**6 * x**2
-                + 6 * a**4 * x**4
-                - 4 * a**2 * x**6
-                + x**8
-            )
+            * (a**8 - 4 * a**6 * x**2 + 6 * a**4 * x**4 - 4 * a**2 * x**6 + x**8)
             * arctan_x_plus_a
             + 3
-            * (
-                a**8
-                - 4 * a**6 * x**2
-                + 6 * a**4 * x**4
-                - 4 * a**2 * x**6
-                + x**8
-            )
+            * (a**8 - 4 * a**6 * x**2 + 6 * a**4 * x**4 - 4 * a**2 * x**6 + x**8)
             * arctan_x_minus_a
         )
         / (
@@ -1400,6 +1307,328 @@ def displacements_stresses_quadratic_no_rotation(
     return displacement_all, stress_all
 
 
+def displacements_stresses_quadratic_slip_no_rotation_antiplane(
+    xo,
+    yo,
+    w,
+    mu,
+    x_center=0,
+    y_center=0,
+):
+    """compute displacement and stress kernels for a quadratically varying slip on a horizontal source element (-w <= x <= w, y = 0)
+
+    INPUTS
+
+    xo,yo - observation locations provided as individual vectors [Nobs x 1]
+    x_center,y_center - source element center location (scalars)
+    w - source element half-length
+    mu - Shear modulus
+
+    OUTPUTS
+
+    Disp - displacement kernels [Nobs x 3 basis functions]
+    Stress - 3-d stress_kernels     [Nobs x (sx or sy) x 3 basis functions]"""
+
+    x = xo - x_center
+    y = yo - y_center
+    Nobs = len(x[:, 0])
+
+    u1 = (
+        (3 / 16)
+        * w ** (-2)
+        * np.pi ** (-1)
+        * (
+            6 * w * y
+            + ((-2) * w * x + 3 * (x + (-1) * y) * (x + y))
+            * np.arctan((w + (-1) * x) * y ** (-1))
+            + ((-2) * w * x + 3 * (x + (-1) * y) * (x + y))
+            * np.arctan((w + x) * y ** (-1))
+            + (w + (-3) * x)
+            * y
+            * ((-1) * np.log((w + (-1) * x) ** 2 + y**2) + np.log((w + x) ** 2 + y**2))
+        )
+    )
+
+    u2 = (
+        (1 / 8)
+        * w ** (-2)
+        * np.pi ** (-1)
+        * (
+            (-18) * w * y
+            + (4 * w**2 + 9 * y**2) * np.arctan((w + (-1) * x) * y ** (-1))
+            + 9 * x**2 * np.arctan(((-1) * w + x) * y ** (-1))
+            + (4 * w**2 + (-9) * x**2 + 9 * y**2) * np.arctan((w + x) * y ** (-1))
+            + 9
+            * x
+            * y
+            * ((-1) * np.log((w + (-1) * x) ** 2 + y**2) + np.log((w + x) ** 2 + y**2))
+        )
+    )
+
+    u3 = (
+        (3 / 16)
+        * w ** (-2)
+        * np.pi ** (-1)
+        * (
+            6 * w * y
+            + (2 * w * x + 3 * (x + (-1) * y) * (x + y))
+            * np.arctan((w + (-1) * x) * y ** (-1))
+            + (2 * w * x + 3 * (x + (-1) * y) * (x + y))
+            * np.arctan((w + x) * y ** (-1))
+            + (w + 3 * x)
+            * y
+            * (np.log((w + (-1) * x) ** 2 + y**2) + (-1) * np.log((w + x) ** 2 + y**2))
+        )
+    )
+
+    ex1 = (
+        (3 / 32)
+        * w ** (-2)
+        * np.pi ** (-1)
+        * (
+            (-2)
+            * (w + (-3) * x)
+            * (np.arctan((w + (-1) * x) * y ** (-1)) + np.arctan((w + x) * y ** (-1)))
+            + y
+            * (
+                w**2
+                * (
+                    (-1) * ((w + (-1) * x) ** 2 + y**2) ** (-1)
+                    + 5 * ((w + x) ** 2 + y**2) ** (-1)
+                )
+                + 3 * np.log((w + (-1) * x) ** 2 + y**2)
+                + (-3) * np.log((w + x) ** 2 + y**2)
+            )
+        )
+    )
+
+    ex2 = (
+        (1 / 16)
+        * w ** (-2)
+        * np.pi ** (-1)
+        * (
+            (-18)
+            * x
+            * (np.arctan((w + (-1) * x) * y ** (-1)) + np.arctan((w + x) * y ** (-1)))
+            + y
+            * (
+                20
+                * w**3
+                * x
+                * (
+                    (w**4 + 2 * w**2 * ((-1) * x**2 + y**2) + (x**2 + y**2) ** 2)
+                    ** (-1)
+                )
+                + (-9) * np.log((w + (-1) * x) ** 2 + y**2)
+                + 9 * np.log((w + x) ** 2 + y**2)
+            )
+        )
+    )
+
+    ex3 = (
+        (3 / 32)
+        * w ** (-2)
+        * np.pi ** (-1)
+        * (
+            2
+            * (w + 3 * x)
+            * (np.arctan((w + (-1) * x) * y ** (-1)) + np.arctan((w + x) * y ** (-1)))
+            + y
+            * (
+                w**2
+                * (
+                    (-5) * ((w + (-1) * x) ** 2 + y**2) ** (-1)
+                    + ((w + x) ** 2 + y**2) ** (-1)
+                )
+                + 3 * np.log((w + (-1) * x) ** 2 + y**2)
+                + (-3) * np.log((w + x) ** 2 + y**2)
+            )
+        )
+    )
+
+    ey1 = (
+        (3 / 32)
+        * w ** (-2)
+        * np.pi ** (-1)
+        * (
+            w
+            * (
+                12
+                + w * ((-1) * w + x) * ((w + (-1) * x) ** 2 + y**2) ** (-1)
+                + (-5) * w * (w + x) * ((w + x) ** 2 + y**2) ** (-1)
+            )
+            + (-6)
+            * y
+            * (np.arctan((w + (-1) * x) * y ** (-1)) + np.arctan((w + x) * y ** (-1)))
+            + (-1)
+            * (w + (-3) * x)
+            * (np.log((w + (-1) * x) ** 2 + y**2) + (-1) * np.log((w + x) ** 2 + y**2))
+        )
+    )
+
+    ey2 = (
+        (-1 / 16)
+        * w ** (-2)
+        * np.pi ** (-1)
+        * (
+            w
+            * (
+                36
+                + 5 * w * ((-1) * w + x) * ((w + (-1) * x) ** 2 + y**2) ** (-1)
+                + (-5) * w * (w + x) * ((w + x) ** 2 + y**2) ** (-1)
+            )
+            + (-18)
+            * y
+            * (np.arctan((w + (-1) * x) * y ** (-1)) + np.arctan((w + x) * y ** (-1)))
+            + 9 * x * np.log((w + (-1) * x) ** 2 + y**2)
+            + (-9) * x * np.log((w + x) ** 2 + y**2)
+        )
+    )
+
+    ey3 = (
+        (3 / 32)
+        * w ** (-2)
+        * np.pi ** (-1)
+        * (
+            w
+            * (
+                12
+                + 5 * w * ((-1) * w + x) * ((w + (-1) * x) ** 2 + y**2) ** (-1)
+                + (-1) * w * (w + x) * ((w + x) ** 2 + y**2) ** (-1)
+            )
+            + (-6)
+            * y
+            * (np.arctan((w + (-1) * x) * y ** (-1)) + np.arctan((w + x) * y ** (-1)))
+            + (w + 3 * x)
+            * (np.log((w + (-1) * x) ** 2 + y**2) + (-1) * np.log((w + x) ** 2 + y**2))
+        )
+    )
+
+    sx = mu * np.hstack([ex1, ex2, ex3])
+    sy = mu * np.hstack([ey1, ey2, ey3])
+
+    # Create a 2D numpy array for displacements
+    # Disp_kernels - [Nobs x 3 basis functions]
+    Disp = np.hstack([u1, u2, u3])
+
+    # Create a 3D numpy array for Stress
+    # Stress_kernels - [Nobs x (sx or sy) x 3 basis functions]
+    Stress = np.zeros((Nobs, 2, 3))
+
+    # Assign values to the stress kernels
+    Stress[:, 0, :] = sx
+    Stress[:, 1, :] = sy
+
+    return Disp, Stress
+
+
+def displacements_stresses_linear_force_no_rotation_antiplane(
+    xo, yo, w, mu, x_center, y_center
+):
+    """Compute displacement and stress kernels for a linearly varying force on a
+    horizontal source element (-w <= x <= w, y = 0)
+
+    INPUTS
+
+    xo, yo - observation locations provided as individual vectors [Nobs x 1]
+    x_center, y_center - source element center location (scalars)
+    w - source element half-length
+    mu - Elastic parameters
+
+    OUTPUTS
+
+    Disp - 2-d displacement kernels [Nobs x 2 basis functions]
+    Stress - 3-d stress_kernels     [Nobs x (sx or sy) x 2 basis functions]"""
+
+    n_obs = len(xo)
+    x = xo - x_center
+    y = yo - y_center
+
+    u_1 = (
+        (1 / 16)
+        * np.pi ** (-1)
+        * w ** (-1)
+        * (
+            (-4) * w * (2 * w + x)
+            + 4 * (w + x) * y * np.arctan2(w - x, y)
+            + 4 * (w + x) * y * np.arctan2(w + x, y)
+            + ((w + (-1) * x) * (3 * w + x) + y**2) * np.log((w + (-1) * x) ** 2 + y**2)
+            + (w + x + (-1) * y) * (w + x + y) * np.log((w + x) ** 2 + y**2)
+        )
+    )
+
+    u_2 = (
+        (1 / 16)
+        * np.pi ** (-1)
+        * w ** (-1)
+        * (
+            4 * w * ((-2) * w + x)
+            + 4 * (w + (-1) * x) * y * np.arctan2(w - x, y)
+            + 4 * (w + (-1) * x) * y * np.arctan2(w + x, y)
+            + (w + (-1) * x + (-1) * y)
+            * (w + (-1) * x + y)
+            * np.log((w + (-1) * x) ** 2 + y**2)
+            + ((3 * w + (-1) * x) * (w + x) + y**2) * np.log((w + x) ** 2 + y**2)
+        )
+    )
+
+    ex_1 = (
+        (1 / 8)
+        * np.pi ** (-1)
+        * w ** (-1)
+        * (
+            (-4) * w
+            + 2 * y * (np.arctan2(w - x, y) + np.arctan2(w + x, y))
+            + (-1) * (w + x) * np.log((w + (-1) * x) ** 2 + y**2)
+            + (w + x) * np.log((w + x) ** 2 + y**2)
+        )
+    )
+
+    ex_2 = (
+        (-1 / 8)
+        * np.pi ** (-1)
+        * w ** (-1)
+        * (
+            (-4) * w
+            + 2 * y * (np.arctan2(w - x, y) + np.arctan2(w + x, y))
+            + (w + (-1) * x)
+            * (np.log((w + (-1) * x) ** 2 + y**2) + (-1) * np.log((w + x) ** 2 + y**2))
+        )
+    )
+
+    ey_1 = (
+        (1 / 8)
+        * np.pi ** (-1)
+        * w ** (-1)
+        * (
+            2 * (w + x) * (np.arctan2(w - x, y) + np.arctan2(w + x, y))
+            + y
+            * (np.log((w + (-1) * x) ** 2 + y**2) + (-1) * np.log((w + x) ** 2 + y**2))
+        )
+    )
+
+    ey_2 = (
+        (1 / 8)
+        * np.pi ** (-1)
+        * w ** (-1)
+        * (
+            2 * (w + (-1) * x) * (np.arctan2(w - x, y) + np.arctan2(w + x, y))
+            + y
+            * ((-1) * np.log((w + (-1) * x) ** 2 + y**2) + np.log((w + x) ** 2 + y**2))
+        )
+    )
+
+    # Store displacement kernels (2-d matrix), [Nobs x 2 basis functions]
+    Disp = np.hstack((u_1, u_2))
+
+    # Store stress kernels (3-d matrix), [Nobs x (sx or sy) x 2 basis functions]
+    Stress = np.zeros((n_obs, 2, 2))
+    Stress[:, 0, :] = np.hstack((mu * ex_1, mu * ex_2))
+    Stress[:, 1, :] = np.hstack((mu * ey_1, mu * ey_2))
+
+    return Disp, Stress
+
+
 def f_slip_to_displacement_stress(x_component, y_component, f, y, mu, nu):
     """This is the generalization from Starfield and Crouch"""
     displacement = np.zeros((2, y.size))
@@ -1573,9 +1802,9 @@ def get_matrices_slip_slip_gradient(els, flag="node", reference="global"):
                 stride * i : stride * (i + 1), stride * i : stride * (i + 1)
             ] = (unit_vec_mat_stack @ slip_gradient_mat_stack)
         elif reference == "local":
-            mat_slip[
-                stride * i : stride * (i + 1), stride * i : stride * (i + 1)
-            ] = slip_mat_stack
+            mat_slip[stride * i : stride * (i + 1), stride * i : stride * (i + 1)] = (
+                slip_mat_stack
+            )
 
             mat_slip_gradient[
                 stride * i : stride * (i + 1), stride * i : stride * (i + 1)
