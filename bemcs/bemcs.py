@@ -2175,6 +2175,36 @@ def get_traction_kernels(els, kernels, flag="global"):
         ValueError("flag must be either global or local")
 
 
+def get_traction_kernels_antiplane(els, kernels):
+    """Function to calculate kernels of traction vector from a set of stress kernels and unit vectors.
+
+    Provide elements as a list with ["x_normal"] & ["y_normal"] for the unit normal vector.
+
+    kernels must be provided as kernels[0] = Kxz, kernels[1] = Kyz
+
+    """
+    Kxz = kernels[0]
+    Kyz = kernels[1]
+
+    # unit vector in normal direction
+    nvec = np.vstack((els.x_normals, els.y_normals)).T
+
+    nx_matrix = np.zeros_like(Kxz)
+    ny_matrix = np.zeros_like(Kxz)
+
+    nx_matrix[:, 0::3] = nvec[:, 0].reshape(-1, 1)
+    nx_matrix[:, 1::3] = nvec[:, 0].reshape(-1, 1)
+    nx_matrix[:, 2::3] = nvec[:, 0].reshape(-1, 1)
+    ny_matrix[:, 0::3] = nvec[:, 1].reshape(-1, 1)
+    ny_matrix[:, 1::3] = nvec[:, 1].reshape(-1, 1)
+    ny_matrix[:, 2::3] = nvec[:, 1].reshape(-1, 1)
+
+    # traction vector t = n.σ
+    t = Kxz * nx_matrix + Kyz * ny_matrix
+
+    return t
+
+
 def plot_displacements_stresses_els(
     els, n_obs, ux, uy, sxx, syy, sxy, x_obs, y_obs, n_skip_plot=1
 ):
