@@ -1839,6 +1839,12 @@ def rotate_displacement_stress(displacement, stress, inverse_rotation_matrix):
     return displacement, stress
 
 
+def rotate_stress_antiplane(stress, inverse_rotation_matrix):
+    """Rotate antiplane stress vector from local to global reference frame"""
+    stress_rot = np.matmul(stress.T, inverse_rotation_matrix).T
+    return stress_rot
+
+
 def get_displacement_stress_kernel_constant(x_obs, y_obs, els, mu, nu, flag):
     """Function to calculate displacement and stress kernels at a numpy array of locations [x_obs,y_obs]
 
@@ -2040,6 +2046,52 @@ def get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, flag):
         kernel_ux[:, index] = displacement_eval[0, :]
         kernel_uy[:, index] = displacement_eval[1, :]
     return kernel_sxx, kernel_syy, kernel_sxy, kernel_ux, kernel_uy
+
+
+def get_displacement_stress_kernel_slip_antiplane(x_obs, y_obs, els, mu):
+    """Function to calculate displacement and stress kernels due to a fault source in antiplane geometry
+    at a numpy array of locations [x_obs,y_obs]
+
+    kernels returned are stress_xz, stress_yz, u
+    """
+    n_obs = len(x_obs)
+    n_els = len(els.x1)
+
+    kernel_u = np.zeros((n_obs, 3 * n_els))
+    kernel_sxz = np.zeros((n_obs, 3 * n_els))
+    kernel_syz = np.zeros((n_obs, 3 * n_els))
+
+    for i in range(n_els):
+        # Center observation locations (no translation needed)
+        x_trans = x_obs - els.x_centers[i]
+        y_trans = y_obs - els.y_centers[i]
+
+        # Rotate observations such that fault element is horizontal
+        rotated_coordinates = els.rot_mats_inv[i, :, :] @ np.vstack(
+            (x_trans.T, y_trans.T)
+        )
+        x_rot = rotated_coordinates[0, :].T
+        y_rot = rotated_coordinates[1, :].T
+
+        # Calculate displacements and stresses for current element
+        (
+            displacement_eval,
+            stress_local,
+        ) = displacements_stresses_quadratic_slip_no_rotation_antiplane(
+            x_rot,
+            y_rot,
+            els.half_lengths[i],
+            mu,
+            els.x_centers[i],
+            els.y_centers[i],
+        )
+        stress_eval = rotate_stress_antiplane(stress_local, els.rot_mats_inv[i, :, :])
+        index = 3 * i
+        kernel_sxz[:, index] = stress_eval[0, :]
+        kernel_syz[:, index] = stress_eval[1, :]
+        kernel_u[:, index] = displacement_eval[1, :]
+
+    return kernel_sxz, kernel_syz, kernel_u
 
 
 def coeffs_to_disp_stress(kernels_s, kernels_n, coeffs_s, coeffs_n):
