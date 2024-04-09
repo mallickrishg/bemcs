@@ -1841,13 +1841,11 @@ def rotate_displacement_stress(displacement, stress, inverse_rotation_matrix):
 
 def rotate_stress_antiplane(stress, inverse_rotation_matrix):
     """Rotate antiplane stress vector from local to global reference frame"""
-    stress_rot = np.tensordot(
-        stress,
-        inverse_rotation_matrix,
-        [
-            1,
-        ],
+
+    stress_rot = np.transpose(
+        np.tensordot(stress, inverse_rotation_matrix, axes=(1, 1)), (0, 2, 1)
     )
+
     return stress_rot
 
 
