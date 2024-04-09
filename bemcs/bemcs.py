@@ -1823,6 +1823,46 @@ def get_matrices_slip_slip_gradient(els, flag="node", reference="global"):
     return mat_slip, mat_slip_gradient
 
 
+def get_matrices_slip_slip_gradient_antiplane(els, flag="node"):
+    """Assemble design matrix in (x,y) coordinate system for antiplane slip for a
+    linear system of equations to calculate quadratic coefficients from applied boundary conditions for an ordered list of fault elements.
+
+    flag = "node" : slip is applied at each node of a fault element
+    flag = "mean" : slip is applied as a mean value over the entire fault element, not just at nodes
+
+    Unit vectors for each patch are used to premultiply the input matrices for the global reference frame
+    [s   =  [f1   f2   f3 ].[φ1
+    ds/dζ]  [f1'  f2'  f3']  φ2
+                             φ3]"""
+
+    stride = 3
+    n_els = len(els.x1)
+    mat_slip = np.zeros((stride * n_els, stride * n_els))
+    mat_slip_gradient = np.zeros_like(mat_slip)
+
+    for i in range(n_els):
+
+        x_obs = np.array([-els.half_lengths[i], 0.0, els.half_lengths[i]])
+
+        if flag == "node":
+            slip_mat = slip_functions(x_obs, els.half_lengths[i])
+        elif flag == "mean":
+            slip_mat = slip_functions_mean(x_obs)
+        else:
+            raise ValueError("Invalid flag. Use either 'node' or 'mean'.")
+
+        slip_gradient_mat = slipgradient_functions(x_obs, els.half_lengths[i])
+
+        mat_slip[stride * i : stride * (i + 1), stride * i : stride * (i + 1)] = (
+            slip_mat
+        )
+        mat_slip_gradient[
+            stride * i : stride * (i + 1), stride * i : stride * (i + 1)
+        ] = slip_gradient_mat
+
+    return mat_slip, mat_slip_gradient
+
+
 def rotate_displacement_stress(displacement, stress, inverse_rotation_matrix):
     """Rotate displacements stresses from local to global reference frame"""
     displacement = np.matmul(displacement.T, inverse_rotation_matrix).T

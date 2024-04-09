@@ -21,6 +21,7 @@ from .bemcs import (
     standardize_els_geometry,
     plot_els_geometry,
     get_matrices_slip_slip_gradient,
+    get_matrices_slip_slip_gradient_antiplane,
     get_displacement_stress_kernel,
     get_displacement_stress_kernel_slip_antiplane,
     coeffs_to_disp_stress,
