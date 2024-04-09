@@ -1841,7 +1841,13 @@ def rotate_displacement_stress(displacement, stress, inverse_rotation_matrix):
 
 def rotate_stress_antiplane(stress, inverse_rotation_matrix):
     """Rotate antiplane stress vector from local to global reference frame"""
-    stress_rot = np.matmul(stress.T, inverse_rotation_matrix).T
+    stress_rot = np.tensordot(
+        stress,
+        inverse_rotation_matrix,
+        [
+            1,
+        ],
+    )
     return stress_rot
 
 
@@ -2074,6 +2080,7 @@ def get_displacement_stress_kernel_slip_antiplane(x_obs, y_obs, els, mu):
         y_rot = rotated_coordinates[1, :].T
 
         # Calculate displacements and stresses for current element
+        # returns a 2-d matrix for disp [n_obs x 3 basis functions], 3-d matrix for stress [n_obs x [sx,sy] x 3 basis functions]
         (
             displacement_eval,
             stress_local,
@@ -2085,6 +2092,7 @@ def get_displacement_stress_kernel_slip_antiplane(x_obs, y_obs, els, mu):
             els.x_centers[i],
             els.y_centers[i],
         )
+        # rotate stress from local -> global coordinates
         stress_eval = rotate_stress_antiplane(stress_local, els.rot_mats_inv[i, :, :])
         index = 3 * i
         kernel_sxz[:, index] = stress_eval[0, :]
