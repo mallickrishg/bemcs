@@ -2589,6 +2589,44 @@ def get_slipvector_on_fault(els, coeffs, n_eval):
     return x_obs, y_obs, fault_slip_x, fault_slip_y
 
 
+def get_slipvector_on_fault_antiplane(els, coeffs, n_eval):
+    """Get slip scalar evaluated ON the fault in (x,y) coordinate system.
+
+    Args:
+        els: fault geometry data structure
+        coeffs: quadratic slip coefficients ordered as [3 x shear_slip] per fault element
+        n_eval: number of points to evaluate slip scalar
+
+    Returns:
+        x_obs, y_obs: x,y coordinates of locations where slip vector is computed
+        fault_slip: slip scalar, each of dimension [n_eval x n_els]
+    """
+
+    n_els = len(els.x1)
+
+    # calculate slip as a continuous function
+    fault_slip = np.zeros(n_els * n_eval)
+
+    # evaluation locations
+    x_obs = np.zeros_like(fault_slip)
+    y_obs = np.zeros_like(fault_slip)
+
+    for i in range(n_els):
+        xvec = np.linspace(els.x1[i], els.x2[i], n_eval + 1)
+        yvec = np.linspace(els.y1[i], els.y2[i], n_eval + 1)
+        # evaluation locations on the fault
+        x_obs[i * n_eval : (i + 1) * n_eval] = 0.5 * (xvec[1:] + xvec[0:-1])
+        y_obs[i * n_eval : (i + 1) * n_eval] = 0.5 * (yvec[1:] + yvec[0:-1])
+
+        # calculate slip in (s,n) coordinates
+        xmesh = np.linspace(-0.5, 0.5, n_eval + 1)
+        xeval = 0.5 * (xmesh[1:] + xmesh[0:-1])
+        s = slip_functions(xeval, 0.5) @ coeffs[3 * i : 3 * (i + 1)]
+        fault_slip[i * n_eval : (i + 1) * n_eval] = s
+
+    return x_obs, y_obs, fault_slip
+
+
 # Function to label open nodes, overlapping interior nodes and triple junctions automatically
 def label_nodes(els):
     """provide a dictionary of line segments using bemcs.standardize_els_geometry(els),

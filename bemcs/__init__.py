@@ -30,6 +30,7 @@ from .bemcs import (
     get_traction_kernels_antiplane,
     get_strainenergy_from_stress,
     get_slipvector_on_fault,
+    get_slipvector_on_fault_antiplane,
     label_nodes,
     construct_smoothoperator,
     inpolygon,
