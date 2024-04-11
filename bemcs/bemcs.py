@@ -2698,6 +2698,8 @@ def label_nodes(els):
 def construct_smoothoperator(els, index_open, index_overlap, index_triple):
     """function to construct linear operator that enforces
     continuity and smoothness conditions at non-central nodes
+
+    returns 3 matrices: matrix_system_o, matrix_system_i, matrix_system_t for open, overlapping and triple junctions
     """
 
     n_els = len(els.x1)
@@ -2753,6 +2755,111 @@ def construct_smoothoperator(els, index_open, index_overlap, index_triple):
 
     # Linear operator for triple junction nodes
     for k in range(int(N_t / 6)):
+        id1 = index_triple[k]
+        idvalst = np.abs(id1)
+
+        # node number that need to be subtracted in TJ kinematics
+        id_neg = idvalst[id1 < 0]
+        # node numbers that need to be added
+        id_pos = idvalst[id1 >= 0]
+        # triple junction kinematics equations
+        if len(id_neg) == 2:
+            matrix_system_t[6 * k, :] = (
+                matrix_slip[2 * id_pos, :]
+                - matrix_slip[2 * id_neg[0], :]
+                - matrix_slip[2 * id_neg[1], :]
+            )  # x component
+            matrix_system_t[6 * k + 1, :] = (
+                matrix_slip[2 * id_pos + 1, :]
+                - matrix_slip[2 * id_neg[0] + 1, :]
+                - matrix_slip[2 * id_neg[1] + 1, :]
+            )  # y component
+        else:
+            matrix_system_t[6 * k, :] = (
+                matrix_slip[2 * id_pos[0], :]
+                + matrix_slip[2 * id_pos[1], :]
+                - matrix_slip[2 * id_neg, :]
+            )  # x component
+            matrix_system_t[6 * k + 1, :] = (
+                matrix_slip[2 * id_pos[0] + 1, :]
+                + matrix_slip[2 * id_pos[1] + 1, :]
+                - matrix_slip[2 * id_neg + 1, :]
+            )  # y component
+
+        # smoothing constraints (2 nodes at a time)
+        matrix_system_t[6 * k + 2, :] = (
+            matrix_slip_gradient[2 * idvalst[0], :]
+            - matrix_slip_gradient[2 * idvalst[1], :]
+        )  # x
+        matrix_system_t[6 * k + 3, :] = (
+            matrix_slip_gradient[2 * idvalst[0] + 1, :]
+            - matrix_slip_gradient[2 * idvalst[1] + 1, :]
+        )  # y
+        matrix_system_t[6 * k + 4, :] = (
+            matrix_slip_gradient[2 * idvalst[0], :]
+            - matrix_slip_gradient[2 * idvalst[2], :]
+        )  # x
+        matrix_system_t[6 * k + 5, :] = (
+            matrix_slip_gradient[2 * idvalst[0] + 1, :]
+            - matrix_slip_gradient[2 * idvalst[2] + 1, :]
+        )  # y
+
+    return matrix_system_o, matrix_system_i, matrix_system_t
+
+
+def construct_smoothoperator_antiplane(els, index_open, index_overlap, index_triple):
+    """function to construct linear operator that enforces
+    continuity and smoothness conditions at non-central nodes for antiplane geometry
+
+    returns 3 matrices: matrix_system_o, matrix_system_i, matrix_system_t for open, overlapping and triple junctions
+    """
+
+    n_els = len(els.x1)
+    Nunknowns = 3 * n_els
+    # Design matrices (in x,y coordinates) for slip and slip gradients at each 3qn
+    matrix_slip, matrix_slip_gradient = get_matrices_slip_slip_gradient_antiplane(els)
+
+    N_o = len(index_open)  # open node equations
+    N_i = 2 * len(index_overlap)  # overlapping node equations
+    N_t = 3 * len(index_triple)  # triple junction equations
+
+    matrix_system_o = np.zeros((N_o, Nunknowns))
+    matrix_system_i = np.zeros((N_i, Nunknowns))
+    matrix_system_t = np.zeros((N_t, Nunknowns))
+
+    # Linear operator for open nodes
+    for i in range(N_o):
+        id1 = np.abs(index_open[i])  # node number
+        matrix_system_o[i, :] = matrix_slip[id1, :]  # x component
+
+    # Linear operator for overlapping nodes
+    for i in range(int(N_i / 2)):
+        idvals = index_overlap[i]  # node number
+
+        if (idvals[0] != 0) & (idvals[1] != 0):
+            sign1 = np.sign(idvals[0])
+            sign2 = np.sign(idvals[1])
+        elif (idvals[0] == 0) & (idvals[1] != 0):
+            sign1 = 1
+            sign2 = -1
+        else:
+            sign1 = -1
+            sign2 = 1
+
+        # continuity condition
+        matrix_system_i[2 * i, :] = (
+            sign1 * matrix_slip[np.abs(idvals[0]), :]
+            + sign2 * matrix_slip[np.abs(idvals[1]), :]
+        )
+
+        # smoothing constraints
+        matrix_system_i[2 * i + 1, :] = (
+            sign1 * matrix_slip_gradient[np.abs(idvals[0]), :]
+            + sign2 * matrix_slip_gradient[np.abs(idvals[1]), :]
+        )
+
+    # Linear operator for triple junction nodes
+    for k in range(int(N_t / 3)):
         id1 = index_triple[k]
         idvalst = np.abs(id1)
 

@@ -33,6 +33,7 @@ from .bemcs import (
     get_slipvector_on_fault_antiplane,
     label_nodes,
     construct_smoothoperator,
+    construct_smoothoperator_antiplane,
     inpolygon,
 )
 
