@@ -2869,45 +2869,63 @@ def construct_smoothoperator_antiplane(els, index_open, index_overlap, index_tri
         id_pos = idvalst[id1 >= 0]
         # triple junction kinematics equations
         if len(id_neg) == 2:
-            matrix_system_t[6 * k, :] = (
-                matrix_slip[2 * id_pos, :]
-                - matrix_slip[2 * id_neg[0], :]
-                - matrix_slip[2 * id_neg[1], :]
-            )  # x component
-            matrix_system_t[6 * k + 1, :] = (
-                matrix_slip[2 * id_pos + 1, :]
-                - matrix_slip[2 * id_neg[0] + 1, :]
-                - matrix_slip[2 * id_neg[1] + 1, :]
-            )  # y component
-        else:
-            matrix_system_t[6 * k, :] = (
-                matrix_slip[2 * id_pos[0], :]
-                + matrix_slip[2 * id_pos[1], :]
-                - matrix_slip[2 * id_neg, :]
-            )  # x component
-            matrix_system_t[6 * k + 1, :] = (
-                matrix_slip[2 * id_pos[0] + 1, :]
-                + matrix_slip[2 * id_pos[1] + 1, :]
-                - matrix_slip[2 * id_neg + 1, :]
-            )  # y component
+            matrix_system_t[3 * k, :] = (
+                matrix_slip[id_pos, :]
+                - matrix_slip[id_neg[0], :]
+                - matrix_slip[id_neg[1], :]
+            )
+            # smoothing constraints
+            matrix_system_t[3 * k + 1, :] = (
+                matrix_slip_gradient[id_pos, :]
+                * els.x_shears[int(np.floor(id_pos / 3))]
+                - matrix_slip_gradient[id_neg[0], :]
+                * els.x_shears[int(np.floor(id_neg[0] / 3))]
+                - matrix_slip_gradient[id_neg[1], :]
+                * els.x_shears[int(np.floor(id_neg[1] / 3))]
+            )
 
-        # smoothing constraints (2 nodes at a time)
-        matrix_system_t[6 * k + 2, :] = (
-            matrix_slip_gradient[2 * idvalst[0], :]
-            - matrix_slip_gradient[2 * idvalst[1], :]
-        )  # x
-        matrix_system_t[6 * k + 3, :] = (
-            matrix_slip_gradient[2 * idvalst[0] + 1, :]
-            - matrix_slip_gradient[2 * idvalst[1] + 1, :]
-        )  # y
-        matrix_system_t[6 * k + 4, :] = (
-            matrix_slip_gradient[2 * idvalst[0], :]
-            - matrix_slip_gradient[2 * idvalst[2], :]
-        )  # x
-        matrix_system_t[6 * k + 5, :] = (
-            matrix_slip_gradient[2 * idvalst[0] + 1, :]
-            - matrix_slip_gradient[2 * idvalst[2] + 1, :]
-        )  # y
+            matrix_system_t[3 * k + 2, :] = (
+                matrix_slip_gradient[id_pos, :]
+                * els.y_shears[int(np.floor(id_pos / 3))]
+                - matrix_slip_gradient[id_neg[0], :]
+                * els.y_shears[int(np.floor(id_neg[0] / 3))]
+                - matrix_slip_gradient[id_neg[1], :]
+                * els.y_shears[int(np.floor(id_neg[1] / 3))]
+            )
+
+        else:
+            matrix_system_t[3 * k, :] = (
+                matrix_slip[id_pos[0], :]
+                + matrix_slip[id_pos[1], :]
+                - matrix_slip[id_neg, :]
+            )
+            # smoothing constraints
+            matrix_system_t[3 * k + 1, :] = (
+                matrix_slip_gradient[id_pos[0], :]
+                * els.x_shears[int(np.floor(id_pos[0] / 3))]
+                + matrix_slip_gradient[id_pos[1], :]
+                * els.x_shears[int(np.floor(id_pos[1] / 3))]
+                - matrix_slip_gradient[id_neg, :]
+                * els.x_shears[int(np.floor(id_neg / 3))]
+            )
+
+            matrix_system_t[3 * k + 2, :] = (
+                matrix_slip_gradient[id_pos[0], :]
+                * els.y_shears[int(np.floor(id_pos[0] / 3))]
+                + matrix_slip_gradient[id_pos[1], :]
+                * els.y_shears[int(np.floor(id_pos[1] / 3))]
+                - matrix_slip_gradient[id_neg, :]
+                * els.y_shears[int(np.floor(id_neg / 3))]
+            )
+
+        """# smoothing constraints (2 nodes at a time)
+        matrix_system_t[3 * k + 1, :] = (
+            matrix_slip_gradient[idvalst[0], :] - matrix_slip_gradient[idvalst[1], :]
+        )
+
+        matrix_system_t[3 * k + 2, :] = (
+            matrix_slip_gradient[idvalst[0], :] - matrix_slip_gradient[idvalst[2], :]
+        )"""
 
     return matrix_system_o, matrix_system_i, matrix_system_t
 
