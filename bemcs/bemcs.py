@@ -2142,6 +2142,56 @@ def get_displacement_stress_kernel_slip_antiplane(x_obs, y_obs, els, mu=1):
     return kernel_sxz, kernel_syz, kernel_u
 
 
+def get_displacement_stress_kernel_force_antiplane(x_obs, y_obs, els, mu=1):
+    """Function to calculate displacement and stress kernels due to a fault source in antiplane geometry
+    at a numpy array of locations [x_obs,y_obs]
+
+    kernels returned are stress_xz, stress_yz, u
+    """
+    n_obs = len(x_obs)
+    n_els = len(els.x1)
+
+    kernel_u = np.zeros((n_obs, 2 * n_els))
+    kernel_sxz = np.zeros((n_obs, 2 * n_els))
+    kernel_syz = np.zeros((n_obs, 2 * n_els))
+
+    for i in range(n_els):  # loop over each element in els()
+        # Center observation locations (no translation needed)
+        x_trans = x_obs - els.x_centers[i]
+        y_trans = y_obs - els.y_centers[i]
+
+        # Rotate observations such that fault element is horizontal
+        rotated_coordinates = els.rot_mats_inv[i, :, :] @ np.vstack(
+            (x_trans.T, y_trans.T)
+        )
+        x_rot = rotated_coordinates[0, :].T + els.x_centers[i]
+        y_rot = rotated_coordinates[1, :].T + els.y_centers[i]
+
+        # Calculate displacements and stresses for current element
+        # returns a 2-d matrix for disp [n_obs x 2 basis functions], 3-d matrix for stress [n_obs x [sx,sy] x 2 basis functions]
+        (
+            displacement_eval,
+            stress_local,
+        ) = displacements_stresses_linear_force_no_rotation_antiplane(
+            x_rot.reshape(-1, 1),
+            y_rot.reshape(-1, 1),
+            els.half_lengths[i],
+            mu,
+            els.x_centers[i],
+            els.y_centers[i],
+        )
+        # rotate stress from local -> global coordinates
+        stress_eval = rotate_stress_antiplane(stress_local, els.rot_mats_inv[i, :, :])
+
+        for j in range(2):  # loop over each basis function
+            index = 2 * i + j
+            kernel_sxz[:, index] = stress_eval[:, 0, j]
+            kernel_syz[:, index] = stress_eval[:, 1, j]
+            kernel_u[:, index] = displacement_eval[:, j]
+
+    return kernel_sxz, kernel_syz, kernel_u
+
+
 def coeffs_to_disp_stress(kernels_s, kernels_n, coeffs_s, coeffs_n):
     """Function to compute displacements and stresses from 3qn coefficients.
 
@@ -2215,8 +2265,8 @@ def get_traction_kernels(els, kernels, flag="global"):
         ValueError("flag must be either global or local")
 
 
-def get_traction_kernels_antiplane(els, kernels):
-    """Function to calculate kernels of traction vector from a set of stress kernels and unit vectors.
+def get_traction_kernels_antiplane(els, kernels, nbasis=3):
+    """Function to calculate kernels of traction vector from a set of stress kernels and unit vectors for a given number of basis functions.
 
     Provide elements as a list with ["x_normal"] & ["y_normal"] for the unit normal vector.
 
@@ -2226,18 +2276,23 @@ def get_traction_kernels_antiplane(els, kernels):
     Kxz = kernels[0]
     Kyz = kernels[1]
 
+    # nbasis = int(np.shape(Kxz)[1]/len(els.x1))
+
     # unit vector in normal direction
     nvec = np.vstack((els.x_normals, els.y_normals)).T
 
     nx_matrix = np.zeros_like(Kxz)
     ny_matrix = np.zeros_like(Kxz)
+    for i in range(nbasis):
+        nx_matrix[:, i::nbasis] = nvec[:, 0].reshape(-1, 1)
+        ny_matrix[:, i::nbasis] = nvec[:, 1].reshape(-1, 1)
 
-    nx_matrix[:, 0::3] = nvec[:, 0].reshape(-1, 1)
-    nx_matrix[:, 1::3] = nvec[:, 0].reshape(-1, 1)
-    nx_matrix[:, 2::3] = nvec[:, 0].reshape(-1, 1)
-    ny_matrix[:, 0::3] = nvec[:, 1].reshape(-1, 1)
-    ny_matrix[:, 1::3] = nvec[:, 1].reshape(-1, 1)
-    ny_matrix[:, 2::3] = nvec[:, 1].reshape(-1, 1)
+    # nx_matrix[:, 0::3] = nvec[:, 0].reshape(-1, 1)
+    # nx_matrix[:, 1::3] = nvec[:, 0].reshape(-1, 1)
+    # nx_matrix[:, 2::3] = nvec[:, 0].reshape(-1, 1)
+    # ny_matrix[:, 0::3] = nvec[:, 1].reshape(-1, 1)
+    # ny_matrix[:, 1::3] = nvec[:, 1].reshape(-1, 1)
+    # ny_matrix[:, 2::3] = nvec[:, 1].reshape(-1, 1)
 
     # traction vector t = n.σ
     t = Kxz * nx_matrix + Kyz * ny_matrix

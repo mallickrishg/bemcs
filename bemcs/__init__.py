@@ -24,6 +24,7 @@ from .bemcs import (
     get_matrices_slip_slip_gradient_antiplane,
     get_displacement_stress_kernel,
     get_displacement_stress_kernel_slip_antiplane,
+    get_displacement_stress_kernel_force_antiplane,
     coeffs_to_disp_stress,
     plot_displacements_stresses_els,
     get_traction_kernels,
