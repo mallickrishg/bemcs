@@ -1558,8 +1558,8 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
         * w ** (-1)
         * (
             (-4) * w * (2 * w + x)
-            + 4 * (w + x) * y * np.arctan2(w - x, y)
-            + 4 * (w + x) * y * np.arctan2(w + x, y)
+            + 4 * (w + x) * y * np.arctan((w - x) / y)
+            + 4 * (w + x) * y * np.arctan((w + x) / y)
             + ((w + (-1) * x) * (3 * w + x) + y**2) * np.log((w + (-1) * x) ** 2 + y**2)
             + (w + x + (-1) * y) * (w + x + y) * np.log((w + x) ** 2 + y**2)
         )
@@ -1571,8 +1571,8 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
         * w ** (-1)
         * (
             4 * w * ((-2) * w + x)
-            + 4 * (w + (-1) * x) * y * np.arctan2(w - x, y)
-            + 4 * (w + (-1) * x) * y * np.arctan2(w + x, y)
+            + 4 * (w + (-1) * x) * y * np.arctan((w - x) / y)
+            + 4 * (w + (-1) * x) * y * np.arctan((w + x) / y)
             + (w + (-1) * x + (-1) * y)
             * (w + (-1) * x + y)
             * np.log((w + (-1) * x) ** 2 + y**2)
@@ -1586,7 +1586,7 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
         * w ** (-1)
         * (
             (-4) * w
-            + 2 * y * (np.arctan2(w - x, y) + np.arctan2(w + x, y))
+            + 2 * y * (np.arctan((w - x) / y) + np.arctan((w + x) / y))
             + (-1) * (w + x) * np.log((w + (-1) * x) ** 2 + y**2)
             + (w + x) * np.log((w + x) ** 2 + y**2)
         )
@@ -1598,7 +1598,7 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
         * w ** (-1)
         * (
             (-4) * w
-            + 2 * y * (np.arctan2(w - x, y) + np.arctan2(w + x, y))
+            + 2 * y * (np.arctan((w - x) / y) + np.arctan((w + x) / y))
             + (w + (-1) * x)
             * (np.log((w + (-1) * x) ** 2 + y**2) + (-1) * np.log((w + x) ** 2 + y**2))
         )
@@ -1609,7 +1609,7 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
         * np.pi ** (-1)
         * w ** (-1)
         * (
-            2 * (w + x) * (np.arctan2(w - x, y) + np.arctan2(w + x, y))
+            2 * (w + x) * (np.arctan((w - x) / y) + np.arctan((w + x) / y))
             + y
             * (np.log((w + (-1) * x) ** 2 + y**2) + (-1) * np.log((w + x) ** 2 + y**2))
         )
@@ -1620,7 +1620,7 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
         * np.pi ** (-1)
         * w ** (-1)
         * (
-            2 * (w + (-1) * x) * (np.arctan2(w - x, y) + np.arctan2(w + x, y))
+            2 * (w + (-1) * x) * (np.arctan((w - x) / y) + np.arctan((w + x) / y))
             + y
             * ((-1) * np.log((w + (-1) * x) ** 2 + y**2) + np.log((w + x) ** 2 + y**2))
         )
