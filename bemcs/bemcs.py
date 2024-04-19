@@ -2131,7 +2131,7 @@ def get_displacement_stress_kernel_slip_antiplane(x_obs, y_obs, els, mu=1):
             els.y_centers[i],
         )
         # rotate stress from local -> global coordinates
-        stress_eval = rotate_stress_antiplane(stress_local, els.rot_mats_inv[i, :, :])
+        stress_eval = rotate_stress_antiplane(stress_local, els.rot_mats[i, :, :])
 
         for j in range(3):  # loop over each basis function
             index = 3 * i + j
@@ -2181,7 +2181,7 @@ def get_displacement_stress_kernel_force_antiplane(x_obs, y_obs, els, mu=1):
             els.y_centers[i],
         )
         # rotate stress from local -> global coordinates
-        stress_eval = rotate_stress_antiplane(stress_local, els.rot_mats_inv[i, :, :])
+        stress_eval = rotate_stress_antiplane(stress_local, els.rot_mats[i, :, :])
 
         for j in range(2):  # loop over each basis function
             index = 2 * i + j
