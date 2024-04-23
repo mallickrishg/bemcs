@@ -1386,7 +1386,7 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
     )
 
     ex1 = (
-        (3 / 32)
+        (3 / 16)
         * w ** (-2)
         * np.pi ** (-1)
         * (
@@ -1407,7 +1407,7 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
     )
 
     ex2 = (
-        (1 / 16)
+        (1 / 8)
         * w ** (-2)
         * np.pi ** (-1)
         * (
@@ -1430,7 +1430,7 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
     )
 
     ex3 = (
-        (3 / 32)
+        (3 / 16)
         * w ** (-2)
         * np.pi ** (-1)
         * (
@@ -1451,7 +1451,7 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
     )
 
     ey1 = (
-        (3 / 32)
+        (3 / 16)
         * w ** (-2)
         * np.pi ** (-1)
         * (
@@ -1471,7 +1471,7 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
     )
 
     ey2 = (
-        (-1 / 16)
+        (-1 / 8)
         * w ** (-2)
         * np.pi ** (-1)
         * (
@@ -1490,7 +1490,7 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
     )
 
     ey3 = (
-        (3 / 32)
+        (3 / 16)
         * w ** (-2)
         * np.pi ** (-1)
         * (
