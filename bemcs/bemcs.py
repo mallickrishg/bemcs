@@ -1508,8 +1508,8 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
         )
     )
 
-    sx = mu * np.hstack([ex1, ex2, ex3])
-    sy = mu * np.hstack([ey1, ey2, ey3])
+    sx = 2 * mu * np.hstack([ex1, ex2, ex3])
+    sy = 2 * mu * np.hstack([ey1, ey2, ey3])
 
     # Create a 2D numpy array for displacements
     # Disp_kernels - [Nobs x 3 basis functions]
@@ -1631,8 +1631,8 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
 
     # Store stress kernels (3-d matrix), [Nobs x (sx or sy) x 2 basis functions]
     Stress = np.zeros((n_obs, 2, 2))
-    Stress[:, 0, :] = np.hstack((mu * ex_1, mu * ex_2))
-    Stress[:, 1, :] = np.hstack((mu * ey_1, mu * ey_2))
+    Stress[:, 0, :] = np.hstack((ex_1, ex_2)) * 2 * mu
+    Stress[:, 1, :] = np.hstack((ey_1, ey_2)) * 2 * mu
 
     return Disp, Stress
 
