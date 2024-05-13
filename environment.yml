@@ -16,3 +16,5 @@ dependencies:
   - pandas
   - pygmsh
   - quadpy
+  - shapely
+  - geopandas
