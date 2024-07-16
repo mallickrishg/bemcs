@@ -1638,7 +1638,7 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
 
 
 def displacements_stresses_linear_force_no_rotation_planestrain(
-    x, y, xf, yf, w, nu, mu
+    x, y, xf, yf, w, nu, mu=1
 ):
     """
     Compute displacement and stress kernels for a linearly varying force on a horizontal source element.
