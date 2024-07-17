@@ -3626,3 +3626,685 @@ def inpolygon(xq, yq, xv, yv):
     q = [(xq[i], yq[i]) for i in range(xq.shape[0])]
     p = matplotlib.path.Path([(xv[i], yv[i]) for i in range(xv.shape[0])])
     return p.contains_points(q).reshape(shape)
+
+
+def kelvin_point_source_stress(x, y, xoffset, yoffset, fx, fy, mu, nu):
+    """
+    Calculate the stress components at a point due to a Kelvin point source in an elastic medium.
+
+    This function computes the stress components (sxx, syy, sxy) at a given point (x, y) 
+    due to a point force applied at an offset location (xoffset, yoffset). The stresses 
+    are calculated using the Kelvin solution for an infinite elastic medium.
+
+    Parameters:
+    -----------
+    x : float or numpy.ndarray
+        The x-coordinate(s) of the observation point(s).
+    y : float or numpy.ndarray
+        The y-coordinate(s) of the observation point(s).
+    xoffset : float
+        The x-coordinate of the point force location.
+    yoffset : float
+        The y-coordinate of the point force location.
+    fx : float
+        The x-component of the applied force.
+    fy : float
+        The y-component of the applied force.
+    mu : float
+        The shear modulus of the material.
+    nu : float
+        The Poisson's ratio of the material.
+
+    Returns:
+    --------
+    sxx : float or numpy.ndarray
+        The xx-component of the stress at the observation point(s).
+    syy : float or numpy.ndarray
+        The yy-component of the stress at the observation point(s).
+    sxy : float or numpy.ndarray
+        The xy-component of the stress at the observation point(s).
+
+    Notes:
+    ------
+    The function uses the Kelvin solution for an infinite elastic medium to compute the stresses.
+    """
+
+    x = x - xoffset
+    y = y - yoffset
+    C = 1 / (4 * np.pi * (1 - nu))
+    gx = -C * x / (x**2 + y**2)
+    gy = -C * y / (x**2 + y**2)
+    gxy = C * 2 * x * y / (x**2 + y**2) ** 2
+    gxx = C * (x**2 - y**2) / (x**2 + y**2) ** 2
+    gyy = -gxx
+    sxx = fx * (2 * (1 - nu) * gx - x * gxx) + fy * (2 * nu * gy - y * gxx)
+    syy = fx * (2 * nu * gx - x * gyy) + fy * (2 * (1 - nu) * gy - y * gyy)
+    sxy = fx * ((1 - 2 * nu) * gy - x * gxy) + fy * ((1 - 2 * nu) * gx - y * gxy)
+    return sxx, syy, sxy
+
+
+def kelvin_point_source_disp(x, y, xoffset, yoffset, fx, fy, mu, nu):
+    """
+    Calculate the displacements due to a Kelvin point source in an elastic medium.
+
+    This function computes the displacements (ux, uy) at a given point (x, y) 
+    due to a point force applied at an offset location (xoffset, yoffset). The stresses 
+    are calculated using the Kelvin solution for an infinite elastic medium.
+
+    Parameters:
+    -----------
+    x : float or numpy.ndarray
+        The x-coordinate(s) of the observation point(s).
+    y : float or numpy.ndarray
+        The y-coordinate(s) of the observation point(s).
+    xoffset : float
+        The x-coordinate of the point force location.
+    yoffset : float
+        The y-coordinate of the point force location.
+    fx : float
+        The x-component of the applied force.
+    fy : float
+        The y-component of the applied force.
+    mu : float
+        The shear modulus of the material.
+    nu : float
+        The Poisson's ratio of the material.
+
+    Returns:
+    --------
+    ux : float or numpy.ndarray
+        The x-component of the displacements at the observation point(s).
+    sy : float or numpy.ndarray
+        The y-component of the displacements at the observation point(s).
+
+    Notes:
+    ------
+    The function uses the Kelvin solution for an infinite elastic medium to compute the displacements.
+    """
+
+    x = x - xoffset
+    y = y - yoffset
+    C = 1 / (4 * np.pi * (1 - nu))
+    r = np.sqrt(x**2 + y**2)
+    g = -C * np.log(r)
+    gx = -C * x / (x**2 + y**2)
+    gy = -C * y / (x**2 + y**2)
+    ux = fx / (2 * mu) * ((3 - 4 * nu) * g - x * gx) + fy / (2 * mu) * (-y * gx)
+    uy = fx / (2 * mu) * (-x * gy) + fy / (2 * mu) * ((3 - 4 * nu) * g - y * gy)
+    return ux, uy
+
+
+def get_triangle_area(lx, ly, dly):
+    """
+    Calculate the area of a triangle using the lengths of its sides.
+
+    This function calculates the area of a triangle given the coordinates of its vertices using 
+    Heron's formula. The vertices are assumed to be at (0, 0), (lx, dly), and (0, ly).
+
+    Parameters:
+    -----------
+    lx : float
+        The x-coordinate of the second vertex of the triangle.
+    ly : float
+        The y-coordinate of the third vertex of the triangle.
+    dly : float
+        The y-coordinate of the second vertex of the triangle.
+
+    Returns:
+    --------
+    triangle_area : float
+        The area of the triangle.
+
+    Notes:
+    ------
+    The function performs the following steps:
+    1. Calculates the lengths of the sides of the triangle using the distance formula.
+    2. Computes the semi-perimeter of the triangle.
+    3. Applies Heron's formula to find the area of the triangle.
+    """
+    a = np.sqrt((lx - 0) ** 2 + (dly - 0) ** 2)
+    b = np.sqrt((0 - lx) ** 2 + (ly - dly) ** 2)
+    c = np.sqrt((0 - 0) ** 2 + (0 - ly) ** 2)
+
+    # Calculate the semi-perimeter of the triangle
+    s = (a + b + c) / 2
+
+    # Calculate the area of the triangle using Heron's formula
+    triangle_area = np.sqrt(s * (s - a) * (s - b) * (s - c))
+    return triangle_area
+
+
+def get_transformed_coordinates(vertices, obs_x, obs_y):
+    """
+    Transform coordinates by translating and rotating the triangle and observation points.
+
+    This function translates the triangle such that the first vertex is at the origin, then rotates
+    the triangle and the observation points so that the second vertex aligns with the positive y-axis.
+
+    Parameters:
+    -----------
+    vertices : numpy.ndarray
+        An array of shape (3, 2) representing the coordinates of the triangle's vertices.
+    obs_x : numpy.ndarray
+        An array of x-coordinates of the observation points.
+    obs_y : numpy.ndarray
+        An array of y-coordinates of the observation points.
+
+    Returns:
+    --------
+    rotated_vertices : numpy.ndarray
+        The transformed coordinates of the triangle's vertices.
+    rotated_obs_x : numpy.ndarray
+        The transformed x-coordinates of the observation points.
+    rotated_obs_y : numpy.ndarray
+        The transformed y-coordinates of the observation points.
+
+    Notes:
+    ------
+    The function performs the following steps:
+    1. Translates the triangle so that the first vertex is at the origin.
+    2. Calculates the angle required to rotate the second vertex to align with the positive y-axis.
+    3. Constructs a rotation matrix using the calculated angle.
+    4. Applies the translation and rotation transformations to both the triangle's vertices and the observation points.
+    """
+    # Translate the triangle so that the first vertex is at the origin
+    translated_vertices = vertices - np.array(vertices[0])
+    translated_obs_x = obs_x - vertices[0, 0]
+    translated_obs_y = obs_y - vertices[0, 1]
+
+    # Determine the angle to rotate the second vertex to align with the y-axis
+    second_vertex = translated_vertices[1]
+    angle = np.arctan2(second_vertex[0], second_vertex[1])
+
+    # Rotation matrix to align the second vertex along the positive y-axis
+    rotation_matrix = np.array(
+        [[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]]
+    )
+    rotated_vertices = np.dot(translated_vertices, rotation_matrix.T)
+    rotated_obs = np.dot(
+        np.array([translated_obs_x, translated_obs_y]).T, rotation_matrix.T
+    )
+
+    return rotated_vertices, rotated_obs[:, 0], rotated_obs[:, 1]
+
+
+def rotate_vector(vertices, fx, fy, rotdir=1):
+    """
+    Rotate a vector to a new coordinate system aligned with the triangle's edge.
+
+    This function rotates a force vector (fx, fy) to a new coordinate system such that the 
+    edge between the first and second vertices of the triangle aligns with the positive y-axis. 
+    The rotation is performed using the specified rotation direction.
+
+    Parameters:
+    -----------
+    vertices : numpy.ndarray
+        An array of shape (3, 2) representing the coordinates of the triangle's vertices.
+    fx : numpy.ndarray
+        The x-component of the force vector to be rotated.
+    fy : numpy.ndarray
+        The y-component of the force vector to be rotated.
+    rotdir : int, optional
+        The direction of rotation. Default is 1 (counterclockwise). Use -1 for clockwise rotation.
+
+    Returns:
+    --------
+    fx_rotated : numpy.ndarray
+        The rotated x-component of the force vector.
+    fy_rotated : numpy.ndarray
+        The rotated y-component of the force vector.
+
+    Notes:
+    ------
+    The function performs the following steps:
+    1. Determines the rotation angle required to align the second vertex of the triangle with the positive y-axis.
+    2. Constructs the rotation matrix using the calculated angle.
+    3. Applies the rotation matrix to the force vector.
+    4. Returns the rotated force vector components.
+    """
+    angle = (
+        np.arctan2(vertices[1, 0] - vertices[0, 0], vertices[1, 1] - vertices[0, 1])
+    ) * rotdir
+
+    # Rotation matrix to align the second vertex along the positive y-axis
+    rotation_matrix = np.array(
+        [[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]]
+    )
+    rotated_vector = np.dot(np.hstack([fx, fy]), rotation_matrix.T)
+    fx_rotated = rotated_vector[:, 0]
+    fy_rotated = rotated_vector[:, 1]
+
+    return fx_rotated, fy_rotated
+
+
+def rotate_stresses(vertices, sxx, syy, sxy, rotdir=1):
+    """
+    Rotate stress components to a new coordinate system aligned with the triangle's edge.
+
+    This function rotates the stress components (sxx, syy, sxy) to a new coordinate system such that the 
+    edge between the first and second vertices of the triangle aligns with the positive y-axis. The rotation 
+    is performed using the specified rotation direction.
+
+    Parameters:
+    -----------
+    vertices : numpy.ndarray
+        An array of shape (3, 2) representing the coordinates of the triangle's vertices.
+    sxx : numpy.ndarray
+        The xx-component of the stress at the observation points.
+    syy : numpy.ndarray
+        The yy-component of the stress at the observation points.
+    sxy : numpy.ndarray
+        The xy-component of the stress at the observation points.
+    rotdir : int, optional
+        The direction of rotation. Default is 1 (counterclockwise). Use -1 for clockwise rotation.
+
+    Returns:
+    --------
+    sxx_rot : numpy.ndarray
+        The rotated xx-component of the stress at the observation points.
+    syy_rot : numpy.ndarray
+        The rotated yy-component of the stress at the observation points.
+    sxy_rot : numpy.ndarray
+        The rotated xy-component of the stress at the observation points.
+
+    Notes:
+    ------
+    The function performs the following steps:
+    1. Determines the rotation angle required to align the second vertex of the triangle with the positive y-axis.
+    2. Constructs the rotation matrix using the calculated angle.
+    3. Applies the rotation matrix to the stress tensor at each observation point.
+    4. Returns the rotated stress components.
+    """
+    # Determine the angle to rotate the second vertex to align with the y-axis
+    angle = (
+        np.arctan2(vertices[1, 0] - vertices[0, 0], vertices[1, 1] - vertices[0, 1])
+        * rotdir
+    )
+
+    # Rotation matrix to align the second vertex along the positive y-axis
+    rotation_matrix = np.array(
+        [[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]]
+    )
+
+    sxx_rot = np.zeros_like(sxx)
+    syy_rot = np.zeros_like(sxx)
+    sxy_rot = np.zeros_like(sxx)
+    for i in range(len(sxx)):
+        stress_tensor = np.zeros((2, 2))
+        stress_tensor[0, 0] = sxx[i]
+        stress_tensor[1, 1] = syy[i]
+        stress_tensor[0, 1] = sxy[i]
+        stress_tensor[1, 0] = sxy[i]
+
+        rotated_stress = rotation_matrix @ stress_tensor @ rotation_matrix.T
+        sxx_rot[i] = rotated_stress[0, 0]
+        syy_rot[i] = rotated_stress[1, 1]
+        sxy_rot[i] = rotated_stress[0, 1]
+
+    return sxx_rot, syy_rot, sxy_rot
+
+
+def displacements_stresses_triangle_force_planestrain_nearfield(triangle, x_obs, y_obs, fx, fy, mu, nu):
+    """
+    Calculate the near-field displacements and stresses at observation points due to forces on a triangular element in plane strain.
+
+    This function computes the displacements and stresses (sxx, syy, sxy) at specified observation points
+    resulting from forces applied to a triangular element under the assumption of plane strain conditions.
+    The calculations use the Kelvin point source solution and integrate over the triangular element using
+    double integration.
+
+    Parameters:
+    -----------
+    triangle : numpy.ndarray
+        An array of shape (3, 2) representing the coordinates of the triangle's vertices.
+    x_obs : numpy.ndarray
+        A 2D array representing the x-coordinates of the observation points.
+    y_obs : numpy.ndarray
+        A 2D array representing the y-coordinates of the observation points.
+    fx : float
+        The x-component of the applied force.
+    fy : float
+        The y-component of the applied force.
+    mu : float
+        The shear modulus of the material.
+    nu : float
+        The Poisson's ratio of the material.
+
+    Returns:
+    --------
+    ux : numpy.ndarray
+        The x-component of the displacements at the observation points.
+    uy : numpy.ndarray
+        The y-component of the displacements at the observation points.
+    sxx : numpy.ndarray
+        The xx-component of the stress at the observation points.
+    syy : numpy.ndarray
+        The yy-component of the stress at the observation points.
+    sxy : numpy.ndarray
+        The xy-component of the stress at the observation points.
+
+    Notes:
+    ------
+    The function performs the following steps:
+    1. Flattens the observation coordinates.
+    2. Transforms the triangle and observation coordinates to a local coordinate system.
+    3. Rotates the force vector to the local coordinate system.
+    4. Defines the integration limits over the transformed triangle.
+    5. Performs double integration using the Kelvin point source solution to compute displacements and stresses.
+    6. Rotates the results back to the original coordinate system.
+
+    Integration is performed using `scipy.integrate.dblquad` with a specified absolute error tolerance.
+    """
+    
+    DBLQUAD_TOLERANCE = 1e-3
+
+    # Flatten passed observations coordinates
+    x_obs = x_obs.flatten()
+    y_obs = y_obs.flatten()
+
+    # Shape forces
+    fx = np.array([fx])[:, None]
+    fy = np.array([fy])[:, None]
+
+    # Translate and rotate the triangle
+    triangle_transformed, obs_x_transformed, obs_y_transformed = (
+        get_transformed_coordinates(triangle, x_obs, y_obs)
+    )
+
+    # Rotated force vector
+    fx_rot, fy_rot = rotate_vector(triangle, fx, fy)
+
+    # Define a triangle region in dblquad style
+    lx = triangle_transformed[2, 0]
+    dly = triangle_transformed[2, 1]
+    ly = triangle_transformed[1, 1]
+
+    triangle_area = get_triangle_area(lx, ly, dly)
+
+    # Definition of integration limits over a triangle and integrate using rotated forces
+    ymin = lambda x: dly * x / lx
+    ymax = lambda x: ly - (ly - dly) * x / lx
+
+    ux_dblquad = np.zeros_like(obs_x_transformed)
+    uy_dblquad = np.zeros_like(obs_x_transformed)
+    sxx_dblquad = np.zeros_like(obs_x_transformed)
+    syy_dblquad = np.zeros_like(obs_x_transformed)
+    sxy_dblquad = np.zeros_like(obs_x_transformed)
+
+    for i in range(0, obs_x_transformed.size):
+        # ux velocity integration
+        f = lambda y, x: kelvin_point_source_disp(
+            obs_x_transformed[i],
+            obs_y_transformed[i],
+            x,
+            y,
+            fx_rot,
+            fy_rot,
+            mu,
+            nu,
+        )[0]
+        sol, err = scipy.integrate.dblquad(f, 0, lx, ymin, ymax, epsabs=DBLQUAD_TOLERANCE)
+        if lx < 0:
+            ux_dblquad[i] = -sol / triangle_area
+        else:
+            ux_dblquad[i] = sol / triangle_area
+
+        # uy velocity integration
+        f = lambda y, x: kelvin_point_source_disp(
+            obs_x_transformed[i],
+            obs_y_transformed[i],
+            x,
+            y,
+            fx_rot,
+            fy_rot,
+            mu,
+            nu,
+        )[1]
+        sol, err = scipy.integrate.dblquad(f, 0, lx, ymin, ymax, epsabs=DBLQUAD_TOLERANCE)
+        if lx < 0:
+            uy_dblquad[i] = -sol / triangle_area
+        else:
+            uy_dblquad[i] = sol / triangle_area
+
+        # xx stress integration
+        f = lambda y, x: kelvin_point_source_stress(
+            obs_x_transformed[i],
+            obs_y_transformed[i],
+            x,
+            y,
+            fx_rot,
+            fy_rot,
+            mu,
+            nu,
+        )[0]
+        sol, err = scipy.integrate.dblquad(f, 0, lx, ymin, ymax, epsabs=DBLQUAD_TOLERANCE)
+        sxx_dblquad[i] = sol / triangle_area
+        if lx < 0:
+            sxx_dblquad[i] = -sol / triangle_area
+        else:
+            sxx_dblquad[i] = sol / triangle_area
+
+        # yy stress integration
+        f = lambda y, x: kelvin_point_source_stress(
+            obs_x_transformed[i],
+            obs_y_transformed[i],
+            x,
+            y,
+            fx_rot,
+            fy_rot,
+            mu,
+            nu,
+        )[1]
+        sol, err = scipy.integrate.dblquad(f, 0, lx, ymin, ymax, epsabs=DBLQUAD_TOLERANCE)
+        syy_dblquad[i] = sol / triangle_area
+        if lx < 0:
+            syy_dblquad[i] = -sol / triangle_area
+        else:
+            syy_dblquad[i] = sol / triangle_area
+
+        # xy stress integration
+        f = lambda y, x: kelvin_point_source_stress(
+            obs_x_transformed[i],
+            obs_y_transformed[i],
+            x,
+            y,
+            fx_rot,
+            fy_rot,
+            mu,
+            nu,
+        )[2]
+        sol, err = scipy.integrate.dblquad(f, 0, lx, ymin, ymax, epsabs=DBLQUAD_TOLERANCE)
+        sxy_dblquad[i] = sol / triangle_area
+        if lx < 0:
+            sxy_dblquad[i] = -sol / triangle_area
+        else:
+            sxy_dblquad[i] = sol / triangle_area
+
+    # Rotate back to original coordinates
+    ux, uy = rotate_vector(
+        triangle,
+        ux_dblquad.reshape(-1, 1),
+        uy_dblquad.reshape(-1, 1),
+        -1,
+    )
+
+    sxx, syy, sxy = rotate_stresses(
+        triangle,
+        sxx_dblquad,
+        syy_dblquad,
+        sxy_dblquad,
+        -1,
+    )
+    return ux, uy, sxx, syy, sxy
+
+
+def displacements_stresses_triangle_force_planestrain_farfield(triangle, x_obs, y_obs, fx, fy, mu, nu):
+    """
+    Calculate the far-field displacements and stresses at observation points due to forces on a triangular element in plane strain.
+
+    This function computes the displacements and stresses (sxx, syy, sxy) at specified observation points 
+    resulting from forces applied to a triangular element under the assumption of plane strain conditions. 
+    The calculations use the Kelvin point source solution and integrate over the triangular element using 
+    a quadrature scheme.
+
+    Parameters:
+    -----------
+    triangle : numpy.ndarray
+        An array of shape (3, 2) representing the coordinates of the triangle's vertices.
+    x_obs : numpy.ndarray
+        A 2D array representing the x-coordinates of the observation points.
+    y_obs : numpy.ndarray
+        A 2D array representing the y-coordinates of the observation points.
+    fx : float
+        The x-component of the applied force.
+    fy : float
+        The y-component of the applied force.
+    mu : float
+        The shear modulus of the material.
+    nu : float
+        The Poisson's ratio of the material.
+
+    Returns:
+    --------
+    ux : numpy.ndarray
+        The x-component of the displacements at the observation points.
+    uy : numpy.ndarray
+        The y-component of the displacements at the observation points.
+    sxx : numpy.ndarray
+        The xx-component of the stress at the observation points.
+    syy : numpy.ndarray
+        The yy-component of the stress at the observation points.
+    sxy : numpy.ndarray
+        The xy-component of the stress at the observation points.
+
+    Notes:
+    ------
+    The function uses the `quadpy` library to perform numerical integration over the triangular element 
+    using a quadrature scheme with N_INTEGRATION_POINTS integration points. The Kelvin point source solution is used 
+    to compute the displacements and stresses due to the applied forces.
+    """
+    x_obs = (x_obs.flatten(),)
+    y_obs = y_obs.flatten()
+    ux = np.zeros_like(x_obs)
+    uy = np.zeros_like(x_obs)
+    sxx = np.zeros_like(x_obs)
+    syy = np.zeros_like(x_obs)
+    sxy = np.zeros_like(x_obs)
+
+    # quadpy integration scheme
+    N_INTEGRATION_POINTS = 20
+    scheme = quadpy.t2.get_good_scheme(N_INTEGRATION_POINTS)
+    points_new = np.dot(triangle.T, scheme.points)
+    n_integration_pts = len(scheme.weights)
+
+    for i in range(n_integration_pts):
+        ux_i, uy_i = kelvin_point_source_disp(
+            x_obs,
+            y_obs,
+            points_new[0, i],
+            points_new[1, i],
+            fx,
+            fy,
+            mu,
+            nu,
+        )
+        ux += scheme.weights[i] * ux_i
+        uy += scheme.weights[i] * uy_i
+
+        sxx_i, syy_i, sxy_i = kelvin_point_source_stress(
+            x_obs,
+            y_obs,
+            points_new[0, i],
+            points_new[1, i],
+            fx,
+            fy,
+            mu,
+            nu,
+        )
+        sxx += scheme.weights[i] * sxx_i
+        syy += scheme.weights[i] * syy_i
+        sxy += scheme.weights[i] * sxy_i
+    return ux, uy, sxx, syy, sxy
+
+
+def displacements_stresses_triangle_force_planestrain(
+    triangle, x_obs, y_obs, fx, fy, mu, nu
+):
+    """
+    Calculate displacements and stresses for a given triangular element at specified observation points.
+
+    This function determines the displacements and stresses at observation points by combining near-field
+    and far-field solutions based on the distance of the observation points from the centroid of the triangle.
+
+    Parameters:
+    -----------
+    triangle : numpy.ndarray
+        An array of shape (3, 2) representing the coordinates of the triangle's vertices.
+    x_obs : numpy.ndarray
+        A 2D array representing the x-coordinates of the observation points.
+    y_obs : numpy.ndarray
+        A 2D array representing the y-coordinates of the observation points.
+    fx : float
+        The force applied in the x-direction.
+    fy : float
+        The force applied in the y-direction.
+    mu : float
+        The shear modulus of the material.
+    nu : float
+        The Poisson's ratio of the material.
+
+    Returns:
+    --------
+    ux : numpy.ndarray
+        A 2D array of the x-displacements at the observation points.
+    uy : numpy.ndarray
+        A 2D array of the y-displacements at the observation points.
+    sxx : numpy.ndarray
+        A 2D array of the normal stress component in the x-direction at the observation points.
+    syy : numpy.ndarray
+        A 2D array of the normal stress component in the y-direction at the observation points.
+    sxy : numpy.ndarray
+        A 2D array of the shear stress component at the observation points.
+
+    Notes:
+    ------
+    The function distinguishes between near-field and far-field observation points using a predefined
+    distance cutoff. Near-field solutions are computed using the `get_displacements_stresses_nearfield`
+    function, while far-field solutions are computed using the `get_displacements_stresses_farfield` function.
+
+    """
+    NEAR_FAR_DISTANCE_CUTOFF = 3.0
+    obs_distances_from_centroid = scipy.spatial.distance.cdist(
+        np.array([np.mean(triangle[:, 0]), np.mean(triangle[:, 1])])[:, None].T,
+        np.array([x_obs.flatten(), y_obs.flatten()]).T,
+    ).flatten()
+    near_idx = np.where(obs_distances_from_centroid <= NEAR_FAR_DISTANCE_CUTOFF)[0]
+    far_idx = np.where(obs_distances_from_centroid > NEAR_FAR_DISTANCE_CUTOFF)[0]
+
+    ux = np.zeros_like(x_obs)
+    uy = np.zeros_like(x_obs)
+    sxx = np.zeros_like(x_obs)
+    syy = np.zeros_like(x_obs)
+    sxy = np.zeros_like(x_obs)
+    ux_far, uy_far, sxx_far, syy_far, sxy_far = (
+        displacements_stresses_triangle_force_planestrain_farfield(
+            triangle, x_obs[far_idx], y_obs[far_idx], fx, fy, mu, nu
+        )
+    )
+    ux_near, uy_near, sxx_near, syy_near, sxy_near = (
+        displacements_stresses_triangle_force_planestrain_nearfield(
+            triangle, x_obs[near_idx], y_obs[near_idx], fx, fy, mu, nu
+        )
+    )
+    ux[far_idx] = ux_far
+    uy[far_idx] = uy_far
+    sxx[far_idx] = sxx_far
+    syy[far_idx] = syy_far
+    sxy[far_idx] = sxy_far
+    ux[near_idx] = ux_near
+    uy[near_idx] = uy_near
+    sxx[near_idx] = sxx_near
+    syy[near_idx] = syy_near
+    sxy[near_idx] = sxy_near
+
+    return ux, uy, sxx, syy, sxy

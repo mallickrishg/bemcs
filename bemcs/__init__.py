@@ -38,6 +38,9 @@ from .bemcs import (
     construct_smoothoperator,
     construct_smoothoperator_antiplane,
     inpolygon,
+    displacements_stresses_triangle_force_planestrain_farfield,
+    displacements_stresses_triangle_force_planestrain_nearfield,
+    displacements_stresses_triangle_force_planestrain
 )
 
 try:
