@@ -2403,16 +2403,6 @@ def rotate_displacement_stress(displacement, stress, inverse_rotation_matrix):
     return displacement, stress
 
 
-def rotate_stress_antiplane(stress, inverse_rotation_matrix):
-    """Rotate antiplane stress vector from local to global reference frame"""
-
-    stress_rot = np.transpose(
-        np.tensordot(stress, inverse_rotation_matrix, axes=(1, 1)), (0, 2, 1)
-    )
-
-    return stress_rot
-
-
 def get_displacement_stress_kernel_constant(x_obs, y_obs, els, mu, nu, flag):
     """Function to calculate displacement and stress kernels at a numpy array of locations [x_obs,y_obs]
 
@@ -2616,6 +2606,16 @@ def get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, flag):
     return kernel_sxx, kernel_syy, kernel_sxy, kernel_ux, kernel_uy
 
 
+def rotate_stress_antiplane(stress, inverse_rotation_matrix):
+    """Rotate antiplane stress vector from local to global reference frame"""
+
+    stress_rot = np.transpose(
+        np.tensordot(stress, inverse_rotation_matrix, axes=(1, 1)), (0, 2, 1)
+    )
+
+    return stress_rot
+
+
 def get_displacement_stress_kernel_slip_antiplane(x_obs, y_obs, els, mu=1):
     """Function to calculate displacement and stress kernels due to a fault source in antiplane geometry
     at a numpy array of locations [x_obs,y_obs]
@@ -2667,17 +2667,17 @@ def get_displacement_stress_kernel_slip_antiplane(x_obs, y_obs, els, mu=1):
 
 
 def get_displacement_stress_kernel_force_antiplane(x_obs, y_obs, els, mu=1):
-    """Function to calculate displacement and stress kernels due to a fault source in antiplane geometry
+    """Function to calculate displacement and stress kernels due to a line force source in antiplane geometry
     at a numpy array of locations [x_obs,y_obs]
 
-    kernels returned are stress_xz, stress_yz, u
+    kernels returned are 3-d matrices stress_xz, stress_yz, u [Nobs x 2 basis functions x Nsources]
     """
     n_obs = len(x_obs)
     n_els = len(els.x1)
 
-    kernel_u = np.zeros((n_obs, 2 * n_els))
-    kernel_sxz = np.zeros((n_obs, 2 * n_els))
-    kernel_syz = np.zeros((n_obs, 2 * n_els))
+    kernel_u = np.zeros((n_obs, 2, n_els))
+    kernel_sxz = np.zeros((n_obs, 2, n_els))
+    kernel_syz = np.zeros((n_obs, 2, n_els))
 
     for i in range(n_els):  # loop over each element in els()
         # Center observation locations (no translation needed)
@@ -2707,13 +2707,110 @@ def get_displacement_stress_kernel_force_antiplane(x_obs, y_obs, els, mu=1):
         # rotate stress from local -> global coordinates
         stress_eval = rotate_stress_antiplane(stress_local, els.rot_mats[i, :, :])
 
-        for j in range(2):  # loop over each basis function
-            index = 2 * i + j
-            kernel_sxz[:, index] = stress_eval[:, 0, j]
-            kernel_syz[:, index] = stress_eval[:, 1, j]
-            kernel_u[:, index] = displacement_eval[:, j]
+        kernel_sxz[:, :, i] = stress_eval[:, 0, :]
+        kernel_syz[:, :, i] = stress_eval[:, 1, :]
+        kernel_u[:, :, i] = displacement_eval[:, :]
 
     return kernel_sxz, kernel_syz, kernel_u
+
+
+def get_displacement_stress_kernel_force_planestrain(x_obs, y_obs, els, mu=1, nu=0.25):
+    """Function to calculate displacement and stress kernels due to a force source in planestrain
+    at a numpy array of locations [x_obs,y_obs]
+
+    kernels returned are stress_xx, stress_xy, stress_yy, u_x, u_y
+
+    4-D kernels [Nobs x (fx,fy) x 2 basis functions x Nsources]
+    """
+
+    def rotate_vector(vector, inverse_rotation_matrix):
+        """Rotate vector from local to global reference frame"""
+
+        vector_rot = np.transpose(
+            np.tensordot(vector, inverse_rotation_matrix, axes=(1, 1)), (0, 1, 3, 2)
+        )
+        return vector_rot
+
+    def rotate_tensor(tensor, rotation_matrix):
+        """Rotate vector from local to global reference frame"""
+        inverse_rotation_matrix = rotation_matrix.T
+        tensor_rotated = np.zeros_like(tensor)
+        t0 = (
+            tensor[:, 0, :, :] * inverse_rotation_matrix[0, 0]
+            + tensor[:, 1, :, :] * inverse_rotation_matrix[1, 0]
+        )
+        t1 = (
+            tensor[:, 0, :, :] * inverse_rotation_matrix[0, 1]
+            + tensor[:, 1, :, :] * inverse_rotation_matrix[1, 1]
+        )
+        t2 = (
+            tensor[:, 1, :, :] * inverse_rotation_matrix[0, 0]
+            + tensor[:, 2, :, :] * inverse_rotation_matrix[1, 0]
+        )
+        t3 = (
+            tensor[:, 1, :, :] * inverse_rotation_matrix[0, 1]
+            + tensor[:, 2, :, :] * inverse_rotation_matrix[1, 1]
+        )
+
+        tensor_rotated[:, 0, :, :] = (
+            inverse_rotation_matrix[0, 0] * t0 + inverse_rotation_matrix[1, 0] * t2
+        )
+        tensor_rotated[:, 1, :, :] = (
+            inverse_rotation_matrix[0, 0] * t1 + inverse_rotation_matrix[1, 0] * t3
+        )
+        tensor_rotated[:, 2, :, :] = (
+            inverse_rotation_matrix[0, 1] * t1 + inverse_rotation_matrix[1, 1] * t3
+        )
+
+        return tensor_rotated
+
+    n_obs = len(x_obs)
+    n_els = len(els.x1)
+
+    kernel_ux = np.zeros((n_obs, 2, 2, n_els))
+    kernel_uy = np.zeros((n_obs, 2, 2, n_els))
+    kernel_sxx = np.zeros((n_obs, 2, 2, n_els))
+    kernel_sxy = np.zeros((n_obs, 2, 2, n_els))
+    kernel_syy = np.zeros((n_obs, 2, 2, n_els))
+
+    for i in range(n_els):  # loop over each element in els()
+        # Center observation locations (no translation needed)
+        x_trans = x_obs - els.x_centers[i]
+        y_trans = y_obs - els.y_centers[i]
+
+        # Rotate observations such that fault element is horizontal
+        rotated_coordinates = els.rot_mats_inv[i, :, :] @ np.vstack(
+            (x_trans.T, y_trans.T)
+        )
+        x_rot = rotated_coordinates[0, :].T  # + els.x_centers[i]
+        y_rot = rotated_coordinates[1, :].T  # + els.y_centers[i]
+
+        # Calculate displacements and stresses for current element
+        # returns a 4-d matrix for disp [n_obs x (ux,uy) x (fx,fy) x 2 basis functions],
+        # 4-d matrix for stress [n_obs x [sxx,sxy,syy] x (fx,fy) x 2 basis functions]
+        Dkernels, Skernels, _ = (
+            displacements_stresses_linear_force_no_rotation_planestrain(
+                x_rot.reshape(-1, 1),
+                y_rot.reshape(-1, 1),
+                xf=0,
+                yf=0,
+                w=els.half_lengths[i],
+                nu=nu,
+                mu=mu,
+            )
+        )
+
+        # rotate stress from local -> global coordinates
+        Dkernels_rot = rotate_vector(Dkernels, els.rot_mats_inv[i, :, :])
+        Skernels_rot = rotate_tensor(Skernels, els.rot_mats_inv[i, :, :])
+
+        kernel_sxx[:, :, :, i] = Skernels_rot[:, 0, :, :]
+        kernel_sxy[:, :, :, i] = Skernels_rot[:, 1, :, :]
+        kernel_syy[:, :, :, i] = Skernels_rot[:, 2, :, :]
+        kernel_ux[:, :, :, i] = Dkernels_rot[:, 0, :, :]
+        kernel_uy[:, :, :, i] = Dkernels_rot[:, 1, :, :]
+
+    return kernel_sxx, kernel_sxy, kernel_syy, kernel_ux, kernel_uy
 
 
 def coeffs_to_disp_stress(kernels_s, kernels_n, coeffs_s, coeffs_n):
