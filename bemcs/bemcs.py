@@ -5,6 +5,7 @@ import scipy
 import numpy as np
 import matplotlib.pyplot as plt
 
+
 def plot_els_geometry(els):
     """Plot element geometry"""
     plt.figure()
@@ -2811,7 +2812,7 @@ def get_displacement_stress_kernel_force_planestrain(x_obs, y_obs, els, mu=1, nu
         kernel_ux[:, :, :, i] = Dkernels_rot[:, 0, :, :]
         kernel_uy[:, :, :, i] = Dkernels_rot[:, 1, :, :]
 
-    return kernel_sxx, kernel_sxy, kernel_syy, kernel_ux, kernel_uy
+    return kernel_ux, kernel_uy, kernel_sxx, kernel_syy, kernel_sxy
 
 
 def coeffs_to_disp_stress(kernels_s, kernels_n, coeffs_s, coeffs_n):
@@ -3633,8 +3634,8 @@ def kelvin_point_source_stress(x, y, xoffset, yoffset, fx, fy, mu, nu):
     """
     Calculate the stress components at a point due to a Kelvin point source in an elastic medium.
 
-    This function computes the stress components (sxx, syy, sxy) at a given point (x, y) 
-    due to a point force applied at an offset location (xoffset, yoffset). The stresses 
+    This function computes the stress components (sxx, syy, sxy) at a given point (x, y)
+    due to a point force applied at an offset location (xoffset, yoffset). The stresses
     are calculated using the Kelvin solution for an infinite elastic medium.
 
     Parameters:
@@ -3688,8 +3689,8 @@ def kelvin_point_source_disp(x, y, xoffset, yoffset, fx, fy, mu, nu):
     """
     Calculate the displacements due to a Kelvin point source in an elastic medium.
 
-    This function computes the displacements (ux, uy) at a given point (x, y) 
-    due to a point force applied at an offset location (xoffset, yoffset). The stresses 
+    This function computes the displacements (ux, uy) at a given point (x, y)
+    due to a point force applied at an offset location (xoffset, yoffset). The stresses
     are calculated using the Kelvin solution for an infinite elastic medium.
 
     Parameters:
@@ -3739,7 +3740,7 @@ def get_triangle_area(lx, ly, dly):
     """
     Calculate the area of a triangle using the lengths of its sides.
 
-    This function calculates the area of a triangle given the coordinates of its vertices using 
+    This function calculates the area of a triangle given the coordinates of its vertices using
     Heron's formula. The vertices are assumed to be at (0, 0), (lx, dly), and (0, ly).
 
     Parameters:
@@ -3833,8 +3834,8 @@ def rotate_vector(vertices, fx, fy, rotdir=1):
     """
     Rotate a vector to a new coordinate system aligned with the triangle's edge.
 
-    This function rotates a force vector (fx, fy) to a new coordinate system such that the 
-    edge between the first and second vertices of the triangle aligns with the positive y-axis. 
+    This function rotates a force vector (fx, fy) to a new coordinate system such that the
+    edge between the first and second vertices of the triangle aligns with the positive y-axis.
     The rotation is performed using the specified rotation direction.
 
     Parameters:
@@ -3882,8 +3883,8 @@ def rotate_stresses(vertices, sxx, syy, sxy, rotdir=1):
     """
     Rotate stress components to a new coordinate system aligned with the triangle's edge.
 
-    This function rotates the stress components (sxx, syy, sxy) to a new coordinate system such that the 
-    edge between the first and second vertices of the triangle aligns with the positive y-axis. The rotation 
+    This function rotates the stress components (sxx, syy, sxy) to a new coordinate system such that the
+    edge between the first and second vertices of the triangle aligns with the positive y-axis. The rotation
     is performed using the specified rotation direction.
 
     Parameters:
@@ -3945,7 +3946,9 @@ def rotate_stresses(vertices, sxx, syy, sxy, rotdir=1):
     return sxx_rot, syy_rot, sxy_rot
 
 
-def displacements_stresses_triangle_force_planestrain_nearfield(triangle, x_obs, y_obs, fx, fy, mu, nu):
+def displacements_stresses_triangle_force_planestrain_nearfield(
+    triangle, x_obs, y_obs, fx, fy, mu, nu
+):
     """
     Calculate the near-field displacements and stresses at observation points due to forces on a triangular element in plane strain.
 
@@ -3996,7 +3999,7 @@ def displacements_stresses_triangle_force_planestrain_nearfield(triangle, x_obs,
 
     Integration is performed using `scipy.integrate.dblquad` with a specified absolute error tolerance.
     """
-    
+
     DBLQUAD_TOLERANCE = 1e-3
 
     # Flatten passed observations coordinates
@@ -4044,7 +4047,9 @@ def displacements_stresses_triangle_force_planestrain_nearfield(triangle, x_obs,
             mu,
             nu,
         )[0]
-        sol, err = scipy.integrate.dblquad(f, 0, lx, ymin, ymax, epsabs=DBLQUAD_TOLERANCE)
+        sol, err = scipy.integrate.dblquad(
+            f, 0, lx, ymin, ymax, epsabs=DBLQUAD_TOLERANCE
+        )
         if lx < 0:
             ux_dblquad[i] = -sol / triangle_area
         else:
@@ -4061,7 +4066,9 @@ def displacements_stresses_triangle_force_planestrain_nearfield(triangle, x_obs,
             mu,
             nu,
         )[1]
-        sol, err = scipy.integrate.dblquad(f, 0, lx, ymin, ymax, epsabs=DBLQUAD_TOLERANCE)
+        sol, err = scipy.integrate.dblquad(
+            f, 0, lx, ymin, ymax, epsabs=DBLQUAD_TOLERANCE
+        )
         if lx < 0:
             uy_dblquad[i] = -sol / triangle_area
         else:
@@ -4078,7 +4085,9 @@ def displacements_stresses_triangle_force_planestrain_nearfield(triangle, x_obs,
             mu,
             nu,
         )[0]
-        sol, err = scipy.integrate.dblquad(f, 0, lx, ymin, ymax, epsabs=DBLQUAD_TOLERANCE)
+        sol, err = scipy.integrate.dblquad(
+            f, 0, lx, ymin, ymax, epsabs=DBLQUAD_TOLERANCE
+        )
         sxx_dblquad[i] = sol / triangle_area
         if lx < 0:
             sxx_dblquad[i] = -sol / triangle_area
@@ -4096,7 +4105,9 @@ def displacements_stresses_triangle_force_planestrain_nearfield(triangle, x_obs,
             mu,
             nu,
         )[1]
-        sol, err = scipy.integrate.dblquad(f, 0, lx, ymin, ymax, epsabs=DBLQUAD_TOLERANCE)
+        sol, err = scipy.integrate.dblquad(
+            f, 0, lx, ymin, ymax, epsabs=DBLQUAD_TOLERANCE
+        )
         syy_dblquad[i] = sol / triangle_area
         if lx < 0:
             syy_dblquad[i] = -sol / triangle_area
@@ -4114,7 +4125,9 @@ def displacements_stresses_triangle_force_planestrain_nearfield(triangle, x_obs,
             mu,
             nu,
         )[2]
-        sol, err = scipy.integrate.dblquad(f, 0, lx, ymin, ymax, epsabs=DBLQUAD_TOLERANCE)
+        sol, err = scipy.integrate.dblquad(
+            f, 0, lx, ymin, ymax, epsabs=DBLQUAD_TOLERANCE
+        )
         sxy_dblquad[i] = sol / triangle_area
         if lx < 0:
             sxy_dblquad[i] = -sol / triangle_area
@@ -4139,13 +4152,15 @@ def displacements_stresses_triangle_force_planestrain_nearfield(triangle, x_obs,
     return ux, uy, sxx, syy, sxy
 
 
-def displacements_stresses_triangle_force_planestrain_farfield(triangle, x_obs, y_obs, fx, fy, mu, nu):
+def displacements_stresses_triangle_force_planestrain_farfield(
+    triangle, x_obs, y_obs, fx, fy, mu, nu
+):
     """
     Calculate the far-field displacements and stresses at observation points due to forces on a triangular element in plane strain.
 
-    This function computes the displacements and stresses (sxx, syy, sxy) at specified observation points 
-    resulting from forces applied to a triangular element under the assumption of plane strain conditions. 
-    The calculations use the Kelvin point source solution and integrate over the triangular element using 
+    This function computes the displacements and stresses (sxx, syy, sxy) at specified observation points
+    resulting from forces applied to a triangular element under the assumption of plane strain conditions.
+    The calculations use the Kelvin point source solution and integrate over the triangular element using
     a quadrature scheme.
 
     Parameters:
@@ -4180,8 +4195,8 @@ def displacements_stresses_triangle_force_planestrain_farfield(triangle, x_obs, 
 
     Notes:
     ------
-    The function uses the `quadpy` library to perform numerical integration over the triangular element 
-    using a quadrature scheme with N_INTEGRATION_POINTS integration points. The Kelvin point source solution is used 
+    The function uses the `quadpy` library to perform numerical integration over the triangular element
+    using a quadrature scheme with N_INTEGRATION_POINTS integration points. The Kelvin point source solution is used
     to compute the displacements and stresses due to the applied forces.
     """
     x_obs = (x_obs.flatten(),)
