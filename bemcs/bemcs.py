@@ -1,8 +1,9 @@
 import addict
+import matplotlib
+import quadpy
+import scipy
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib
-
 
 def plot_els_geometry(els):
     """Plot element geometry"""
