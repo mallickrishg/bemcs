@@ -4357,8 +4357,18 @@ def displacements_stresses_triangle_force_planestrain(
         np.array([np.mean(triangle[:, 0]), np.mean(triangle[:, 1])])[:, None].T,
         np.array([x_obs.flatten(), y_obs.flatten()]).T,
     ).flatten()
-    near_idx = np.where(obs_distances_from_centroid <= NEAR_FAR_DISTANCE_CUTOFF)[0]
-    far_idx = np.where(obs_distances_from_centroid > NEAR_FAR_DISTANCE_CUTOFF)[0]
+    triangle_length = np.max(
+        np.sqrt(
+            (np.mean(triangle[:, 0]) - triangle[:, 0]) ** 2
+            + (np.mean(triangle[:, 1]) - triangle[:, 1]) ** 2
+        )
+    )
+    near_idx = np.where(
+        obs_distances_from_centroid / triangle_length <= NEAR_FAR_DISTANCE_CUTOFF
+    )[0]
+    far_idx = np.where(
+        obs_distances_from_centroid / triangle_length > NEAR_FAR_DISTANCE_CUTOFF
+    )[0]
 
     ux = np.zeros_like(x_obs)
     uy = np.zeros_like(x_obs)
@@ -4630,8 +4640,18 @@ def displacements_stresses_triangle_force_antiplane(
         np.array([np.mean(triangle[:, 0]), np.mean(triangle[:, 1])])[:, None].T,
         np.array([x_obs.flatten(), y_obs.flatten()]).T,
     ).flatten()
-    near_idx = np.where(obs_distances_from_centroid <= NEAR_FAR_DISTANCE_CUTOFF)[0]
-    far_idx = np.where(obs_distances_from_centroid > NEAR_FAR_DISTANCE_CUTOFF)[0]
+    triangle_length = np.max(
+        np.sqrt(
+            (np.mean(triangle[:, 0]) - triangle[:, 0]) ** 2
+            + (np.mean(triangle[:, 1]) - triangle[:, 1]) ** 2
+        )
+    )
+    near_idx = np.where(
+        obs_distances_from_centroid / triangle_length <= NEAR_FAR_DISTANCE_CUTOFF
+    )[0]
+    far_idx = np.where(
+        obs_distances_from_centroid / triangle_length > NEAR_FAR_DISTANCE_CUTOFF
+    )[0]
 
     u = np.zeros_like(x_obs)
     sx = np.zeros_like(x_obs)
