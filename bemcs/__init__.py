@@ -40,7 +40,10 @@ from .bemcs import (
     inpolygon,
     displacements_stresses_triangle_force_planestrain_farfield,
     displacements_stresses_triangle_force_planestrain_nearfield,
-    displacements_stresses_triangle_force_planestrain
+    displacements_stresses_triangle_force_planestrain,
+    displacements_stresses_triangle_force_antiplane_farfield,
+    displacements_stresses_triangle_force_antiplane_nearfield,
+    displacements_stresses_triangle_force_antiplane,
 )
 
 try:
