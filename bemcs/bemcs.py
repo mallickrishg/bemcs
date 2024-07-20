@@ -1629,12 +1629,12 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
     )
 
     # Store displacement kernels (2-d matrix), [Nobs x 2 basis functions]
-    Disp = np.hstack((u_1, u_2))
+    Disp = np.hstack((u_1, u_2)) / mu
 
     # Store stress kernels (3-d matrix), [Nobs x (sx or sy) x 2 basis functions]
     Stress = np.zeros((n_obs, 2, 2))
-    Stress[:, 0, :] = np.hstack((ex_1, ex_2)) * 2 * mu
-    Stress[:, 1, :] = np.hstack((ey_1, ey_2)) * 2 * mu
+    Stress[:, 0, :] = np.hstack((ex_1, ex_2)) * 2
+    Stress[:, 1, :] = np.hstack((ey_1, ey_2)) * 2
 
     return Disp, Stress
 
