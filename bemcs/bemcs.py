@@ -3668,7 +3668,7 @@ def laplacian_pointforce_sx(x, y, xs, ys, f=1):
         Stress component sx at the given coordinates.
     """
     r = np.sqrt((x - xs) ** 2 + (y - ys) ** 2)
-    sx = f / np.pi * (x - xs) / (r**2)
+    sx = f / (2 * np.pi) * (x - xs) / (r**2)
     return sx
 
 
@@ -3689,7 +3689,7 @@ def laplacian_pointforce_sy(x, y, xs, ys, f=1):
         Stress component sy at the given coordinates.
     """
     r = np.sqrt((x - xs) ** 2 + (y - ys) ** 2)
-    sy = f / np.pi * (y - ys) / (r**2)
+    sy = f / (2 * np.pi) * (y - ys) / (r**2)
     return sy
 
 
