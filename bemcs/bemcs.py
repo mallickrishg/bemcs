@@ -4499,7 +4499,6 @@ def displacements_stresses_triangle_force_antiplane_nearfield(
         sol, err = scipy.integrate.dblquad(
             f, 0, lx, ymin, ymax, epsabs=DBLQUAD_TOLERANCE
         )
-        sx_dblquad[i] = sol / triangle_area
         if lx < 0:
             sx_dblquad[i] = -sol / triangle_area
         else:
@@ -4512,7 +4511,6 @@ def displacements_stresses_triangle_force_antiplane_nearfield(
         sol, err = scipy.integrate.dblquad(
             f, 0, lx, ymin, ymax, epsabs=DBLQUAD_TOLERANCE
         )
-        sy_dblquad[i] = sol / triangle_area
         if lx < 0:
             sy_dblquad[i] = -sol / triangle_area
         else:
@@ -4575,7 +4573,7 @@ def displacements_stresses_triangle_force_antiplane_farfield(
     sy = np.zeros_like(x_obs)
 
     # quadpy integration scheme
-    N_INTEGRATION_POINTS = 20
+    N_INTEGRATION_POINTS = 50
     scheme = quadpy.t2.get_good_scheme(N_INTEGRATION_POINTS)
     points_new = np.dot(triangle.T, scheme.points)
     n_integration_pts = len(scheme.weights)
@@ -4635,6 +4633,17 @@ def displacements_stresses_triangle_force_antiplane(
     function, while far-field solutions are computed using the `get_displacements_stresses_farfield` function.
 
     """
+
+    # Translate and rotate the triangle
+    triangle_transformed, _, _ = get_transformed_coordinates(triangle, x_obs, y_obs)
+
+    # Define a triangle region in dblquad style
+    lx = triangle_transformed[2, 0]
+    dly = triangle_transformed[2, 1]
+    ly = triangle_transformed[1, 1]
+
+    triangle_area = get_triangle_area(lx, ly, dly)
+
     NEAR_FAR_DISTANCE_CUTOFF = 3.0
     obs_distances_from_centroid = scipy.spatial.distance.cdist(
         np.array([np.mean(triangle[:, 0]), np.mean(triangle[:, 1])])[:, None].T,
@@ -4672,4 +4681,5 @@ def displacements_stresses_triangle_force_antiplane(
     sx[near_idx] = sx_near
     sy[near_idx] = sy_near
 
+    # return u * triangle_area, sx * triangle_area, sy * triangle_area
     return u, sx, sy
