@@ -4400,7 +4400,7 @@ def displacements_stresses_triangle_force_planestrain(
 
 
 def displacements_stresses_triangle_force_antiplane_nearfield(
-    triangle, x_obs, y_obs, fval, mu
+    triangle, x_obs, y_obs, fval=1.0, mu=1.0
 ):
     """
     Calculate the near-field displacements and stresses at observation points due to forces on a triangular element in antiplane.
@@ -4464,7 +4464,8 @@ def displacements_stresses_triangle_force_antiplane_nearfield(
     dly = triangle_transformed[2, 1]
     ly = triangle_transformed[1, 1]
 
-    triangle_area = get_triangle_area(lx, ly, dly)
+    # triangle_area = get_triangle_area(lx, ly, dly)
+    triangle_area = 1.0
 
     # Definition of integration limits over a triangle and integrate using rotated forces
     ymin = lambda x: dly * x / lx
@@ -4528,7 +4529,7 @@ def displacements_stresses_triangle_force_antiplane_nearfield(
 
 
 def displacements_stresses_triangle_force_antiplane_farfield(
-    triangle, x_obs, y_obs, fval, mu
+    triangle, x_obs, y_obs, fval=1.0, mu=1.0
 ):
     """
     Calculate the far-field displacements and stresses at observation points due to forces on a triangular element in antiplane.
@@ -4566,11 +4567,11 @@ def displacements_stresses_triangle_force_antiplane_farfield(
     using a quadrature scheme with N_INTEGRATION_POINTS integration points. The Kelvin point source solution is used
     to compute the displacements and stresses due to the applied forces.
     """
-    x_obs = x_obs.flatten()
-    y_obs = y_obs.flatten()
-    u = np.zeros_like(x_obs)
-    sx = np.zeros_like(x_obs)
-    sy = np.zeros_like(x_obs)
+    # x_obs = x_obs.flatten()
+    # y_obs = y_obs.flatten()
+    # u = np.zeros_like(x_obs)
+    # sx = np.zeros_like(x_obs)
+    # sy = np.zeros_like(x_obs)
 
     # quadpy integration scheme
     N_INTEGRATION_POINTS = 50
@@ -4578,20 +4579,36 @@ def displacements_stresses_triangle_force_antiplane_farfield(
     points_new = np.dot(triangle.T, scheme.points)
     n_integration_pts = len(scheme.weights)
 
-    for i in range(n_integration_pts):
-        u_i = laplacian_pointforce_disp(
-            x_obs, y_obs, points_new[0, i], points_new[1, i], fval, mu
-        )
-        u += scheme.weights[i] * u_i
+    x_obs = np.tile(x_obs.reshape(-1, 1), (1, n_integration_pts))
+    y_obs = np.tile(y_obs.reshape(-1, 1), (1, n_integration_pts))
 
-        sx_i = laplacian_pointforce_sx(
-            x_obs, y_obs, points_new[0, i], points_new[1, i], fval
-        )
-        sy_i = laplacian_pointforce_sy(
-            x_obs, y_obs, points_new[0, i], points_new[1, i], fval
-        )
-        sx += scheme.weights[i] * sx_i
-        sy += scheme.weights[i] * sy_i
+    u = scheme.integrate(
+        lambda x: laplacian_pointforce_disp(x_obs, y_obs, x[0], x[1], fval, mu),
+        triangle,
+    )
+    sx = scheme.integrate(
+        lambda x: laplacian_pointforce_sx(x_obs, y_obs, x[0], x[1], fval),
+        triangle,
+    )
+    sy = scheme.integrate(
+        lambda x: laplacian_pointforce_sy(x_obs, y_obs, x[0], x[1], fval),
+        triangle,
+    )
+
+    # for i in range(n_integration_pts):
+    #     u_i = laplacian_pointforce_disp(
+    #         x_obs, y_obs, points_new[0, i], points_new[1, i], fval, mu
+    #     )
+    #     u += scheme.weights[i] * u_i
+
+    #     sx_i = laplacian_pointforce_sx(
+    #         x_obs, y_obs, points_new[0, i], points_new[1, i], fval
+    #     )
+    #     sy_i = laplacian_pointforce_sy(
+    #         x_obs, y_obs, points_new[0, i], points_new[1, i], fval
+    #     )
+    #     sx += scheme.weights[i] * sx_i
+    #     sy += scheme.weights[i] * sy_i
     return u, sx, sy
 
 
@@ -4642,9 +4659,7 @@ def displacements_stresses_triangle_force_antiplane(
     dly = triangle_transformed[2, 1]
     ly = triangle_transformed[1, 1]
 
-    triangle_area = get_triangle_area(lx, ly, dly)
-
-    NEAR_FAR_DISTANCE_CUTOFF = 3.0
+    NEAR_FAR_DISTANCE_CUTOFF = 1.0
     obs_distances_from_centroid = scipy.spatial.distance.cdist(
         np.array([np.mean(triangle[:, 0]), np.mean(triangle[:, 1])])[:, None].T,
         np.array([x_obs.flatten(), y_obs.flatten()]).T,
