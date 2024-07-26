@@ -1582,7 +1582,7 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
         )
     )
 
-    ex_1 = (
+    ux_1 = (
         (1 / 8)
         * np.pi ** (-1)
         * w ** (-1)
@@ -1594,7 +1594,7 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
         )
     )
 
-    ex_2 = (
+    ux_2 = (
         (-1 / 8)
         * np.pi ** (-1)
         * w ** (-1)
@@ -1606,7 +1606,7 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
         )
     )
 
-    ey_1 = (
+    uy_1 = (
         (1 / 8)
         * np.pi ** (-1)
         * w ** (-1)
@@ -1617,7 +1617,7 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
         )
     )
 
-    ey_2 = (
+    uy_2 = (
         (1 / 8)
         * np.pi ** (-1)
         * w ** (-1)
@@ -1633,8 +1633,8 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
 
     # Store stress kernels (3-d matrix), [Nobs x (sx or sy) x 2 basis functions]
     Stress = np.zeros((n_obs, 2, 2))
-    Stress[:, 0, :] = np.hstack((ex_1, ex_2)) * 2
-    Stress[:, 1, :] = np.hstack((ey_1, ey_2)) * 2
+    Stress[:, 0, :] = np.hstack((ux_1, ux_2))  # * 2
+    Stress[:, 1, :] = np.hstack((uy_1, uy_2))  # * 2
 
     return Disp, Stress
 
