@@ -1387,7 +1387,7 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
         )
     )
 
-    ex1 = (
+    ux1 = (
         (3 / 16)
         * w ** (-2)
         * np.pi ** (-1)
@@ -1408,7 +1408,7 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
         )
     )
 
-    ex2 = (
+    ux2 = (
         (1 / 8)
         * w ** (-2)
         * np.pi ** (-1)
@@ -1431,7 +1431,7 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
         )
     )
 
-    ex3 = (
+    ux3 = (
         (3 / 16)
         * w ** (-2)
         * np.pi ** (-1)
@@ -1452,7 +1452,7 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
         )
     )
 
-    ey1 = (
+    uy1 = (
         (3 / 16)
         * w ** (-2)
         * np.pi ** (-1)
@@ -1472,7 +1472,7 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
         )
     )
 
-    ey2 = (
+    uy2 = (
         (-1 / 8)
         * w ** (-2)
         * np.pi ** (-1)
@@ -1491,7 +1491,7 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
         )
     )
 
-    ey3 = (
+    uy3 = (
         (3 / 16)
         * w ** (-2)
         * np.pi ** (-1)
@@ -1510,8 +1510,8 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
         )
     )
 
-    sx = 2 * mu * np.hstack([ex1, ex2, ex3])
-    sy = 2 * mu * np.hstack([ey1, ey2, ey3])
+    sx = 1 * mu * np.hstack([ux1, ux2, ux3])
+    sy = 1 * mu * np.hstack([uy1, uy2, uy3])
 
     # Create a 2D numpy array for displacements
     # Disp_kernels - [Nobs x 3 basis functions]
