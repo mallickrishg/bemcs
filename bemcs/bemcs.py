@@ -3214,11 +3214,14 @@ def get_slipvector_on_fault(els, coeffs, n_eval):
 
     Args:
         els: fault geometry data structure
+
         coeffs: quadratic slip coefficients ordered as [3 x shear_slip, 3 x tensile_slip] per fault element
+
         n_eval: number of points to evaluate slip vector
 
     Returns:
         x_obs, y_obs: x,y coordinates of locations where slip vector is computed
+
         fault_slip_x, fault_slip_y: components of slip vector, each of dimension [n_eval x n_els]
     """
 
