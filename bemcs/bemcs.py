@@ -3455,6 +3455,40 @@ def construct_smoothoperator(els, index_open, index_overlap, index_triple):
                 - matrix_slip[2 * id_neg[0] + 1, :]
                 - matrix_slip[2 * id_neg[1] + 1, :]
             )  # y component
+
+            # Jacobian form of smoothing equations
+            matrix_system_t[6 * k + 2, :] = (
+                matrix_slip_gradient[2 * id_pos, :]
+                * els.x_shears[int(np.floor(id_pos / 3))]
+                - matrix_slip_gradient[2 * id_neg[0], :]
+                * els.x_shears[int(np.floor(id_neg[0] / 3))]
+                - matrix_slip_gradient[2 * id_neg[1], :]
+                * els.x_shears[int(np.floor(id_neg[1] / 3))]
+            )
+            matrix_system_t[6 * k + 3, :] = (
+                matrix_slip_gradient[2 * id_pos, :]
+                * els.y_shears[int(np.floor(id_pos / 3))]
+                - matrix_slip_gradient[2 * id_neg[0], :]
+                * els.y_shears[int(np.floor(id_neg[0] / 3))]
+                - matrix_slip_gradient[2 * id_neg[1], :]
+                * els.y_shears[int(np.floor(id_neg[1] / 3))]
+            )
+            matrix_system_t[6 * k + 4, :] = (
+                matrix_slip_gradient[2 * id_pos + 1, :]
+                * els.x_shears[int(np.floor(id_pos / 3))]
+                - matrix_slip_gradient[2 * id_neg[0] + 1, :]
+                * els.x_shears[int(np.floor(id_neg[0] / 3))]
+                - matrix_slip_gradient[2 * id_neg[1] + 1, :]
+                * els.x_shears[int(np.floor(id_neg[1] / 3))]
+            )
+            matrix_system_t[6 * k + 5, :] = (
+                matrix_slip_gradient[2 * id_pos + 1, :]
+                * els.y_shears[int(np.floor(id_pos / 3))]
+                - matrix_slip_gradient[2 * id_neg[0] + 1, :]
+                * els.y_shears[int(np.floor(id_neg[0] / 3))]
+                - matrix_slip_gradient[2 * id_neg[1] + 1, :]
+                * els.y_shears[int(np.floor(id_neg[1] / 3))]
+            )
         else:
             matrix_system_t[6 * k, :] = (
                 matrix_slip[2 * id_pos[0], :]
@@ -3467,7 +3501,41 @@ def construct_smoothoperator(els, index_open, index_overlap, index_triple):
                 - matrix_slip[2 * id_neg + 1, :]
             )  # y component
 
-        # smoothing constraints (2 nodes at a time)
+            # Jacobian form of smoothing equations
+            matrix_system_t[6 * k + 2, :] = (
+                matrix_slip_gradient[2 * id_neg, :]
+                * els.x_shears[int(np.floor(id_neg / 3))]
+                - matrix_slip_gradient[2 * id_pos[0], :]
+                * els.x_shears[int(np.floor(id_pos[0] / 3))]
+                - matrix_slip_gradient[2 * id_pos[1], :]
+                * els.x_shears[int(np.floor(id_pos[1] / 3))]
+            )
+            matrix_system_t[6 * k + 3, :] = (
+                matrix_slip_gradient[2 * id_neg, :]
+                * els.y_shears[int(np.floor(id_neg / 3))]
+                - matrix_slip_gradient[2 * id_pos[0], :]
+                * els.y_shears[int(np.floor(id_pos[0] / 3))]
+                - matrix_slip_gradient[2 * id_pos[1], :]
+                * els.y_shears[int(np.floor(id_pos[1] / 3))]
+            )
+            matrix_system_t[6 * k + 4, :] = (
+                matrix_slip_gradient[2 * id_neg + 1, :]
+                * els.x_shears[int(np.floor(id_neg / 3))]
+                - matrix_slip_gradient[2 * id_pos[0] + 1, :]
+                * els.x_shears[int(np.floor(id_pos[0] / 3))]
+                - matrix_slip_gradient[2 * id_pos[1] + 1, :]
+                * els.x_shears[int(np.floor(id_pos[1] / 3))]
+            )
+            matrix_system_t[6 * k + 5, :] = (
+                matrix_slip_gradient[2 * id_neg + 1, :]
+                * els.y_shears[int(np.floor(id_neg / 3))]
+                - matrix_slip_gradient[2 * id_pos[0] + 1, :]
+                * els.y_shears[int(np.floor(id_pos[0] / 3))]
+                - matrix_slip_gradient[2 * id_pos[1] + 1, :]
+                * els.y_shears[int(np.floor(id_pos[1] / 3))]
+            )
+
+        """# smoothing constraints (2 nodes at a time)
         matrix_system_t[6 * k + 2, :] = (
             matrix_slip_gradient[2 * idvalst[0], :]
             - matrix_slip_gradient[2 * idvalst[1], :]
@@ -3483,7 +3551,7 @@ def construct_smoothoperator(els, index_open, index_overlap, index_triple):
         matrix_system_t[6 * k + 5, :] = (
             matrix_slip_gradient[2 * idvalst[0] + 1, :]
             - matrix_slip_gradient[2 * idvalst[2] + 1, :]
-        )  # y
+        )  # y"""
 
     return matrix_system_o, matrix_system_i, matrix_system_t
 
