@@ -1387,7 +1387,7 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
         )
     )
 
-    ex1 = (
+    ux1 = (
         (3 / 16)
         * w ** (-2)
         * np.pi ** (-1)
@@ -1408,7 +1408,7 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
         )
     )
 
-    ex2 = (
+    ux2 = (
         (1 / 8)
         * w ** (-2)
         * np.pi ** (-1)
@@ -1431,7 +1431,7 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
         )
     )
 
-    ex3 = (
+    ux3 = (
         (3 / 16)
         * w ** (-2)
         * np.pi ** (-1)
@@ -1452,7 +1452,7 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
         )
     )
 
-    ey1 = (
+    uy1 = (
         (3 / 16)
         * w ** (-2)
         * np.pi ** (-1)
@@ -1472,7 +1472,7 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
         )
     )
 
-    ey2 = (
+    uy2 = (
         (-1 / 8)
         * w ** (-2)
         * np.pi ** (-1)
@@ -1491,7 +1491,7 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
         )
     )
 
-    ey3 = (
+    uy3 = (
         (3 / 16)
         * w ** (-2)
         * np.pi ** (-1)
@@ -1510,8 +1510,8 @@ def displacements_stresses_quadratic_slip_no_rotation_antiplane(
         )
     )
 
-    sx = 2 * mu * np.hstack([ex1, ex2, ex3])
-    sy = 2 * mu * np.hstack([ey1, ey2, ey3])
+    sx = 1 * mu * np.hstack([ux1, ux2, ux3])
+    sy = 1 * mu * np.hstack([uy1, uy2, uy3])
 
     # Create a 2D numpy array for displacements
     # Disp_kernels - [Nobs x 3 basis functions]
@@ -1582,7 +1582,7 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
         )
     )
 
-    ex_1 = (
+    ux_1 = (
         (1 / 8)
         * np.pi ** (-1)
         * w ** (-1)
@@ -1594,7 +1594,7 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
         )
     )
 
-    ex_2 = (
+    ux_2 = (
         (-1 / 8)
         * np.pi ** (-1)
         * w ** (-1)
@@ -1606,7 +1606,7 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
         )
     )
 
-    ey_1 = (
+    uy_1 = (
         (1 / 8)
         * np.pi ** (-1)
         * w ** (-1)
@@ -1617,7 +1617,7 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
         )
     )
 
-    ey_2 = (
+    uy_2 = (
         (1 / 8)
         * np.pi ** (-1)
         * w ** (-1)
@@ -1633,8 +1633,8 @@ def displacements_stresses_linear_force_no_rotation_antiplane(
 
     # Store stress kernels (3-d matrix), [Nobs x (sx or sy) x 2 basis functions]
     Stress = np.zeros((n_obs, 2, 2))
-    Stress[:, 0, :] = np.hstack((ex_1, ex_2)) * 2
-    Stress[:, 1, :] = np.hstack((ey_1, ey_2)) * 2
+    Stress[:, 0, :] = np.hstack((ux_1, ux_2))  # * 2
+    Stress[:, 1, :] = np.hstack((uy_1, uy_2))  # * 2
 
     return Disp, Stress
 
@@ -3214,11 +3214,14 @@ def get_slipvector_on_fault(els, coeffs, n_eval):
 
     Args:
         els: fault geometry data structure
+
         coeffs: quadratic slip coefficients ordered as [3 x shear_slip, 3 x tensile_slip] per fault element
+
         n_eval: number of points to evaluate slip vector
 
     Returns:
         x_obs, y_obs: x,y coordinates of locations where slip vector is computed
+
         fault_slip_x, fault_slip_y: components of slip vector, each of dimension [n_eval x n_els]
     """
 
@@ -3452,6 +3455,40 @@ def construct_smoothoperator(els, index_open, index_overlap, index_triple):
                 - matrix_slip[2 * id_neg[0] + 1, :]
                 - matrix_slip[2 * id_neg[1] + 1, :]
             )  # y component
+
+            # Jacobian form of smoothing equations
+            matrix_system_t[6 * k + 2, :] = (
+                matrix_slip_gradient[2 * id_pos, :]
+                * els.x_shears[int(np.floor(id_pos / 3))]
+                - matrix_slip_gradient[2 * id_neg[0], :]
+                * els.x_shears[int(np.floor(id_neg[0] / 3))]
+                - matrix_slip_gradient[2 * id_neg[1], :]
+                * els.x_shears[int(np.floor(id_neg[1] / 3))]
+            )
+            matrix_system_t[6 * k + 3, :] = (
+                matrix_slip_gradient[2 * id_pos, :]
+                * els.y_shears[int(np.floor(id_pos / 3))]
+                - matrix_slip_gradient[2 * id_neg[0], :]
+                * els.y_shears[int(np.floor(id_neg[0] / 3))]
+                - matrix_slip_gradient[2 * id_neg[1], :]
+                * els.y_shears[int(np.floor(id_neg[1] / 3))]
+            )
+            matrix_system_t[6 * k + 4, :] = (
+                matrix_slip_gradient[2 * id_pos + 1, :]
+                * els.x_shears[int(np.floor(id_pos / 3))]
+                - matrix_slip_gradient[2 * id_neg[0] + 1, :]
+                * els.x_shears[int(np.floor(id_neg[0] / 3))]
+                - matrix_slip_gradient[2 * id_neg[1] + 1, :]
+                * els.x_shears[int(np.floor(id_neg[1] / 3))]
+            )
+            matrix_system_t[6 * k + 5, :] = (
+                matrix_slip_gradient[2 * id_pos + 1, :]
+                * els.y_shears[int(np.floor(id_pos / 3))]
+                - matrix_slip_gradient[2 * id_neg[0] + 1, :]
+                * els.y_shears[int(np.floor(id_neg[0] / 3))]
+                - matrix_slip_gradient[2 * id_neg[1] + 1, :]
+                * els.y_shears[int(np.floor(id_neg[1] / 3))]
+            )
         else:
             matrix_system_t[6 * k, :] = (
                 matrix_slip[2 * id_pos[0], :]
@@ -3464,7 +3501,41 @@ def construct_smoothoperator(els, index_open, index_overlap, index_triple):
                 - matrix_slip[2 * id_neg + 1, :]
             )  # y component
 
-        # smoothing constraints (2 nodes at a time)
+            # Jacobian form of smoothing equations
+            matrix_system_t[6 * k + 2, :] = (
+                matrix_slip_gradient[2 * id_neg, :]
+                * els.x_shears[int(np.floor(id_neg / 3))]
+                - matrix_slip_gradient[2 * id_pos[0], :]
+                * els.x_shears[int(np.floor(id_pos[0] / 3))]
+                - matrix_slip_gradient[2 * id_pos[1], :]
+                * els.x_shears[int(np.floor(id_pos[1] / 3))]
+            )
+            matrix_system_t[6 * k + 3, :] = (
+                matrix_slip_gradient[2 * id_neg, :]
+                * els.y_shears[int(np.floor(id_neg / 3))]
+                - matrix_slip_gradient[2 * id_pos[0], :]
+                * els.y_shears[int(np.floor(id_pos[0] / 3))]
+                - matrix_slip_gradient[2 * id_pos[1], :]
+                * els.y_shears[int(np.floor(id_pos[1] / 3))]
+            )
+            matrix_system_t[6 * k + 4, :] = (
+                matrix_slip_gradient[2 * id_neg + 1, :]
+                * els.x_shears[int(np.floor(id_neg / 3))]
+                - matrix_slip_gradient[2 * id_pos[0] + 1, :]
+                * els.x_shears[int(np.floor(id_pos[0] / 3))]
+                - matrix_slip_gradient[2 * id_pos[1] + 1, :]
+                * els.x_shears[int(np.floor(id_pos[1] / 3))]
+            )
+            matrix_system_t[6 * k + 5, :] = (
+                matrix_slip_gradient[2 * id_neg + 1, :]
+                * els.y_shears[int(np.floor(id_neg / 3))]
+                - matrix_slip_gradient[2 * id_pos[0] + 1, :]
+                * els.y_shears[int(np.floor(id_pos[0] / 3))]
+                - matrix_slip_gradient[2 * id_pos[1] + 1, :]
+                * els.y_shears[int(np.floor(id_pos[1] / 3))]
+            )
+
+        """# smoothing constraints (2 nodes at a time)
         matrix_system_t[6 * k + 2, :] = (
             matrix_slip_gradient[2 * idvalst[0], :]
             - matrix_slip_gradient[2 * idvalst[1], :]
@@ -3480,7 +3551,7 @@ def construct_smoothoperator(els, index_open, index_overlap, index_triple):
         matrix_system_t[6 * k + 5, :] = (
             matrix_slip_gradient[2 * idvalst[0] + 1, :]
             - matrix_slip_gradient[2 * idvalst[2] + 1, :]
-        )  # y
+        )  # y"""
 
     return matrix_system_o, matrix_system_i, matrix_system_t
 
@@ -3668,7 +3739,7 @@ def laplacian_pointforce_sx(x, y, xs, ys, f=1):
         Stress component sx at the given coordinates.
     """
     r = np.sqrt((x - xs) ** 2 + (y - ys) ** 2)
-    sx = f / np.pi * (x - xs) / (r**2)
+    sx = f / (2 * np.pi) * (x - xs) / (r**2)
     return sx
 
 
@@ -3689,7 +3760,7 @@ def laplacian_pointforce_sy(x, y, xs, ys, f=1):
         Stress component sy at the given coordinates.
     """
     r = np.sqrt((x - xs) ** 2 + (y - ys) ** 2)
-    sy = f / np.pi * (y - ys) / (r**2)
+    sy = f / (2 * np.pi) * (y - ys) / (r**2)
     return sy
 
 
@@ -4400,7 +4471,7 @@ def displacements_stresses_triangle_force_planestrain(
 
 
 def displacements_stresses_triangle_force_antiplane_nearfield(
-    triangle, x_obs, y_obs, fval, mu
+    triangle, x_obs, y_obs, fval=1.0, mu=1.0
 ):
     """
     Calculate the near-field displacements and stresses at observation points due to forces on a triangular element in antiplane.
@@ -4464,7 +4535,8 @@ def displacements_stresses_triangle_force_antiplane_nearfield(
     dly = triangle_transformed[2, 1]
     ly = triangle_transformed[1, 1]
 
-    triangle_area = get_triangle_area(lx, ly, dly)
+    # triangle_area = get_triangle_area(lx, ly, dly)
+    triangle_area = 1.0
 
     # Definition of integration limits over a triangle and integrate using rotated forces
     ymin = lambda x: dly * x / lx
@@ -4499,7 +4571,6 @@ def displacements_stresses_triangle_force_antiplane_nearfield(
         sol, err = scipy.integrate.dblquad(
             f, 0, lx, ymin, ymax, epsabs=DBLQUAD_TOLERANCE
         )
-        sx_dblquad[i] = sol / triangle_area
         if lx < 0:
             sx_dblquad[i] = -sol / triangle_area
         else:
@@ -4512,7 +4583,6 @@ def displacements_stresses_triangle_force_antiplane_nearfield(
         sol, err = scipy.integrate.dblquad(
             f, 0, lx, ymin, ymax, epsabs=DBLQUAD_TOLERANCE
         )
-        sy_dblquad[i] = sol / triangle_area
         if lx < 0:
             sy_dblquad[i] = -sol / triangle_area
         else:
@@ -4530,7 +4600,7 @@ def displacements_stresses_triangle_force_antiplane_nearfield(
 
 
 def displacements_stresses_triangle_force_antiplane_farfield(
-    triangle, x_obs, y_obs, fval, mu
+    triangle, x_obs, y_obs, fval=1.0, mu=1.0
 ):
     """
     Calculate the far-field displacements and stresses at observation points due to forces on a triangular element in antiplane.
@@ -4568,32 +4638,48 @@ def displacements_stresses_triangle_force_antiplane_farfield(
     using a quadrature scheme with N_INTEGRATION_POINTS integration points. The Kelvin point source solution is used
     to compute the displacements and stresses due to the applied forces.
     """
-    x_obs = x_obs.flatten()
-    y_obs = y_obs.flatten()
-    u = np.zeros_like(x_obs)
-    sx = np.zeros_like(x_obs)
-    sy = np.zeros_like(x_obs)
+    # x_obs = x_obs.flatten()
+    # y_obs = y_obs.flatten()
+    # u = np.zeros_like(x_obs)
+    # sx = np.zeros_like(x_obs)
+    # sy = np.zeros_like(x_obs)
 
     # quadpy integration scheme
-    N_INTEGRATION_POINTS = 20
+    N_INTEGRATION_POINTS = 50
     scheme = quadpy.t2.get_good_scheme(N_INTEGRATION_POINTS)
     points_new = np.dot(triangle.T, scheme.points)
     n_integration_pts = len(scheme.weights)
 
-    for i in range(n_integration_pts):
-        u_i = laplacian_pointforce_disp(
-            x_obs, y_obs, points_new[0, i], points_new[1, i], fval, mu
-        )
-        u += scheme.weights[i] * u_i
+    x_obs = np.tile(x_obs.reshape(-1, 1), (1, n_integration_pts))
+    y_obs = np.tile(y_obs.reshape(-1, 1), (1, n_integration_pts))
 
-        sx_i = laplacian_pointforce_sx(
-            x_obs, y_obs, points_new[0, i], points_new[1, i], fval
-        )
-        sy_i = laplacian_pointforce_sy(
-            x_obs, y_obs, points_new[0, i], points_new[1, i], fval
-        )
-        sx += scheme.weights[i] * sx_i
-        sy += scheme.weights[i] * sy_i
+    u = scheme.integrate(
+        lambda x: laplacian_pointforce_disp(x_obs, y_obs, x[0], x[1], fval, mu),
+        triangle,
+    )
+    sx = scheme.integrate(
+        lambda x: laplacian_pointforce_sx(x_obs, y_obs, x[0], x[1], fval),
+        triangle,
+    )
+    sy = scheme.integrate(
+        lambda x: laplacian_pointforce_sy(x_obs, y_obs, x[0], x[1], fval),
+        triangle,
+    )
+
+    # for i in range(n_integration_pts):
+    #     u_i = laplacian_pointforce_disp(
+    #         x_obs, y_obs, points_new[0, i], points_new[1, i], fval, mu
+    #     )
+    #     u += scheme.weights[i] * u_i
+
+    #     sx_i = laplacian_pointforce_sx(
+    #         x_obs, y_obs, points_new[0, i], points_new[1, i], fval
+    #     )
+    #     sy_i = laplacian_pointforce_sy(
+    #         x_obs, y_obs, points_new[0, i], points_new[1, i], fval
+    #     )
+    #     sx += scheme.weights[i] * sx_i
+    #     sy += scheme.weights[i] * sy_i
     return u, sx, sy
 
 
@@ -4635,7 +4721,16 @@ def displacements_stresses_triangle_force_antiplane(
     function, while far-field solutions are computed using the `get_displacements_stresses_farfield` function.
 
     """
-    NEAR_FAR_DISTANCE_CUTOFF = 3.0
+
+    # Translate and rotate the triangle
+    triangle_transformed, _, _ = get_transformed_coordinates(triangle, x_obs, y_obs)
+
+    # Define a triangle region in dblquad style
+    lx = triangle_transformed[2, 0]
+    dly = triangle_transformed[2, 1]
+    ly = triangle_transformed[1, 1]
+
+    NEAR_FAR_DISTANCE_CUTOFF = 1.0
     obs_distances_from_centroid = scipy.spatial.distance.cdist(
         np.array([np.mean(triangle[:, 0]), np.mean(triangle[:, 1])])[:, None].T,
         np.array([x_obs.flatten(), y_obs.flatten()]).T,
@@ -4672,4 +4767,5 @@ def displacements_stresses_triangle_force_antiplane(
     sx[near_idx] = sx_near
     sy[near_idx] = sy_near
 
+    # return u * triangle_area, sx * triangle_area, sy * triangle_area
     return u, sx, sy
