@@ -14,7 +14,9 @@ dependencies:
   - cmcrameri
   - rich
   - pandas
-  - pygmsh
   - quadpy
   - shapely
   - geopandas
+  - pip
+  - pip:
+      - pygmsh
