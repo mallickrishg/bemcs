@@ -5,7 +5,7 @@ import pandas as pd
 
 # %% setup a fault geometry (source) - in this case it is a vertical strike-slip fault segment
 xf1 = np.array([-0.0])
-yf1 = np.array([-0.0])
+yf1 = np.array([-0.5])
 xf2 = np.array([0])
 yf2 = np.array([-1.5])
 
@@ -46,7 +46,7 @@ for i in range(nlayers):
 # connectivity construction
 connectivity = []
 for i in range(nlayers):
-    start_idx = i * (npts_layer - 1)
+    start_idx = i * (npts_layer - 1) + len(xf1) + len(xt1)
     end_idx = start_idx + (npts_layer - 1)
     local_idx = np.arange(start_idx, end_idx)
     for j in range(0, len(local_idx) - 2, 2):
