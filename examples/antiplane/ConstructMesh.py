@@ -5,7 +5,7 @@ import pandas as pd
 
 # %% setup a fault geometry (source) - in this case it is a vertical strike-slip fault segment
 xf1 = np.array([-0.0])
-yf1 = np.array([-0.5])
+yf1 = np.array([-0.0])
 xf2 = np.array([0])
 yf2 = np.array([-1.5])
 
@@ -13,7 +13,7 @@ yf2 = np.array([-1.5])
 # Elastic parameter (shear modulus)
 mu = 1.0
 Lscale = 10
-npts_layer = 11
+npts_layer = 12
 xvals = np.linspace(-Lscale, Lscale, npts_layer)
 xt1 = xvals[0:-1]
 xt2 = xvals[1:]
@@ -41,6 +41,24 @@ for i in range(nlayers):
     beta[i * (npts_layer - 1) : (npts_layer - 1) * (i + 1)] = (
         -(mulayer[i + 1] - mulayer[i]) / mulayer[i + 1]
     )
+# along with x1,y1 and x2,y2 we also need to provide a connectivity matrix tying three elements together
+# this connectivity matrix is for two elements at a time - i want to connect [0,1,2] then [2,3,4] and so on
+# connectivity construction
+connectivity = []
+for i in range(nlayers):
+    start_idx = i * (npts_layer - 1)
+    end_idx = start_idx + (npts_layer - 1)
+    local_idx = np.arange(start_idx, end_idx)
+    for j in range(0, len(local_idx) - 2, 2):
+        connectivity.append(local_idx[j : j + 3])
+connectivity = np.array(connectivity)
+
+print(connectivity)
+# export connectivity in a csv file
+pd.DataFrame(connectivity).to_csv(
+    "HeterogeneousDomainMeshConnectivity.csv", index=False, header=False
+)
+print("connectivity file created: HeterogeneousDomainMeshConnectivity.csv")
 
 
 # plot elastic structure
@@ -82,7 +100,6 @@ BCval = np.hstack([np.ones_like(xf1) * 1.0, np.ones_like(xt1) * 0.0, beta])
 
 # export in the format xs,ys,xe,y2e,BCtype,BCval
 # where(xs,ys) is start point and (xe,ye) is end point of each segment
-
 dataout = pd.DataFrame(
     {
         "x1": np.hstack([xf1, xt1, x1]),
@@ -93,5 +110,8 @@ dataout = pd.DataFrame(
         "value": BCval,
     }
 )
+
 dataout.to_csv("HeterogeneousDomainMesh.csv", index=False)
 print("Mesh file created: HeterogeneousDomainMesh.csv")
+
+# %%
