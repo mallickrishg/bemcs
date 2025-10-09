@@ -31,12 +31,13 @@ els.y1 = y1
 els.x2 = x2
 els.y2 = y2
 
-# construct separate mesh just for 's' BCtype
+# construct separate mesh just for 's' or 't' BCtype
+bc_mask = BCtype != "h"
 els_s = bemcs.initialize_els()
-els_s.x1 = els.x1[BCtype == "s"]
-els_s.y1 = els.y1[BCtype == "s"]
-els_s.x2 = els.x2[BCtype == "s"]
-els_s.y2 = els.y2[BCtype == "s"]
+els_s.x1 = els.x1[bc_mask]
+els_s.y1 = els.y1[bc_mask]
+els_s.x2 = els.x2[bc_mask]
+els_s.y2 = els.y2[bc_mask]
 
 bemcs.standardize_els_geometry(els, reorder=False)
 bemcs.standardize_els_geometry(els_s, reorder=False)
