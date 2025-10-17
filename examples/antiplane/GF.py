@@ -226,82 +226,36 @@ def construct_linearoperator_slip(els, BCtype, BCval, mu=1):
     """
     Construct the global linear operator and right-hand side vector for the
     antiplane boundary-integral problem using quadratic slip basis functions.
-    This function takes a mesh container (els) that describes a discretization
-    with quadratic slip basis functions and the boundary-condition specification
-    to assemble a linear operator that enforces the boundary-integral equations
-    for antiplane elasticity. The assembled operator enforces
-    - equilibrium / compatibility equations at element centers (central nodes),
-    - homogeneous conditions at open nodes, overlapping nodes, and triple
-        junctions (as appropriate),
-    stacked into a single linear system A x = b. The unknown vector x contains
-    per-element nodal slip/traction degrees of freedom with an antiplane stride
-    of 3 (three DOFs per element).
+
     Parameters
     ----------
     els : object
-            Mesh / element container providing geometry and connectivity required by
-            the bemcs helper routines. Must contain at least:
-            - x_centers, y_centers : coordinates of element centers
-            - x1 (or similar) : per-element node indexing/coordinates used to infer
-                the number of elements
-            and be compatible with the bemcs.* helper functions used internally for
-            kernel evaluation and operator construction. The code assumes quadratic
-            slip basis functions for nodes.
+        Mesh / element container providing geometry and connectivity required by
+        the bemcs helper routines. Must contain at least x_centers, y_centers
+        and per-element node arrays (e.g. x1) compatible with the bemcs helpers.
     BCtype : array-like, shape (n_els,)
-            Boundary condition labels for each element/central node. Each entry
-            should be a string label:
-            - 's' : prescribe slip (use slip-basis operator for the central equation)
-            - 't' : prescribe traction (use traction kernel for the central equation)
-            Other labels will raise a ValueError.
+        Boundary condition labels for each element/central node: 's' for slip
+        (use slip-basis operator) or 't' for traction (use traction kernel).
     BCval : array-like, shape (n_els,) or (n_els, 1)
-            Values of the prescribed boundary condition at central nodes. For
-            traction-prescribed nodes this corresponds to the traction value; for
-            slip-prescribed nodes this corresponds to the slip value. Only the
-            central-node entries produce non-zero values in the returned BC vector.
+        Values of the prescribed boundary condition at central nodes. Only the
+        central-node entries produce non-zero entries in the returned BC vector.
     mu : float, optional
-            Shear modulus (material parameter) used when assembling displacement /
-            traction kernels. Default is 1.0.
+        Shear modulus used when assembling kernels (default 1.0).
+
     Returns
     -------
-    matrix_system : numpy.ndarray, shape (Nequations, Nunknowns)
-            Assembled linear operator A that maps the vector of unknown nodal
-            degrees of freedom (stacked per-element with stride 3) to the stacked
-            equations. Equation ordering in the rows is:
-            [central-node equations (N_c rows);
-             open-node equations (N_o rows);
-             overlapping-node equations (N_i rows);
-             triple-junction equations (N_t rows)].
-            Unknown ordering in the columns is per-element with 3 DOFs per element
-            (antiplane stride = 3), so Nunknowns = 3 * n_els.
-    BCvector : numpy.ndarray, shape (Nequations, 1)
-            Right-hand side vector b for the assembled system A x = b. Only the
-            central-node block contains possibly non-zero prescribed BC values;
-            open / overlapping / triple-junction blocks are homogeneous (zeros).
-    Raises
-    ------
-    ValueError
-            If an entry of BCtype is not recognized (not 's' or 't').
-    Notes
-    -----
-    - The implementation assumes antiplane (mode III) elasticity with three
-        DOFs per element (stride = 3) and quadratic slip basis functions for the
-        nodal representation of slip/traction.
-    - The matrix is constructed by combining:
-        - central-node operators (either slip-basis rows or traction kernel rows),
-        - precomputed open/overlap/triple-junction operators produced by
-            bemcs.construct_smoothoperator_antiplane(...),
-        - slip and slip-gradient matrices produced by
-            bemcs.get_matrices_slip_slip_gradient_antiplane(...),
-        - displacement/traction kernels produced by bemcs.get_displacement_stress_kernel_slip_antiplane(...)
-            and bemcs.get_traction_kernels_antiplane(...).
-    - The user-provided els and bemcs helper functions must be consistent with
-        each other (node ordering and indexing).
-    Example
-    -------
-    >>> # Assuming `els`, `BCtype`, and `BCval` are prepared:
-    >>> A, b = construct_linearoperator_slip(els, BCtype, BCval, mu=30e9)
-    >>> # Solve for unknown nodal DOFs x:
-    >>> x = np.linalg.solve(A, b)
+    matrix_system_c : ndarray, shape (N_c, Nunknowns)
+        Central-node linear operator block. N_c = n_els (one central equation per element),
+        Nunknowns = 3 * n_els (antiplane stride = 3 DOFs per element). Each row is either
+        a slip-basis row (if BCtype == 's') or a displacement/traction-kernel row (if BCtype == 't' or 'u').
+    matrix_nodes : ndarray, shape (N_o + N_i + N_t, Nunknowns)
+        Stacked smoothness operator for open nodes, overlapping nodes and triple
+        junctions. Row ordering matches the stacked BCnodes ordering below.
+    BC_c : ndarray, shape (N_c, 1)
+        Central-node prescribed BC values (only these may be non-zero).
+    BCnodes : ndarray, shape (Nequations, 1)
+        Full stacked BC vector [BC_c; BC_o; BC_i; BC_t] where BC_o, BC_i, BC_t are
+        homogeneous zero blocks for open, overlapping and triple-junction nodes.
     """
 
     stride = 3  # antiplane
@@ -326,7 +280,7 @@ def construct_linearoperator_slip(els, BCtype, BCval, mu=1):
     BC_t = np.zeros((N_t, 1))
 
     # stack all the BCs into 1 big vector
-    BCvector = np.vstack((BC_c, BC_o, BC_i, BC_t))
+    BCnodes = np.vstack((BC_o, BC_i, BC_t))
     matrix_system_o, matrix_system_i, matrix_system_t = (
         bemcs.construct_smoothoperator_antiplane(
             els, index_open, index_overlap, index_triple
@@ -339,7 +293,8 @@ def construct_linearoperator_slip(els, BCtype, BCval, mu=1):
         els.x_centers, els.y_centers, els, mu
     )
     t_kernels = bemcs.get_traction_kernels_antiplane(els, kernels)
-
+    # displacement kernels
+    u_kernels = kernels[2]
     # Linear Operators for the appropriate boundary conditions
     matrix_system_c = np.zeros((N_c, Nunknowns))
 
@@ -349,12 +304,12 @@ def construct_linearoperator_slip(els, BCtype, BCval, mu=1):
             matrix_system_c[i, :] = slip_mat[stride * i + 1, :]
         elif BCtype[i] == "t":
             matrix_system_c[i, :] = t_kernels[i, :]
+        elif BCtype[i] == "u":
+            matrix_system_c[i, :] = u_kernels[i, :]
         else:
             ValueError("boundary condition label not recognized")
 
-    # stack the matrices and create the full linear operator
-    matrix_system = np.vstack(
-        (matrix_system_c, matrix_system_o, matrix_system_i, matrix_system_t)
-    )
+    # stack the matrices and create only the smoothness linear operator
+    matrix_nodes = np.vstack((matrix_system_o, matrix_system_i, matrix_system_t))
 
-    return matrix_system, BCvector
+    return matrix_system_c, matrix_nodes, BC_c, BCnodes
