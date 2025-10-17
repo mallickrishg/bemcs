@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import bemcs
 import pandas as pd
+import GF
 
 # %% Read source file and mesh of the domain
 fileinput = "HeterogeneousDomainMesh.csv"
@@ -38,16 +39,46 @@ els_s.x1 = els.x1[bc_mask]
 els_s.y1 = els.y1[bc_mask]
 els_s.x2 = els.x2[bc_mask]
 els_s.y2 = els.y2[bc_mask]
+# construct a mesh only for 'h' BCtype
+els_h = bemcs.initialize_els()
+els_h.x1 = els.x1[~bc_mask]
+els_h.y1 = els.y1[~bc_mask]
+els_h.x2 = els.x2[~bc_mask]
+els_h.y2 = els.y2[~bc_mask]
 
 bemcs.standardize_els_geometry(els, reorder=False)
 bemcs.standardize_els_geometry(els_s, reorder=False)
+bemcs.standardize_els_geometry(els_h, reorder=False)
 
 n_els = len(els.x1)
 bemcs.plot_els_geometry(els)
-# %%
+
 # Define observation points
 # need to shift observation points by an infinitesimal amount to sample discontinuity either in u or du/dn
 dr = -1e-6
-xo = els.xc + dr * els.x_normals
-yo = els.yc + dr * els.y_normals
-# %%
+
+xo = np.hstack(
+    (
+        els_s.x_centers + dr * els_s.x_normals,
+        els.x_centers[connmatrix[:, 1].astype(int)]
+        + dr * els.x_normals[connmatrix[:, 1].astype(int)],
+    )
+).flatten()
+yo = np.hstack(
+    (
+        els_s.y_centers + dr * els_s.y_normals,
+        els.y_centers[connmatrix[:, 1].astype(int)]
+        + dr * els.y_normals[connmatrix[:, 1].astype(int)],
+    )
+).flatten()
+
+# %% construct kernels
+# compute force kernels (assuming trapezoidal spatial functions) for "h" BCtype elements [Nobs x Nsources]
+K_x, K_y, _ = GF.get_kernels_trapezoidalforce(xo, yo, els, connmatrix)
+
+# compute slip kernels for "s" & "t" BCtype elements (will be a square matrix of dimension N = stride x N_slip_elements)
+matrix_slip, BC_slip = GF.construct_linearoperator_slip(
+    els_s, BCtype[bc_mask], BCval[bc_mask]
+)
+
+# Assemble BIE matrices for slip & force kernels and appropriate Boundary Conditions
