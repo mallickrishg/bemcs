@@ -3,22 +3,22 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 
-# %% setup a fault geometry (source) - in this case it is a vertical strike-slip fault segment
-xf1 = np.array([-0.0])
-yf1 = np.array([-0.5])
-xf2 = np.array([0])
-yf2 = np.array([-1.5])
-
-# topography
+# %% topography
 # Elastic parameter (shear modulus)
 mu = 1.0
 Lscale = 10
-npts_layer = 12
+npts_layer = 10
 xvals = np.linspace(-Lscale, Lscale, npts_layer)
 xt1 = xvals[0:-1]
 xt2 = xvals[1:]
 yt1 = np.zeros_like(xt1)
 yt2 = np.zeros_like(xt1)
+
+# setup a fault geometry (source) - in this case it is a vertical strike-slip fault segment
+xf1 = np.array([-0.0]) + np.min(xvals[xvals >= 0])
+yf1 = np.array([-0.0])
+xf2 = np.array([0]) + np.min(xvals[xvals >= 0])
+yf2 = np.array([-1.5])
 
 # %% provide layered structure in terms of number of layers, location of layers (iterface with jump in μ), and μ values
 nlayers = 3
