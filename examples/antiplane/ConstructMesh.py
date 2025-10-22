@@ -7,7 +7,7 @@ import pandas as pd
 # Elastic parameter (shear modulus)
 mu = 1.0
 Lscale = 10
-npts_layer = 10
+npts_layer = 101
 xvals = np.linspace(-Lscale, Lscale, npts_layer)
 xt1 = xvals[0:-1]
 xt2 = xvals[1:]
@@ -15,15 +15,17 @@ yt1 = np.zeros_like(xt1)
 yt2 = np.zeros_like(xt1)
 
 # setup a fault geometry (source) - in this case it is a vertical strike-slip fault segment
-xf1 = np.array([-0.0]) + np.min(xvals[xvals >= 0])
-yf1 = np.array([-0.0])
-xf2 = np.array([0]) + np.min(xvals[xvals >= 0])
-yf2 = np.array([-1.5])
+xf1 = np.array([-0.0, 0.0, 0.0]) + np.min(xvals[xvals >= 0])
+# yf1 = np.array([-1.5, -1.0, -0.5])
+yf1 = np.array([0, -0.5, -1.0])
+xf2 = np.array([0, 0, 0]) + np.min(xvals[xvals >= 0])
+# yf2 = np.array([-1.0, -0.5, 0])
+yf2 = np.array([-0.5, -1.0, -1.5])
 
 # %% provide layered structure in terms of number of layers, location of layers (iterface with jump in μ), and μ values
-nlayers = 3
+nlayers = 5
 zlayer = np.linspace(-6, 0, nlayers + 1)[0:-1]
-mulayer = np.linspace(10, 1, nlayers + 1)
+mulayer = np.linspace(3.0, 1, nlayers + 1)
 
 x1 = []
 x2 = []
@@ -41,6 +43,7 @@ for i in range(nlayers):
     beta[i * (npts_layer - 1) : (npts_layer - 1) * (i + 1)] = (
         -(mulayer[i + 1] - mulayer[i]) / mulayer[i + 1]
     )
+print(np.unique(beta))
 # along with x1,y1 and x2,y2 we also need to provide a connectivity matrix tying three elements together
 # this connectivity matrix is for two elements at a time - i want to connect [0,1,2] then [2,3,4] and so on
 # connectivity construction
@@ -49,7 +52,10 @@ for i in range(nlayers):
     start_idx = i * (npts_layer - 1) + len(xf1) + len(xt1)
     end_idx = start_idx + (npts_layer - 1)
     local_idx = np.arange(start_idx, end_idx)
-    for j in range(0, len(local_idx) - 2, 2):
+    # for j in range(0, len(local_idx) - 2, 2):
+    # connectivity.append(local_idx[j : j + 3])
+    # sliding window of 3 consecutive indices with stride 1
+    for j in range(len(local_idx) - 2):
         connectivity.append(local_idx[j : j + 3])
 connectivity = np.array(connectivity)
 
