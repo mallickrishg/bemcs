@@ -3341,10 +3341,28 @@ def label_nodes(els):
 
         # The negative signs are for the triple junction equations
         # s_1 + s_2 + s_3 = 0 with the negative sign going to any 2 elements that are both id1 or id2
-        if (np.size(id1) == 2) & (np.size(id2) == 1):  # triple junction
+        """if (np.size(id1) == 2) & (np.size(id2) == 1):  # triple junction
             id_combo = np.hstack((-id1[0] * 3, id2[0] * 3 + 2))
         elif (np.size(id2) == 2) & (np.size(id1) == 1):  # triple junction
-            id_combo = np.hstack((id1[0] * 3, -(id2[0] * 3 + 2)))
+            id_combo = np.hstack((id1[0] * 3, -(id2[0] * 3 + 2)))"""
+        if (np.size(id1) == 2) and (
+            np.size(id2) == 1
+        ):  # triple junction (2x x1-points, 1x x2-point)
+            # if element 0 appears in id1, flip the sign assignment
+            if 0 in id1[0]:
+                id_combo = np.hstack((id1[0] * 3, -(id2[0] * 3 + 2)))
+            else:
+                id_combo = np.hstack((-id1[0] * 3, id2[0] * 3 + 2))
+
+        elif (np.size(id2) == 2) and (
+            np.size(id1) == 1
+        ):  # triple junction (2x x2-points, 1x x1-point)
+            # if element 0 appears in id2, flip the sign assignment
+            if 0 in id2[0]:
+                id_combo = np.hstack((-id1[0] * 3, id2[0] * 3 + 2))
+            else:
+                id_combo = np.hstack((id1[0] * 3, -(id2[0] * 3 + 2)))
+
         elif (np.size(id2) == 1) & (np.size(id1) == 1):  # 2-overlap
             id_combo = np.hstack((id1[0] * 3, -(id2[0] * 3 + 2)))
         elif (np.size(id2) == 2) & (np.size(id1) == 0):  # 2-overlap (problematic)
