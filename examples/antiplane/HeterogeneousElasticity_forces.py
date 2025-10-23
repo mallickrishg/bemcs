@@ -55,17 +55,18 @@ bemcs.plot_els_geometry(els)
 # Define observation points
 # need to shift observation points by an infinitesimal amount to sample discontinuity either in u or du/dn
 dr = -1e-9
-
+# IMPORTANT NOTE: for force elements, observation points are shifted in the element normal direction
+# while for slip elements, observation points are shifted towards the 'interior' of the domain
 xo = np.hstack(
     (
-        els_s.x_centers + dr * els_s.x_normals,
+        els_s.x_centers + 0 * dr * els_s.x_normals,
         els.x_centers[connmatrix[:, 1].astype(int)]
         - dr * els.x_normals[connmatrix[:, 1].astype(int)],
     )
 ).flatten()
 yo = np.hstack(
     (
-        els_s.y_centers + dr * els_s.y_normals,
+        els_s.y_centers + 0 * dr * els_s.y_normals,
         els.y_centers[connmatrix[:, 1].astype(int)]
         - dr * els.y_normals[connmatrix[:, 1].astype(int)],
     )
@@ -181,7 +182,7 @@ sy = Kslip_y @ quadcoefs + Kforce_y @ forcecoefs
 plt.figure(figsize=(8, 10))
 plt.subplot(3, 1, 1)
 toplot = u.reshape(ny_obs, nx_obs)
-maxval = 1
+maxval = 0.5
 minval = -maxval
 levels = np.linspace(minval, maxval, 21)
 plt.contourf(
