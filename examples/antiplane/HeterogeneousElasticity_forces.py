@@ -54,20 +54,20 @@ bemcs.plot_els_geometry(els)
 
 # Define observation points
 # need to shift observation points by an infinitesimal amount to sample discontinuity either in u or du/dn
-dr = -1e-6
+dr = -1e-9
 
 xo = np.hstack(
     (
         els_s.x_centers + dr * els_s.x_normals,
         els.x_centers[connmatrix[:, 1].astype(int)]
-        + dr * els.x_normals[connmatrix[:, 1].astype(int)],
+        - dr * els.x_normals[connmatrix[:, 1].astype(int)],
     )
 ).flatten()
 yo = np.hstack(
     (
         els_s.y_centers + dr * els_s.y_normals,
         els.y_centers[connmatrix[:, 1].astype(int)]
-        + dr * els.y_normals[connmatrix[:, 1].astype(int)],
+        - dr * els.y_normals[connmatrix[:, 1].astype(int)],
     )
 ).flatten()
 
@@ -181,16 +181,17 @@ sy = Kslip_y @ quadcoefs + Kforce_y @ forcecoefs
 plt.figure(figsize=(8, 10))
 plt.subplot(3, 1, 1)
 toplot = u.reshape(ny_obs, nx_obs)
-maxval = 0.5
+maxval = 1
 minval = -maxval
 levels = np.linspace(minval, maxval, 21)
-plt.pcolor(
+plt.contourf(
     xo.reshape(ny_obs, nx_obs),
     yo.reshape(ny_obs, nx_obs),
     toplot,
     cmap="coolwarm",
     vmin=minval,
     vmax=maxval,
+    levels=levels,
 )
 for i in range(n_els):
     plt.plot(
@@ -215,7 +216,7 @@ plt.gca().set_aspect("equal", adjustable="box")
 
 plt.subplot(3, 1, 2)
 toplot = sx.reshape(ny_obs, nx_obs)
-maxval = 2
+maxval = 1
 minval = -maxval
 levels = np.linspace(minval, maxval, 21)
 plt.pcolor(
@@ -302,17 +303,17 @@ plt.show()
 # %% plot slip on 's' mesh elements
 
 xf, yf, slipnodes = bemcs.get_slipvector_on_fault_antiplane(
-    els_s, quadcoefs.flatten(), 20
+    els_s, quadcoefs.flatten(), 10
 )
-plt.figure(figsize=(8, 6))
-plt.subplot(2, 1, 1)
-plt.plot(xf[yf == 0], slipnodes[yf == 0], "-")
-plt.xlabel("x")
-plt.ylabel("slip at nodes")
-plt.xlim(xlimits)
-plt.grid()
-plt.subplot(2, 1, 2)
-plt.plot(slipnodes[yf < 0], yf[yf < 0], "-")
+plt.figure(figsize=(4, 4))
+# plt.subplot2grid((1, 3), (0, 0), colspan=2)
+# plt.plot(xf[yf == 0], slipnodes[yf == 0], "-")
+# plt.xlabel("x")
+# plt.ylabel("slip at nodes")
+# plt.xlim(xlimits)
+# plt.grid()
+# plt.subplot2grid((1, 3), (0, 2))
+plt.plot(slipnodes[yf < 0], yf[yf < 0], ".-")
 plt.ylabel("y")
 plt.xlabel("slip at nodes")
 plt.grid()

@@ -21,11 +21,12 @@ yf1 = np.array([0, -0.5, -1.0])
 xf2 = np.array([0, 0, 0]) + np.min(xvals[xvals >= 0])
 # yf2 = np.array([-1.0, -0.5, 0])
 yf2 = np.array([-0.5, -1.0, -1.5])
+slip_values = np.array([1.0, 0.5, 0.25])  # slip on fault segments
 
 # %% provide layered structure in terms of number of layers, location of layers (iterface with jump in μ), and μ values
-nlayers = 5
-zlayer = np.linspace(-6, 0, nlayers + 1)[0:-1]
-mulayer = np.linspace(3.0, 1, nlayers + 1)
+nlayers = 2
+zlayer = np.linspace(-2, 0, nlayers + 1)[0:-1]
+mulayer = np.linspace(5.0, 1, nlayers + 1)
 
 x1 = []
 x2 = []
@@ -102,7 +103,7 @@ BCtype = np.hstack(
         np.full_like(x1, "h", dtype=object),
     ]
 )
-BCval = np.hstack([np.ones_like(xf1) * 1.0, np.ones_like(xt1) * 0.0, beta])
+BCval = np.hstack([slip_values, np.ones_like(xt1) * 0.0, beta])
 
 # export in the format xs,ys,xe,y2e,BCtype,BCval
 # where(xs,ys) is start point and (xe,ye) is end point of each segment
