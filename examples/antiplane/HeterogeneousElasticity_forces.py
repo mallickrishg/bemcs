@@ -8,158 +8,85 @@ import warnings
 
 # Suppress all warnings
 warnings.filterwarnings("ignore")
+
+
+def plot_BEM_field(
+    toplot, els, xo, yo, xlimits, ylimits, maxval, n_levels=10, cmap="coolwarm"
+):
+    """
+    Plot BEM scalar field with element geometry and automatically computed contours.
+
+    Parameters
+    ----------
+    toplot : ndarray
+        Scalar field values at observation points (1D array of size nx_obs*ny_obs)
+    els : object
+        Mesh object with attributes x1, x2, y1, y2
+    xo, yo : ndarray
+        Observation point coordinates (1D arrays)
+    xlimits, ylimits : tuple
+        (xmin, xmax) and (ymin, ymax)
+    maxval : float
+        Maximum absolute value for color scaling
+    n_levels : int, optional
+        Number of contour levels (default 10)
+    cmap : str, optional
+        Colormap (default "coolwarm")
+    """
+
+    # Determine grid shape
+    nx_obs = len(np.unique(xo))
+    ny_obs = len(np.unique(yo))
+
+    X = xo.reshape(ny_obs, nx_obs)
+    Y = yo.reshape(ny_obs, nx_obs)
+    Z = toplot.reshape(ny_obs, nx_obs)
+
+    # color limits
+    vmin, vmax = -maxval, maxval
+
+    # contour levels
+    levels = np.linspace(vmin, vmax, n_levels)
+
+    # plot field using colors
+    plt.pcolor(X, Y, Z, cmap=cmap, vmin=vmin, vmax=vmax)
+
+    # overlay mesh elements
+    n_els = len(els.x1)
+    for i in range(n_els):
+        plt.plot(
+            [els.x1[i], els.x2[i]],
+            [els.y1[i], els.y2[i]],
+            "k.-",
+            linewidth=0.2,
+            markersize=1,
+        )
+
+    # colorbar
+    plt.colorbar()
+
+    # contour lines
+    plt.contour(X, Y, Z, colors="k", levels=levels, linewidths=0.5)
+
+    # limits and aspect
+    plt.xlim(xlimits)
+    plt.ylim(ylimits)
+    plt.gca().set_aspect("equal", adjustable="box")
+
+
 # %% Read source file and mesh of the domain
+# fileinput = "testing_mesh.csv"
+
+# need to fix issue with connectivity file reading for non-heterogeneous cases
+
 fileinput = "HeterogeneousDomainMesh.csv"
 connectvitiyfile = "HeterogeneousDomainMeshConnectivity.csv"
-# read mesh file
-datain = pd.read_csv(fileinput)
-
-x1 = datain["x1"].values
-x2 = datain["x2"].values
-y1 = datain["z1"].values
-y2 = datain["z2"].values
-BCtype = datain["BC_type"].values
-BCval = datain["value"].values
-connmatrix = pd.read_csv(connectvitiyfile, header=None).values
-
-# Elastic parameter
-mu = 1
-# in normalized units (only use 1 since mu variations are accounted for in BCval)
-
-# construct mesh
-els = bemcs.initialize_els()
-# specify stride for problem (antiplane - 3; planestrain - 6)
-stride = 3
-# construct mesh from mesh file
-els.x1 = x1
-els.y1 = y1
-els.x2 = x2
-els.y2 = y2
-
-# construct separate mesh just for 's', 'u' or 't' BCtype
-# 'h' type BC elements are force elements (used for 'heterogeneous' material properties)
-bc_mask = BCtype != "h"
-els_s = bemcs.initialize_els()
-els_s.x1 = els.x1[bc_mask]
-els_s.y1 = els.y1[bc_mask]
-els_s.x2 = els.x2[bc_mask]
-els_s.y2 = els.y2[bc_mask]
-
-# standardize element geometry
-bemcs.standardize_els_geometry(els, reorder=False)
-bemcs.standardize_els_geometry(els_s, reorder=False)
-# plot mesh
-n_els = len(els.x1)
-bemcs.plot_els_geometry(els)
-
-# Define observation points
-# need to shift observation points by an infinitesimal amount to sample discontinuity either in u or du/dn
-dr = -1e-9
-# IMPORTANT NOTE: for force elements, observation points are shifted in the element normal direction
-# while for slip elements, observation points are shifted towards the 'interior' of the domain
-xo = np.hstack(
-    (
-        els_s.x_centers + 0 * dr * els_s.x_normals,
-        els.x_centers[connmatrix[:, 1].astype(int)]
-        - dr * els.x_normals[connmatrix[:, 1].astype(int)],
-    )
-).flatten()
-yo = np.hstack(
-    (
-        els_s.y_centers + 0 * dr * els_s.y_normals,
-        els.y_centers[connmatrix[:, 1].astype(int)]
-        - dr * els.y_normals[connmatrix[:, 1].astype(int)],
-    )
-).flatten()
-
-# %% construct kernels
-# compute force kernels (assuming trapezoidal spatial functions) for "h" BCtype elements [Nobs x Nsources]
-K_x, K_y, _ = GF.get_kernels_trapezoidalforce(xo, yo, els, connmatrix)
-# compute traction kernel by dotting stress with normal vector
-nxvec = np.hstack(
-    (
-        els_s.x_normals,
-        els.x_normals[connmatrix[:, 1].astype(int)],
-    )
-)
-nyvec = np.hstack(
-    (
-        els_s.y_normals,
-        els.y_normals[connmatrix[:, 1].astype(int)],
-    )
-)
-
-# convert from stress to traction kernels [Nobs x Nsources]
-Kforce_n = K_x * nxvec[:, None] + K_y * nyvec[:, None]
-
-# compute slip kernels for "s" & "t" BCtype elements (will be a square matrix of dimension N = stride x N_slip_elements)
-matrix_slip_c, matrix_slip_nodes, BC_slip_c, BC_slip_nodes = (
-    GF.construct_linearoperator_slip(els_s, BCtype[bc_mask], BCval[bc_mask])
-)
-
-# compute stress kernels for "s" & "t" BCtype elements [Nobs x Nsources]
-K_x, K_y, _ = bemcs.get_displacement_stress_kernel_slip_antiplane(xo, yo, els_s, mu)
-# convert from stress to traction kernels [Nobs x Nsources]
-Kslip_n = K_x * nxvec[:, None] + K_y * nyvec[:, None]
-
-
-# %% Assemble BIE matrices for slip & force kernels and appropriate Boundary Conditions
-
-N_equations = len(els_s.x1) + len(
-    connmatrix[:, 0]
-)  # number of equations at mesh centers
-N_unknowns = stride * len(els_s.x1) + len(connmatrix[:, 0])  # number of unknowns
-
-# linear operator for slip & force elements
-matrix_system = np.zeros((N_equations, N_unknowns))
-
-# populate matrix_system for slip elements (check for bc_label)
-for i in range(len(els_s.x1)):
-    if BCtype[i] == "s":
-        matrix_system[i, 0 : stride * len(els_s.x1)] = matrix_slip_c[i, :]
-    elif BCtype[i] == "t":
-        matrix_system[i, :] = np.hstack((matrix_slip_c[i, :], Kforce_n[i, :]))
-    else:
-        ValueError("boundary condition label not recognized")
-
-# Add bottom part of matrix_system for 'h' type BC elements
-n_bottom_rows = len(connmatrix[:, 0])
-start_row = len(els_s.x1)
-
-# Create diagonal matrix of shear modulus gradients
-alpha = np.diag(BCval[connmatrix[:, 1].astype(int)])
-
-# Assemble [diag(BCval)*Kslip_n, I + diag(BCval)*Kforce_n]
-matrix_system[start_row:, : stride * len(els_s.x1)] = (
-    alpha @ Kslip_n[len(els_s.x1) :, :]
-)
-matrix_system[start_row:, stride * len(els_s.x1) :] = (
-    np.eye(n_bottom_rows) + alpha @ Kforce_n[len(els_s.x1) :, :]
-)
-# append matrix_slip_nodes below matrix_system and maintain correct shape
-matrix_system = np.vstack(
-    (
-        matrix_system,
-        np.hstack(
-            (
-                matrix_slip_nodes,
-                np.zeros((matrix_slip_nodes.shape[0], len(connmatrix[:, 0]))),
-            )
-        ),
-    )
-)
-
-# assemble BC vector
-BC_vector = np.vstack((BC_slip_c, np.zeros((len(connmatrix[:, 0]), 1)), BC_slip_nodes))
-
-# %% solve Linear system
-solution_vector = np.linalg.solve(matrix_system, BC_vector)
-
-# extract quadratic coefficients for slip elements
-quadcoefs = solution_vector[0 : stride * len(els_s.x1)]
-forcecoefs = solution_vector[stride * len(els_s.x1) :]
+# connmatrix = pd.read_csv(connectvitiyfile, header=None).values
+# %% solve BEM to get quadratic(slip) & force coefficients
+els, els_s, quadcoefs, forcecoefs = GF.solveAntiplaneBEM(fileinput, connectvitiyfile)
 
 # %% compute and plot displacement, displacement gradient fields inside the domain
+n_els = len(els.x1)
 xlimits = [-4, 4]
 ylimits = [-2, 0]
 nx_obs = 200
@@ -171,118 +98,50 @@ xo = x_obs.flatten().reshape(-1, 1)
 yo = y_obs.flatten().reshape(-1, 1)
 # compute kernels at observation points
 Kslip_x, Kslip_y, Kslip_u = bemcs.get_displacement_stress_kernel_slip_antiplane(
-    xo, yo, els_s, mu
+    xo, yo, els_s, mu=1
 )
-Kforce_x, Kforce_y, Kforce_u = GF.get_kernels_trapezoidalforce(xo, yo, els, connmatrix)
 # compute displacement and stress components
-u = Kslip_u @ quadcoefs + Kforce_u @ forcecoefs
-sx = Kslip_x @ quadcoefs + Kforce_x @ forcecoefs
-sy = Kslip_y @ quadcoefs + Kforce_y @ forcecoefs
+if "connmatrix" in locals():
+    Kforce_x, Kforce_y, Kforce_u = GF.get_kernels_trapezoidalforce(
+        xo, yo, els, connmatrix
+    )
+    u = Kslip_u @ quadcoefs + Kforce_u @ forcecoefs
+    sx = Kslip_x @ quadcoefs + Kforce_x @ forcecoefs
+    sy = Kslip_y @ quadcoefs + Kforce_y @ forcecoefs
+else:
+    u = Kslip_u @ quadcoefs
+    sx = Kslip_x @ quadcoefs
+    sy = Kslip_y @ quadcoefs
 
-plt.figure(figsize=(8, 10))
+
+# %% plot fields inside the domain
+plt.figure(figsize=(10, 10))
 plt.subplot(3, 1, 1)
 toplot = u.reshape(ny_obs, nx_obs)
 maxval = 0.5
-minval = -maxval
-levels = np.linspace(minval, maxval, 21)
-plt.contourf(
-    xo.reshape(ny_obs, nx_obs),
-    yo.reshape(ny_obs, nx_obs),
-    toplot,
-    cmap="coolwarm",
-    vmin=minval,
-    vmax=maxval,
-    levels=levels,
+plot_BEM_field(
+    toplot, els, xo, yo, xlimits, ylimits, maxval, n_levels=11, cmap="coolwarm"
 )
-for i in range(n_els):
-    plt.plot(
-        [els.x1[i], els.x2[i]],
-        [els.y1[i], els.y2[i]],
-        "k.-",
-        linewidth=0.2,
-        markersize=1,
-    )
-plt.colorbar(label="$u$ (m)")
-plt.contour(
-    xo.reshape(ny_obs, nx_obs),
-    yo.reshape(ny_obs, nx_obs),
-    toplot,
-    colors="k",
-    levels=levels,
-    linewidths=0.5,
-)
-plt.xlim(xlimits)
-plt.ylim(ylimits)
-plt.gca().set_aspect("equal", adjustable="box")
+plt.title("Displacement field $u$")
 
 plt.subplot(3, 1, 2)
 toplot = sx.reshape(ny_obs, nx_obs)
 maxval = 1
-minval = -maxval
-levels = np.linspace(minval, maxval, 21)
-plt.pcolor(
-    xo.reshape(ny_obs, nx_obs),
-    yo.reshape(ny_obs, nx_obs),
-    toplot,
-    cmap="RdYlBu_r",
-    vmin=minval,
-    vmax=maxval,
+plot_BEM_field(
+    toplot, els, xo, yo, xlimits, ylimits, maxval, n_levels=11, cmap="RdYlBu_r"
 )
-for i in range(n_els):
-    plt.plot(
-        [els.x1[i], els.x2[i]],
-        [els.y1[i], els.y2[i]],
-        "k.-",
-        linewidth=0.2,
-        markersize=1,
-    )
-plt.colorbar(label="$u_{,x}$")
-plt.contour(
-    xo.reshape(ny_obs, nx_obs),
-    yo.reshape(ny_obs, nx_obs),
-    toplot,
-    colors="k",
-    levels=levels,
-    linewidths=0.5,
-)
-plt.xlim(xlimits)
-plt.ylim(ylimits)
-plt.gca().set_aspect("equal", adjustable="box")
+plt.title("Displacement gradient $u_{,x}$")
 
 plt.subplot(3, 1, 3)
 toplot = sy.reshape(ny_obs, nx_obs)
-plt.pcolor(
-    xo.reshape(ny_obs, nx_obs),
-    yo.reshape(ny_obs, nx_obs),
-    toplot,
-    cmap="RdYlBu_r",
-    vmin=minval,
-    vmax=maxval,
+plot_BEM_field(
+    toplot, els, xo, yo, xlimits, ylimits, maxval, n_levels=11, cmap="RdYlBu_r"
 )
-plt.colorbar(label="$u_{,y}$")
-plt.contour(
-    xo.reshape(ny_obs, nx_obs),
-    yo.reshape(ny_obs, nx_obs),
-    toplot,
-    colors="k",
-    levels=levels,
-    linewidths=0.5,
-)
-for i in range(n_els):
-    plt.plot(
-        [els.x1[i], els.x2[i]],
-        [els.y1[i], els.y2[i]],
-        "k.-",
-        linewidth=0.2,
-        markersize=1,
-    )
-plt.xlim(xlimits)
-plt.ylim(ylimits)
-plt.gca().set_aspect("equal", adjustable="box")
+plt.title("Displacement gradient $u_{,y}$")
 plt.show()
 
-# plot fields at the surface of the domain
-plt.figure(figsize=(8, 8))
+# %% plot fields at the surface of the domain
+plt.figure(figsize=(8, 10))
 plt.subplot(2, 1, 1)
 index = yo == np.max(yo)
 plt.plot(xo[index], u[index], ".-")
@@ -319,5 +178,4 @@ plt.ylabel("y")
 plt.xlabel("slip at nodes")
 plt.grid()
 plt.show()
-
-# %%
+# %% end of file
