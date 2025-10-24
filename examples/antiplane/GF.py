@@ -316,7 +316,7 @@ def construct_linearoperator_slip(els, BCtype, BCval, mu=1):
     return matrix_system_c, matrix_nodes, BC_c, BCnodes
 
 
-def solveAntiplaneBEM(fileinput, connectivityfile, mu=1):
+def solveAntiplaneBEM(fileinput, connectivityfile=None, mu=1):
     """
     Solve a 2D antiplane BEM problem given a mesh input file.
 
@@ -360,7 +360,10 @@ def solveAntiplaneBEM(fileinput, connectivityfile, mu=1):
     BCtype = datain["BC_type"].values
     BCval = datain["value"].values
 
-    connmatrix = pd.read_csv(connectivityfile, header=None).values
+    if connectivityfile is not None:
+        connmatrix = pd.read_csv(connectivityfile, header=None).values
+    else:
+        print("No connectivity file provided; assuming homogenous medium.")
 
     # --- Construct mesh objects ---
     stride = 3

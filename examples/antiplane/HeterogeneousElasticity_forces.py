@@ -75,15 +75,20 @@ def plot_BEM_field(
 
 
 # %% Read source file and mesh of the domain
+# case 1: homogeneous domain with a fault
 # fileinput = "testing_mesh.csv"
 
-# need to fix issue with connectivity file reading for non-heterogeneous cases
-
+# case 2: heterogeneous domain (need to provide connectivity file for force elements)
 fileinput = "HeterogeneousDomainMesh.csv"
 connectvitiyfile = "HeterogeneousDomainMeshConnectivity.csv"
-# connmatrix = pd.read_csv(connectvitiyfile, header=None).values
+connmatrix = pd.read_csv(connectvitiyfile, header=None).values
 # %% solve BEM to get quadratic(slip) & force coefficients
-els, els_s, quadcoefs, forcecoefs = GF.solveAntiplaneBEM(fileinput, connectvitiyfile)
+if "connmatrix" in locals():
+    els, els_s, quadcoefs, forcecoefs = GF.solveAntiplaneBEM(
+        fileinput, connectvitiyfile
+    )
+else:
+    els, els_s, quadcoefs, _ = GF.solveAntiplaneBEM(fileinput)
 
 # %% compute and plot displacement, displacement gradient fields inside the domain
 n_els = len(els.x1)
@@ -144,14 +149,14 @@ plt.show()
 plt.figure(figsize=(8, 10))
 plt.subplot(2, 1, 1)
 index = yo == np.max(yo)
-plt.plot(xo[index], u[index], ".-")
+plt.plot(xo[index], u[index], "-")
 plt.xlabel("x ")
 plt.ylabel("u")
 plt.title("Surface displacement")
 plt.xlim(xlimits)
 plt.subplot(2, 1, 2)
-plt.plot(xo[index], sx[index], ".-", label="$u_{,x}$")
-plt.plot(xo[index], sy[index], ".-", label="$u_{,y}$")
+plt.plot(xo[index], sx[index], "-", label="$u_{,x}$")
+plt.plot(xo[index], sy[index], "-", label="$u_{,y}$")
 plt.xlabel("x ")
 plt.ylabel("displacement gradients")
 plt.title("Surface displacement gradients")
