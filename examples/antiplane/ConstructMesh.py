@@ -12,7 +12,7 @@ xvals = np.linspace(-Lscale, Lscale, npts_layer)
 xt1 = xvals[0:-1]
 xt2 = xvals[1:]
 yt1 = np.zeros_like(xt1)
-yt2 = np.zeros_like(xt1)
+yt2 = np.zeros_like(xt2)
 
 # setup a fault geometry (source) - in this case it is a vertical strike-slip fault segment
 xf1 = np.array([-0.0, 0.0, 0.0]) + np.min(xvals[xvals >= 0])
@@ -21,7 +21,7 @@ yf1 = np.array([0, -0.5, -1.0])
 xf2 = np.array([0, 0, 0]) + np.min(xvals[xvals >= 0])
 # yf2 = np.array([-1.0, -0.5, 0])
 yf2 = np.array([-0.5, -1.0, -1.5])
-slip_values = np.array([1.0, 0.5, 0.25])  # slip on fault segments
+slip_values = np.array([0.5, 1.0, 0.5])  # slip on fault segments
 
 # %% provide layered structure in terms of number of layers, location of layers (iterface with jump in μ), and μ values
 nlayers = 2
@@ -35,12 +35,14 @@ y2 = []
 
 # calculation the dμ/dx and dμ/dy terms as α,β
 beta = np.zeros(nlayers * (npts_layer - 1))
+y1perturb = np.sin(2 * np.pi * 4 * xt1 / Lscale) * 0.5
+y2perturb = np.sin(2 * np.pi * 4 * xt2 / Lscale) * 0.5
 for i in range(nlayers):
     xvals = np.linspace(-Lscale, Lscale, npts_layer)
     x1 = np.hstack([x1, xvals[0:-1]])
     x2 = np.hstack([x2, xvals[1:]])
-    y1 = np.hstack([y1, np.ones(npts_layer - 1) * zlayer[i]])
-    y2 = np.hstack([y2, np.ones(npts_layer - 1) * zlayer[i]])
+    y1 = np.hstack([y1, np.ones(npts_layer - 1) * zlayer[i] + y1perturb])
+    y2 = np.hstack([y2, np.ones(npts_layer - 1) * zlayer[i] + y2perturb])
     beta[i * (npts_layer - 1) : (npts_layer - 1) * (i + 1)] = (
         -(mulayer[i + 1] - mulayer[i]) / mulayer[i + 1]
     )
