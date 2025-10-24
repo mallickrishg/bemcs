@@ -385,35 +385,47 @@ def solveAntiplaneBEM(fileinput, connectivityfile, mu=1):
     # while for slip elements, observation points are shifted towards the 'interior' of the domain
 
     dr = -1e-9
-    xo = np.hstack(
-        (
-            els_s.x_centers,
-            els.x_centers[connmatrix[:, 1].astype(int)]
-            - dr * els.x_normals[connmatrix[:, 1].astype(int)],
-        )
-    ).flatten()
-    yo = np.hstack(
-        (
-            els_s.y_centers,
-            els.y_centers[connmatrix[:, 1].astype(int)]
-            - dr * els.y_normals[connmatrix[:, 1].astype(int)],
-        )
-    ).flatten()
+    if np.any(BCtype == "h"):
+        xo = np.hstack(
+            (
+                els_s.x_centers,
+                els.x_centers[connmatrix[:, 1].astype(int)]
+                - dr * els.x_normals[connmatrix[:, 1].astype(int)],
+            )
+        ).flatten()
+        yo = np.hstack(
+            (
+                els_s.y_centers,
+                els.y_centers[connmatrix[:, 1].astype(int)]
+                - dr * els.y_normals[connmatrix[:, 1].astype(int)],
+            )
+        ).flatten()
 
-    # --- Construct kernels ---
-    K_x, K_y, _ = get_kernels_trapezoidalforce(xo, yo, els, connmatrix)
-    nxvec = np.hstack((els_s.x_normals, els.x_normals[connmatrix[:, 1].astype(int)]))
-    nyvec = np.hstack((els_s.y_normals, els.y_normals[connmatrix[:, 1].astype(int)]))
-    Kforce_n = K_x * nxvec[:, None] + K_y * nyvec[:, None]
+        # --- Construct kernels ---
+        K_x, K_y, _ = get_kernels_trapezoidalforce(xo, yo, els, connmatrix)
+        nxvec = np.hstack(
+            (els_s.x_normals, els.x_normals[connmatrix[:, 1].astype(int)])
+        )
+        nyvec = np.hstack(
+            (els_s.y_normals, els.y_normals[connmatrix[:, 1].astype(int)])
+        )
+        Kforce_n = K_x * nxvec[:, None] + K_y * nyvec[:, None]
+
+        # Stress kernels for slip elements
+        K_x, K_y, _ = bemcs.get_displacement_stress_kernel_slip_antiplane(
+            xo, yo, els_s, mu
+        )
+        Kslip_n = K_x * nxvec[:, None] + K_y * nyvec[:, None]
+    else:
+        xo = els_s.x_centers
+        yo = els_s.y_centers
+        nxvec = els_s.x_normals
+        nyvec = els_s.y_normals
 
     # Slip operator
     matrix_slip_c, matrix_slip_nodes, BC_slip_c, BC_slip_nodes = (
         construct_linearoperator_slip(els_s, BCtype[bc_mask], BCval[bc_mask])
     )
-
-    # Stress kernels for slip elements
-    K_x, K_y, _ = bemcs.get_displacement_stress_kernel_slip_antiplane(xo, yo, els_s, mu)
-    Kslip_n = K_x * nxvec[:, None] + K_y * nyvec[:, None]
 
     # --- Assemble and solve system ---
     if np.any(BCtype == "h"):
@@ -466,7 +478,7 @@ def solveAntiplaneBEM(fileinput, connectivityfile, mu=1):
     else:
         # Only slip elements → simpler system
         BC_vector = np.vstack((BC_slip_c, BC_slip_nodes))
-        matrix_system = np.vstack((matrix_system, matrix_slip_nodes))
+        matrix_system = np.vstack((matrix_slip_c, matrix_slip_nodes))
         quadcoefs = np.linalg.solve(matrix_system, BC_vector)
         forcecoefs = np.zeros((0, 0))  # empty placeholder
 
