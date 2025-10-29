@@ -17,6 +17,7 @@ dependencies:
   - quadpy
   - shapely
   - geopandas
+  - numba
   - pip
   - pip:
       - pygmsh
