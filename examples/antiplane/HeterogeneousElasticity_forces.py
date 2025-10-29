@@ -95,16 +95,28 @@ n_els = len(els.x1)
 xlimits = [-4, 4]
 ylimits = [-2, 0]
 nx_obs = 200
-ny_obs = nx_obs
+ny_obs = 100
 x_obs = np.linspace(-5, 5, nx_obs)
 y_obs = np.linspace(-6, -1e-3, ny_obs)
 x_obs, y_obs = np.meshgrid(x_obs, y_obs)
 xo = x_obs.flatten().reshape(-1, 1)
 yo = y_obs.flatten().reshape(-1, 1)
 # compute kernels at observation points
-Kslip_x, Kslip_y, Kslip_u = bemcs.get_displacement_stress_kernel_slip_antiplane(
-    xo, yo, els_s, mu=1
+# Kslip_x, Kslip_y, Kslip_u = bemcs.get_displacement_stress_kernel_slip_antiplane(
+#     xo, yo, els_s, mu=1
+# )
+# compute using numba-sped up kernels
+Kslip_x, Kslip_y, Kslip_u = GF.get_displacement_stress_kernel_slip_antiplane(
+    xo.flatten(),
+    yo.flatten(),
+    els_s.x_centers,
+    els_s.y_centers,
+    els_s.half_lengths,
+    els_s.rot_mats,
+    els_s.rot_mats_inv,
+    mu=1.0,
 )
+
 # compute displacement and stress components
 if "connmatrix" in locals():
     Kforce_x, Kforce_y, Kforce_u = GF.get_kernels_trapezoidalforce(
