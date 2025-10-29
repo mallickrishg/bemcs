@@ -486,3 +486,251 @@ def solveAntiplaneBEM(fileinput, connectivityfile=None, mu=1):
         forcecoefs = np.zeros((0, 0))  # empty placeholder
 
     return els, els_s, quadcoefs, forcecoefs
+
+
+try:
+    import numba
+
+    print("Numba is installed. Version:", numba.__version__)
+    from numba import njit, prange
+
+    @njit(fastmath=True, parallel=True)
+    def get_displacement_stress_kernel_slip_antiplane(
+        x_obs,
+        y_obs,
+        x1,
+        y1,
+        x2,
+        y2,
+        x_centers,
+        y_centers,
+        half_lengths,
+        rot_mats,
+        rot_mats_inv,
+        mu=1.0,
+    ):
+        """
+        Compute antiplane-slip Green's-function kernels for a set of rectangular line elements.
+        This function evaluates local antiplane displacement and shear-stress kernels for a
+        collection of 2D line elements (finite-length cracks/strike-slip elements in the
+        z-direction) at a set of observation points. The implementation expects inputs
+        already prepared for a local-element coordinate system (rotation matrices and their
+        inverses). The outputs are dense kernel arrays where each element contributes three
+        columns (three local basis contributions u1,u2,u3 for displacement and corresponding
+        stress contributions).
+        Intended usage:
+        - Call this function inside a numba-jitted context (e.g., with numba.njit(parallel=True))
+            because the implementation uses prange for parallel loops and constructs arrays in a
+            manner suited for JIT compilation.
+        - Provide numpy arrays of appropriate shapes and types (float64 preferred).
+        - Ensure observation points are not placed exactly on element singular lines (see
+            Warnings) or regularize those cases.
+        Parameters
+        ----------
+        x_obs : array_like, shape (n_obs,)
+                x-coordinates of observation points in global coordinates.
+        y_obs : array_like, shape (n_obs,)
+                y-coordinates of observation points in global coordinates.
+        x1 : array_like, shape (n_els,)
+                x-coordinate of the first node (or left endpoint) of each element in global coords.
+        y1 : array_like, shape (n_els,)
+                y-coordinate of the first node of each element in global coords.
+        x2 : array_like, shape (n_els,)
+                x-coordinate of the second node (or right endpoint) of each element in global coords.
+        y2 : array_like, shape (n_els,)
+                y-coordinate of the second node of each element in global coords.
+        x_centers : array_like, shape (n_els,)
+                x-coordinate of the element center (global coordinates).
+        y_centers : array_like, shape (n_els,)
+                y-coordinate of the element center (global coordinates).
+        half_lengths : array_like, shape (n_els,)
+                Half-length w of each element (positive). The code assumes the element extends from
+                -w to +w in the element local x coordinate.
+        rot_mats : array_like, shape (n_els, 2, 2)
+                Rotation matrices that map local coordinates -> global coordinates for each element.
+                Each rot_mats[j] should be a 2x2 orthonormal rotation matrix.
+        rot_mats_inv : array_like, shape (n_els, 2, 2)
+                Inverse rotation matrices (global -> local) for each element. Typically the transpose
+                of rot_mats if rot_mats are pure rotations.
+        mu : float, optional (default 1.0)
+                Shear modulus used to convert displacements to stresses. Units must be consistent with
+                geometry and slip units.
+        Returns
+        -------
+        kernel_sxz : ndarray, shape (n_obs, 3 * n_els)
+                Shear stress kernel component sigma_xz at each observation for each element basis.
+                Columns are grouped per element as [basis1, basis2, basis3] for element j occupying
+                columns 3*j : 3*(j+1).
+        kernel_syz : ndarray, shape (n_obs, 3 * n_els)
+                Shear stress kernel component sigma_yz at each observation for each element basis.
+        kernel_u : ndarray, shape (n_obs, 3 * n_els)
+                Antiplane displacement kernel (u_z) at each observation for each element basis.
+        Notes
+        -----
+        - Column ordering: For element j, columns 3*j, 3*j+1, 3*j+2 correspond to the three local
+            basis contributions (u1,u2,u3) used in the analytic antiplane solution. The same
+            ordering applies to kernel_sxz and kernel_syz.
+        - Coordinate transforms: Observations are translated by element center (dx,dy) and then
+            transformed to local coordinates using rot_mats_inv[j]. Stress vectors are rotated
+            back to global coordinates using rot_mats[j].
+        - This routine evaluates closed-form expressions for Green's functions in the element
+            local frame and then rotates stress vectors to global frame.
+        - The function is implemented to be friendly to numba JIT compilation. If you call it
+            without numba, it will still run in pure Python/numpy but will be slower.
+        Warnings
+        --------
+        - Singular / near-singular evaluation: expressions include terms like log((w +/- x)^2 + y^2),
+            arctan((w +/- x)/y), and divisions by ((w +/- x)^2 + y^2) and y. If an observation
+            point falls exactly on y == 0 or on the lines x = +/- w with y == 0 the expressions will
+            be singular or ill-conditioned. Regularize by shifting observation points slightly
+            off the singular line (add small epsilon) or use an analytic singular limit if needed.
+        - Numerical stability: for extremely small denominators or very large/small w/x/y ratios,
+            numerical cancellation can occur. Use double precision and consider adding checks or
+            clamping denominators if necessary.
+        - Units: Ensure consistent units across geometry and shear modulus.
+        Example
+        -------
+        # Typical pattern (outside of this docstring):
+        # Prepare arrays (x_obs, y_obs, element geometry, rotations, etc.)
+        # Optionally compile with numba for performance:
+        # get_kernels = njit(parallel=True)(get_kernels_slip_antiplane_numba)
+        # kernel_sxz, kernel_syz, kernel_u = get_kernels(x_obs, y_obs, x1, y1, x2, y2,
+        #                                               x_centers, y_centers, half_lengths,
+        #                                               rot_mats, rot_mats_inv, mu=1.0)
+        """
+
+        n_obs = len(x_obs)
+        n_els = len(x1)
+
+        # Preallocate outputs
+        kernel_sxz = np.zeros((n_obs, 3 * n_els))
+        kernel_syz = np.zeros((n_obs, 3 * n_els))
+        kernel_u = np.zeros((n_obs, 3 * n_els))
+
+        pi = np.pi
+
+        for i in prange(n_obs):
+            for j in range(n_els):
+                # Translate and rotate observation
+                dx = x_obs[i] - x_centers[j]
+                dy = y_obs[i] - y_centers[j]
+                Rinv = rot_mats_inv[j]
+                x = Rinv[0, 0] * dx + Rinv[0, 1] * dy
+                y = Rinv[1, 0] * dx + Rinv[1, 1] * dy
+                w = half_lengths[j]
+
+                # local Green’s function computations
+                log1 = np.log((w - x) ** 2 + y**2)
+                log2 = np.log((w + x) ** 2 + y**2)
+                atan1 = np.arctan((w - x) / y)
+                atan2 = np.arctan((w + x) / y)
+
+                w2 = w**2
+                w3 = w**3
+                u1 = (3 / (16 * w2 * pi)) * (
+                    6 * w * y
+                    + ((-2) * w * x + 3 * (x - y) * (x + y)) * (atan1 + atan2)
+                    + (w - 3 * x) * y * (-log1 + log2)
+                )
+
+                u2 = (1 / (8 * w2 * pi)) * (
+                    (-18) * w * y
+                    + (4 * w2 + 9 * y**2) * atan1
+                    + 9 * x**2 * np.arctan((-w + x) / y)
+                    + (4 * w2 - 9 * x**2 + 9 * y**2) * atan2
+                    + 9 * x * y * (-log1 + log2)
+                )
+
+                u3 = (3 / (16 * w2 * pi)) * (
+                    6 * w * y
+                    + (2 * w * x + 3 * (x - y) * (x + y)) * (atan1 + atan2)
+                    + (w + 3 * x) * y * (log1 - log2)
+                )
+
+                # --- stress kernels (sxz, syz) ---
+                # Following your ux1, uy1... formulae but vectorized
+                ux1 = (3 / (16 * w2 * pi)) * (
+                    (-2) * (w - 3 * x) * (atan1 + atan2)
+                    + y
+                    * (
+                        w2 * ((-1) / ((w - x) ** 2 + y**2) + 5 / ((w + x) ** 2 + y**2))
+                        + 3 * log1
+                        - 3 * log2
+                    )
+                )
+
+                uy1 = (3 / (16 * w2 * pi)) * (
+                    w
+                    * (
+                        12
+                        + w * (-w + x) / ((w - x) ** 2 + y**2)
+                        - 5 * w * (w + x) / ((w + x) ** 2 + y**2)
+                    )
+                    - 6 * y * (atan1 + atan2)
+                    - (w - 3 * x) * (log1 - log2)
+                )
+
+                ux2 = (1 / (8 * w2 * pi)) * (
+                    (-18) * x * (atan1 + atan2)
+                    + y
+                    * (
+                        20
+                        * w3
+                        * x
+                        / ((w**4 + 2 * w2 * ((-1) * x**2 + y**2) + (x**2 + y**2) ** 2))
+                        - 9 * log1
+                        + 9 * log2
+                    )
+                )
+
+                uy2 = (-1 / (8 * w2 * pi)) * (
+                    w
+                    * (
+                        36
+                        + 5 * w * (-w + x) / ((w - x) ** 2 + y**2)
+                        - 5 * w * (w + x) / ((w + x) ** 2 + y**2)
+                    )
+                    - 18 * y * (atan1 + atan2)
+                    + 9 * x * (log1 - log2)
+                )
+
+                ux3 = (3 / (16 * w2 * pi)) * (
+                    2 * (w + 3 * x) * (atan1 + atan2)
+                    + y
+                    * (
+                        w2 * ((-5) / ((w - x) ** 2 + y**2) + 1 / ((w + x) ** 2 + y**2))
+                        + 3 * log1
+                        - 3 * log2
+                    )
+                )
+
+                uy3 = (3 / (16 * w2 * pi)) * (
+                    w
+                    * (
+                        12
+                        + 5 * w * (-w + x) / ((w - x) ** 2 + y**2)
+                        - w * (w + x) / ((w + x) ** 2 + y**2)
+                    )
+                    - 6 * y * (atan1 + atan2)
+                    + (w + 3 * x) * (log1 - log2)
+                )
+
+                # --- Local stresses ---
+                sxz_local = mu * np.array([ux1, ux2, ux3])
+                syz_local = mu * np.array([uy1, uy2, uy3])
+
+                # --- Rotate to global coordinates ---
+                R = rot_mats[j]
+                sxz_global = R[0, 0] * sxz_local + R[0, 1] * syz_local
+                syz_global = R[1, 0] * sxz_local + R[1, 1] * syz_local
+
+                # --- Fill output arrays ---
+                kernel_u[i, 3 * j : 3 * (j + 1)] = np.array([u1, u2, u3])
+                kernel_sxz[i, 3 * j : 3 * (j + 1)] = sxz_global
+                kernel_syz[i, 3 * j : 3 * (j + 1)] = syz_global
+
+        return kernel_sxz, kernel_syz, kernel_u
+
+except ImportError:
+    print("Numba is not installed.")
+    numba_installed = False
