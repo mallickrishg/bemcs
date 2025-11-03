@@ -202,34 +202,31 @@ def get_kernels_trapezoidalforce(x_obs, y_obs, els, connect_matrix, mu=1):
     kernel_sy = np.zeros((n_obs, n_GFs))
 
     # provide coefficients for forces
-    trapcoefs = np.array([[0.0, 1.0], [1.0, 1.0], [1.0, 0.0]])
+    trapcoefs = np.array([[1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
+    # testing other ordering of force (most likely wrong)
+    # trapcoefs = np.array([[0.0, 1.0], [1.0, 1.0], [1.0, 1.0]])
 
-    for i in range(0, n_GFs):
-        # define new els for GF calculation
-        els_mod = bemcs.initialize_els()
-        els_mod.x1 = els.x1[connect_matrix[i, :].astype(int)]
-        els_mod.y1 = els.y1[connect_matrix[i, :].astype(int)]
-        els_mod.x2 = els.x2[connect_matrix[i, :].astype(int)]
-        els_mod.y2 = els.y2[connect_matrix[i, :].astype(int)]
-        bemcs.standardize_els_geometry(els_mod, reorder=False)
+    C = np.zeros((len(els.x_centers), 2, n_GFs))
+    for k in range(n_GFs):
+        for m in range(3):
+            idx = connect_matrix[k, m]
+            C[idx, :, k] = trapcoefs[m, :]
 
-        # K_sx, K_sy, K_u = bemcs.get_displacement_stress_kernel_force_antiplane(
-        #     x_obs, y_obs, els_mod, mu
-        # )
-        K_sx, K_sy, K_u = get_displacement_stress_kernel_force_antiplane(
-            x_obs.flatten(),
-            y_obs.flatten(),
-            els_mod.x_centers,
-            els_mod.y_centers,
-            els_mod.half_lengths,
-            els_mod.rot_mats,
-            els_mod.rot_mats_inv,
-            mu=1.0,
-        )
-        # compute displacements and stress components
-        kernel_u[:, i] = np.tensordot(K_u, trapcoefs, axes=([2, 1], [0, 1]))
-        kernel_sx[:, i] = np.tensordot(K_sx, trapcoefs, axes=([2, 1], [0, 1]))
-        kernel_sy[:, i] = np.tensordot(K_sy, trapcoefs, axes=([2, 1], [0, 1]))
+    # compute kernels with all mesh elements
+    K_sx, K_sy, K_u = get_displacement_stress_kernel_force_antiplane(
+        x_obs.flatten(),
+        y_obs.flatten(),
+        els.x_centers,
+        els.y_centers,
+        els.half_lengths,
+        els.rot_mats,
+        els.rot_mats_inv,
+        mu=1.0,
+    )
+    # multiply kernels with C (forces) to get new trapezoidal kernels
+    kernel_sx = np.tensordot(K_sx, C, axes=([1, 2], [1, 0]))  # result: (Nobs, Nnew)
+    kernel_sy = np.tensordot(K_sy, C, axes=([1, 2], [1, 0]))
+    kernel_u = np.tensordot(K_u, C, axes=([1, 2], [1, 0]))
 
     return kernel_sx, kernel_sy, kernel_u
 
