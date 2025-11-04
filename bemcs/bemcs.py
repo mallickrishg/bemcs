@@ -1720,54 +1720,43 @@ def displacements_stresses_linear_force_no_rotation_planestrain(
 
     def ux_2(fx, fy, w):
         term1 = (
-            (1 / 64)
-            * fx
-            * np.pi ** (-1)
-            * w ** (-1)
+            fx
             * (w - xo) ** 2
-            * mu ** (-1)
             * (3 - 4 * nu)
-            * (nu - 1) ** (-1)
             * np.log((w - xo) ** 2 + yo**2)
+            / (64 * np.pi * w * mu * (-1 + nu))
         )
+
         term2 = (
-            (1 / 32)
-            * np.pi ** (-1)
-            * w ** (-1)
-            * (w - xo)
-            * mu ** (-1)
-            * (nu - 1) ** (-1)
+            (w - xo)
             * (
-                (-8)
+                -8
                 * fx
                 * yo
-                * (nu - 1)
+                * (-1 + nu)
                 * (np.arctan((w - xo) / yo) + np.arctan((w + xo) / yo))
                 + fy * yo * np.log((w - xo) ** 2 + yo**2)
             )
+            / (32 * np.pi * w * mu * (-1 + nu))
         )
+
         term3 = (
-            (1 / 64)
-            * np.pi ** (-1)
-            * w ** (-1)
-            * mu ** (-1)
-            * (nu - 1) ** (-1)
+            1
+            / (64 * np.pi * w * mu * (-1 + nu))
             * (
-                4
-                * w
-                * ((-2) * fy * yo + fx * xo * (3 - 4 * nu) + 8 * fx * w * (nu - 1))
+                4 * w * (-2 * fy * yo + fx * xo * (3 - 4 * nu) + 8 * fx * w * (-1 + nu))
                 + yo**2
                 * (
                     4 * fy * (np.arctan((w - xo) / yo) + np.arctan((w + xo) / yo))
                     + fx * (-5 + 4 * nu) * np.log((w - xo) ** 2 + yo**2)
                 )
                 + (
-                    2 * fy * (xo - w) * yo
+                    2 * fy * (-w + xo) * yo
                     + fx
                     * (
                         3 * (3 * w - xo) * (w + xo)
                         + 5 * yo**2
-                        - 4 * (3 * w - xo) * (w + xo) * nu
+                        - 4 * ((3 * w - xo) * (w + xo) + yo**2) * nu
                     )
                 )
                 * np.log((w + xo) ** 2 + yo**2)
@@ -1822,61 +1811,44 @@ def displacements_stresses_linear_force_no_rotation_planestrain(
         return term1 + term2
 
     def uy_2(fx, fy, w):
-        term1_fx = fx * (
-            (-1 / 32)
-            * np.pi ** (-1)
-            * w ** (-1)
-            * yo
-            * mu ** (-1)
-            * (nu - 1) ** (-1)
-            * (
-                4 * w
-                - 2 * yo * (np.arctan((w - xo) / yo) + np.arctan((w + xo) / yo))
-                + (-w + xo) * np.log((w - xo) ** 2 + yo**2)
+        term_fx = fx * (
+            -(
+                yo
+                * (
+                    4 * w
+                    - 2 * yo * (np.arctan((w - xo) / yo) + np.arctan((w + xo) / yo))
+                    + (-w + xo) * np.log((w - xo) ** 2 + yo**2)
+                )
+                / (32 * np.pi * w * mu * (-1 + nu))
             )
-            + (w - xo)
-            * yo
-            * (32 * np.pi * w * mu * (-1 + nu)) ** (-1)
-            * np.log(w**2 + 2 * w * xo + xo**2 + yo**2)
+            + ((w - xo) * yo * np.log(w**2 + 2 * w * xo + xo**2 + yo**2))
+            / (32 * np.pi * w * mu * (1 - nu))  # simplified from denominator structure
         )
 
-        term2_fy = fy * (
-            (-1 / 8)
-            * np.pi ** (-1)
-            * w ** (-1)
-            * (w - xo)
-            * yo
-            * mu ** (-1)
-            * (nu - 1) ** (-1)
-            * (2 * nu - 1)
-            * (np.arctan((w - xo) / yo) + np.arctan((w + xo) / yo))
-            + (1 / 64)
-            * np.pi ** (-1)
-            * w ** (-1)
-            * (w - xo) ** 2
-            * mu ** (-1)
-            * (3 - 4 * nu)
-            * (nu - 1) ** (-1)
-            * np.log((w - xo) ** 2 + yo**2)
-            + (1 / 64)
-            * np.pi ** (-1)
-            * w ** (-1)
-            * mu ** (-1)
-            * (nu - 1) ** (-1)
-            * (
-                4 * w * (2 * w - xo) * (4 * nu - 3)
-                + yo**2 * (4 * nu - 1) * np.log((w - xo) ** 2 + yo**2)
+        term_fy = fy * (
+            -(
+                (w - xo)
+                * yo
+                * (-1 + 2 * nu)
+                * (np.arctan((w - xo) / yo) + np.arctan((w + xo) / yo))
+                / (8 * np.pi * w * mu * (-1 + nu))
+            )
+            + ((w - xo) ** 2 * (3 - 4 * nu) * np.log((w - xo) ** 2 + yo**2))
+            / (64 * np.pi * w * mu * (-1 + nu))
+            + (
+                4 * w * (2 * w - xo) * (-3 + 4 * nu)
+                + yo**2 * (-1 + 4 * nu) * np.log((w - xo) ** 2 + yo**2)
                 + (
                     3 * (3 * w - xo) * (w + xo)
                     + yo**2
-                    - 4 * (3 * w - xo) * (w + xo) * nu
-                    + yo**2 * (1 - 4 * nu)
+                    - 4 * ((3 * w - xo) * (w + xo) + yo**2) * nu
                 )
                 * np.log((w + xo) ** 2 + yo**2)
             )
+            / (64 * np.pi * w * mu * (-1 + nu))
         )
 
-        return term1_fx + term2_fy
+        return term_fx + term_fy
 
     # Stress kernels
     def sxy_1(fx, fy, w):
