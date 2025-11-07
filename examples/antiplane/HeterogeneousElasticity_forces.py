@@ -119,7 +119,7 @@ Kslip_x, Kslip_y, Kslip_u = GF.get_displacement_stress_kernel_slip_antiplane(
 
 # compute displacement and stress components
 if "connmatrix" in locals():
-    Kforce_x, Kforce_y, Kforce_u = GF.get_kernels_trapezoidalforce(
+    Kforce_x, Kforce_y, Kforce_u = GF.get_kernels_trapezoidalforce_antiplane(
         xo, yo, els, connmatrix
     )
     u = Kslip_u @ quadcoefs + Kforce_u @ forcecoefs

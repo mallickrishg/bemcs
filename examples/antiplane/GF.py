@@ -119,7 +119,7 @@ def get_kernels_linforce(x_obs, y_obs, els, connect_matrix, mu=1):
     return kernel_sx, kernel_sy, kernel_u
 
 
-def get_kernels_trapezoidalforce(x_obs, y_obs, els, connect_matrix, mu=1):
+def get_kernels_trapezoidalforce_antiplane(x_obs, y_obs, els, connect_matrix, mu=1):
     """
     Compute antiplane (mode-III) displacement and stress kernels for trapezoidal
     force basis functions formed by linking groups of three linear elements.
@@ -423,7 +423,7 @@ def solveAntiplaneBEM(fileinput, connectivityfile=None, mu=1):
         ).flatten()
 
         # --- Construct kernels ---
-        K_x, K_y, _ = get_kernels_trapezoidalforce(xo, yo, els, connmatrix)
+        K_x, K_y, _ = get_kernels_trapezoidalforce_antiplane(xo, yo, els, connmatrix)
         nxvec = np.hstack(
             (els_s.x_normals, els.x_normals[connmatrix[:, 1].astype(int)])
         )
@@ -883,3 +883,536 @@ def get_displacement_stress_kernel_force_antiplane(
         kernel_syz[:, :, i] = stress_yz
 
     return kernel_sxz, kernel_syz, kernel_u
+
+
+@njit(parallel=True, fastmath=True)
+def get_displacement_stress_kernel_force_planestrain(
+    x_obs,
+    y_obs,
+    x_centers,
+    y_centers,
+    half_lengths,
+    rot_mats,
+    rot_mats_inv,
+    mu=1.0,
+    nu=0.25,
+):
+    """
+    Compute plane-strain displacement and stress kernels due to force sources
+    for multiple horizontal fault elements in one call (Numba-accelerated).
+
+    Parameters
+    ----------
+    x_obs, y_obs : (Nobs,)
+        Observation coordinates.
+    x_centers, y_centers : (Nels,)
+        Element center coordinates.
+    half_lengths : (Nels,)
+        Half-lengths of elements.
+    rot_mats, rot_mats_inv : (Nels,2,2)
+        Rotation matrices for each element.
+    mu, nu : float
+        Elastic parameters.
+
+    Returns
+    -------
+    kernel_ux, kernel_uy : (Nobs, 2, 2, Nels)
+        Displacement kernels.
+    kernel_sxx, kernel_syy, kernel_sxy : (Nobs, 2, 2, Nels)
+        Stress kernels.
+    """
+
+    # ---- Define local inline functions ----
+    # @njit(inline="always")
+    def ux_1(fx, fy, w, xo, yo, mu=1, nu=0.25):
+        term1 = (
+            (1 / 8)
+            * fx
+            * w ** (-1)
+            * (w - xo)
+            * (3 * w + xo)
+            * mu ** (-1)
+            * nu
+            * (np.pi - np.pi * nu) ** (-1)
+            * np.log((w - xo) ** 2 + yo**2)
+        )
+        term2 = (
+            (1 / 32)
+            * fx
+            * np.pi ** (-1)
+            * w ** (-1)
+            * mu ** (-1)
+            * (nu - 1) ** (-1)
+            * (
+                4 * w * (8 * w * (nu - 1) + xo * (-3 + 4 * nu))
+                - 16 * (w + xo) * yo * (nu - 1) * np.arctan((w - xo) / yo)
+                - 16 * (w + xo) * yo * (nu - 1) * np.arctan((w + xo) / yo)
+                + (3 * (w - xo) * (3 * w + xo) + yo**2 * (5 - 4 * nu))
+                * np.log((w - xo) ** 2 + yo**2)
+                + (
+                    3 * (w + xo) ** 2
+                    - 5 * yo**2
+                    - 4 * (w + xo - yo) * (w + xo + yo) * nu
+                )
+                * np.log((w + xo) ** 2 + yo**2)
+            )
+        )
+        term3 = (
+            (1 / 16)
+            * fy
+            * np.pi ** (-1)
+            * w ** (-1)
+            * yo
+            * mu ** (-1)
+            * (nu - 1) ** (-1)
+            * (
+                4 * w
+                - 2 * yo * (np.arctan((w - xo) / yo) + np.arctan((w + xo) / yo))
+                + (w + xo)
+                * (np.log((w - xo) ** 2 + yo**2) - np.log((w + xo) ** 2 + yo**2))
+            )
+        )
+        return (term1 + term2 + term3) / 2
+
+    # @njit(inline="always")
+    def ux_2(fx, fy, w, xo, yo, mu=1, nu=0.25):
+        term1 = (
+            fx
+            * (w - xo) ** 2
+            * (3 - 4 * nu)
+            * np.log((w - xo) ** 2 + yo**2)
+            / (64 * np.pi * w * mu * (-1 + nu))
+        )
+
+        term2 = (
+            (w - xo)
+            * (
+                -8
+                * fx
+                * yo
+                * (-1 + nu)
+                * (np.arctan((w - xo) / yo) + np.arctan((w + xo) / yo))
+                + fy * yo * np.log((w - xo) ** 2 + yo**2)
+            )
+            / (32 * np.pi * w * mu * (-1 + nu))
+        )
+
+        term3 = (
+            1
+            / (64 * np.pi * w * mu * (-1 + nu))
+            * (
+                4 * w * (-2 * fy * yo + fx * xo * (3 - 4 * nu) + 8 * fx * w * (-1 + nu))
+                + yo**2
+                * (
+                    4 * fy * (np.arctan((w - xo) / yo) + np.arctan((w + xo) / yo))
+                    + fx * (-5 + 4 * nu) * np.log((w - xo) ** 2 + yo**2)
+                )
+                + (
+                    2 * fy * (-w + xo) * yo
+                    + fx
+                    * (
+                        3 * (3 * w - xo) * (w + xo)
+                        + 5 * yo**2
+                        - 4 * ((3 * w - xo) * (w + xo) + yo**2) * nu
+                    )
+                )
+                * np.log((w + xo) ** 2 + yo**2)
+            )
+        )
+        return term1 + term2 + term3
+
+    # @njit(inline="always")
+    def uy_1(fx, fy, w, xo, yo, mu=1, nu=0.25):
+        term1 = (
+            (1 / 32)
+            * fx
+            * np.pi ** (-1)
+            * w ** (-1)
+            * yo
+            * mu ** (-1)
+            * (nu - 1) ** (-1)
+            * (
+                4 * w
+                - 2 * yo * (np.arctan((w - xo) / yo) + np.arctan((w + xo) / yo))
+                + (w + xo)
+                * (np.log((w - xo) ** 2 + yo**2) - np.log((w + xo) ** 2 + yo**2))
+            )
+        )
+        term2 = (
+            (1 / 64)
+            * fy
+            * np.pi ** (-1)
+            * w ** (-1)
+            * mu ** (-1)
+            * (nu - 1) ** (-1)
+            * (
+                4 * w * (2 * w + xo) * (-3 + 4 * nu)
+                + 8 * (w + xo) * yo * (nu * 2 - 1) * np.arctan((-w + xo) / yo)
+                - 8 * (w + xo) * yo * (nu * 2 - 1) * np.arctan((w + xo) / yo)
+                + (
+                    w**2 * (9 - 12 * nu)
+                    + yo**2 * (1 - 4 * nu)
+                    + 2 * w * xo * (-3 + 4 * nu)
+                    + xo**2 * (-3 + 4 * nu)
+                )
+                * np.log((w - xo) ** 2 + yo**2)
+                - (
+                    (
+                        -3 * (w + xo) ** 2
+                        + yo**2
+                        + 4 * (w + xo - yo) * (w + xo + yo) * nu
+                    )
+                )
+                * np.log((w + xo) ** 2 + yo**2)
+            )
+        )
+        return term1 + term2
+
+    # @njit(inline="always")
+    def uy_2(fx, fy, w, xo, yo, mu=1, nu=0.25):
+        term_fx = fx * (
+            -(
+                yo
+                * (
+                    4 * w
+                    - 2 * yo * (np.arctan((w - xo) / yo) + np.arctan((w + xo) / yo))
+                    + (-w + xo) * np.log((w - xo) ** 2 + yo**2)
+                )
+                / (32 * np.pi * w * mu * (-1 + nu))
+            )
+            + ((w - xo) * yo * np.log(w**2 + 2 * w * xo + xo**2 + yo**2))
+            / (32 * np.pi * w * mu * (1 - nu))  # simplified from denominator structure
+        )
+
+        term_fy = fy * (
+            -(
+                (w - xo)
+                * yo
+                * (-1 + 2 * nu)
+                * (np.arctan((w - xo) / yo) + np.arctan((w + xo) / yo))
+                / (8 * np.pi * w * mu * (-1 + nu))
+            )
+            + ((w - xo) ** 2 * (3 - 4 * nu) * np.log((w - xo) ** 2 + yo**2))
+            / (64 * np.pi * w * mu * (-1 + nu))
+            + (
+                4 * w * (2 * w - xo) * (-3 + 4 * nu)
+                + yo**2 * (-1 + 4 * nu) * np.log((w - xo) ** 2 + yo**2)
+                + (
+                    3 * (3 * w - xo) * (w + xo)
+                    + yo**2
+                    - 4 * ((3 * w - xo) * (w + xo) + yo**2) * nu
+                )
+                * np.log((w + xo) ** 2 + yo**2)
+            )
+            / (64 * np.pi * w * mu * (-1 + nu))
+        )
+
+        return term_fx + term_fy
+
+    # Stress kernels
+    # @njit(inline="always")
+    def sxy_1(fx, fy, w, xo, yo, mu=1, nu=0.25):
+        term1 = (
+            (-1 / 8)
+            * fx
+            * np.pi ** (-1)
+            * w ** (-1)
+            * ((-1) + nu) ** (-1)
+            * (
+                2 * w * (w - xo) * yo * ((w - xo) ** 2 + yo**2) ** (-1)
+                + 2 * (w + xo) * ((-1) + nu) * np.arctan((w - xo) / yo)
+                + 2 * (w + xo) * ((-1) + nu) * np.arctan((w + xo) / yo)
+                + (1 / 2)
+                * yo
+                * ((-3) + 2 * nu)
+                * (np.log((w - xo) ** 2 + yo**2) - np.log((w + xo) ** 2 + yo**2))
+            )
+        )
+
+        term2 = (
+            (1 / 8)
+            * fy
+            * np.pi ** (-1)
+            * w ** (-1)
+            * ((-1) + nu) ** (-1)
+            * (
+                (-2) * w * (w - xo) ** 2 * ((w - xo) ** 2 + yo**2) ** (-1)
+                + 4 * w * nu
+                + 2 * yo * nu * np.arctan((-w + xo) / yo)
+                + (-2) * yo * nu * np.arctan((w + xo) / yo)
+                + (1 / 2)
+                * (w + xo)
+                * ((-1) + 2 * nu)
+                * (np.log((w - xo) ** 2 + yo**2) - np.log((w + xo) ** 2 + yo**2))
+            )
+        )
+
+        return term1 + term2
+
+    # @njit(inline="always")
+    def sxy_2(fx, fy, w, xo, yo, mu=1, nu=0.25):
+        term1 = (
+            (-1 / 16)
+            * fx
+            * np.pi ** (-1)
+            * w ** (-1)
+            * ((-1 + nu) ** (-1))
+            * (
+                4 * w * (w + xo) * yo * ((w + xo) ** 2 + yo**2) ** (-1)
+                + 4 * (w - xo) * (-1 + nu) * np.arctan((w - xo) / yo)
+                + 4 * (w - xo) * (-1 + nu) * np.arctan((w + xo) / yo)
+                + (-1)
+                * yo
+                * ((-3) + 2 * nu)
+                * (np.log((w - xo) ** 2 + yo**2) - np.log((w + xo) ** 2 + yo**2))
+            )
+        )
+
+        term2 = (
+            (-1 / 16)
+            * fy
+            * np.pi ** (-1)
+            * w ** (-1)
+            * ((-1 + nu) ** (-1))
+            * (
+                (-4) * w * (w + xo) ** 2 * ((w + xo) ** 2 + yo**2) ** (-1)
+                + 8 * w * nu
+                + (-4) * yo * nu * np.arctan((w - xo) / yo)
+                + (-4) * yo * nu * np.arctan((w + xo) / yo)
+                + (-1)
+                * (w - xo)
+                * ((-1) + 2 * nu)
+                * (np.log((w - xo) ** 2 + yo**2) - np.log((w + xo) ** 2 + yo**2))
+            )
+        )
+
+        return term1 + term2
+
+    # @njit(inline="always")
+    def sxx_1(fx, fy, w, xo, yo, mu=1, nu=0.25):
+        term1_fx = (
+            (1 / 8)
+            * fx
+            * np.pi ** (-1)
+            * w ** (-1)
+            * (-1 + nu) ** (-1)
+            * (
+                ((w - xo) ** 2 + yo**2) ** (-1)
+                * ((-6) * w * (w - xo) ** 2 - 8 * w * yo**2)
+                + 4 * w * nu
+                - 2 * yo * (-2 + nu) * np.arctan((w - xo) / yo)
+                - 2 * yo * (-2 + nu) * np.arctan((w + xo) / yo)
+                + (1 / 2)
+                * (w + xo)
+                * (-3 + 2 * nu)
+                * (np.log((w - xo) ** 2 + yo**2) - np.log((w + xo) ** 2 + yo**2))
+            )
+        )
+
+        term2_fy = (
+            (1 / 8)
+            * fy
+            * np.pi ** (-1)
+            * w ** (-1)
+            * (-1 + nu) ** (-1)
+            * (
+                2 * w * ((-w) + xo) * yo * ((w - xo) ** 2 + yo**2) ** (-1)
+                + 2 * (w + xo) * nu * np.arctan((w - xo) / yo)
+                + 2 * (w + xo) * nu * np.arctan((w + xo) / yo)
+                + (1 / 2)
+                * yo
+                * (1 + 2 * nu)
+                * (np.log((w - xo) ** 2 + yo**2) - np.log((w + xo) ** 2 + yo**2))
+            )
+        )
+
+        return term1_fx + term2_fy
+
+    # @njit(inline="always")
+    def sxx_2(fx, fy, w, xo, yo, mu=1, nu=0.25):
+        term1_fx = (
+            (1 / 16)
+            * fx
+            * np.pi ** (-1)
+            * w ** (-1)
+            * (-1 + nu) ** (-1)
+            * (
+                4
+                * w
+                * ((w + xo) ** 2 + yo**2) ** (-1)
+                * (3 * (w + xo) ** 2 + 4 * yo**2 - 2 * ((w + xo) ** 2 + yo**2) * nu)
+                + 4 * yo * (-2 + nu) * np.arctan((w - xo) / yo)
+                + 4 * yo * (-2 + nu) * np.arctan((w + xo) / yo)
+                + (w - xo)
+                * (-3 + 2 * nu)
+                * (np.log((w - xo) ** 2 + yo**2) - np.log((w + xo) ** 2 + yo**2))
+            )
+        )
+
+        term2_fy = (
+            (1 / 16)
+            * fy
+            * np.pi ** (-1)
+            * w ** (-1)
+            * (-1 + nu) ** (-1)
+            * (
+                (-4) * w * (w + xo) * yo * ((w + xo) ** 2 + yo**2) ** (-1)
+                + 4 * (w - xo) * nu * np.arctan((w - xo) / yo)
+                + 4 * (w - xo) * nu * np.arctan((w + xo) / yo)
+                + (-1)
+                * yo
+                * (1 + 2 * nu)
+                * (np.log((w - xo) ** 2 + yo**2) - np.log((w + xo) ** 2 + yo**2))
+            )
+        )
+
+        return term1_fx + term2_fy
+
+    # @njit(inline="always")
+    def syy_1(fx, fy, w, xo, yo, mu=1, nu=0.25):
+        term1_fx = (
+            (-1 / 16)
+            * fx
+            * np.pi ** (-1)
+            * w ** (-1)
+            * (-1 + nu) ** (-1)
+            * (
+                ((w - xo) ** 2 + yo**2) ** (-1)
+                * ((-4) * w * (w - xo) ** 2 - 8 * w * yo**2)
+                + 8 * w * nu
+                - 4 * yo * (-1 + nu) * np.arctan((w - xo) / yo)
+                - 4 * yo * (-1 + nu) * np.arctan((w + xo) / yo)
+                + (w + xo)
+                * (-1 + 2 * nu)
+                * (np.log((w - xo) ** 2 + yo**2) - np.log((w + xo) ** 2 + yo**2))
+            )
+        )
+
+        term2_fy = (
+            (-1 / 8)
+            * fy
+            * np.pi ** (-1)
+            * w ** (-1)
+            * (-1 + nu) ** (-1)
+            * (
+                2 * w * ((-w) + xo) * yo * ((w - xo) ** 2 + yo**2) ** (-1)
+                + 2 * (w + xo) * (-1 + nu) * np.arctan((w - xo) / yo)
+                + 2 * (w + xo) * (-1 + nu) * np.arctan((w + xo) / yo)
+                + (1 / 2)
+                * yo
+                * (-1 + 2 * nu)
+                * (np.log((w - xo) ** 2 + yo**2) - np.log((w + xo) ** 2 + yo**2))
+            )
+        )
+
+        return term1_fx + term2_fy
+
+    # @njit(inline="always")
+    def syy_2(fx, fy, w, xo, yo, mu=1, nu=0.25):
+        term1_fx = (
+            (-1 / 8)
+            * fx
+            * np.pi ** (-1)
+            * w ** (-1)
+            * (-1 + nu) ** (-1)
+            * (
+                2
+                * w
+                * ((w + xo) ** 2 + yo**2) ** (-1)
+                * ((w + xo) ** 2 + 2 * yo**2 - 2 * ((w + xo) ** 2 + yo**2) * nu)
+                + 2 * yo * (-1 + nu) * np.arctan((w - xo) / yo)
+                + 2 * yo * (-1 + nu) * np.arctan((w + xo) / yo)
+                + (1 / 2)
+                * (w - xo)
+                * (-1 + 2 * nu)
+                * (np.log((w - xo) ** 2 + yo**2) - np.log((w + xo) ** 2 + yo**2))
+            )
+        )
+
+        term2_fy = (
+            (-1 / 8)
+            * fy
+            * np.pi ** (-1)
+            * w ** (-1)
+            * (-1 + nu) ** (-1)
+            * (
+                (-2) * w * (w + xo) * yo * ((w + xo) ** 2 + yo**2) ** (-1)
+                + 2 * (w - xo) * (-1 + nu) * np.arctan((w - xo) / yo)
+                + 2 * (w - xo) * (-1 + nu) * np.arctan((w + xo) / yo)
+                + (-1 / 2)
+                * yo
+                * (-1 + 2 * nu)
+                * (np.log((w - xo) ** 2 + yo**2) - np.log((w + xo) ** 2 + yo**2))
+            )
+        )
+
+        return term1_fx + term2_fy
+
+    Nobs = len(x_obs)
+    Nels = len(x_centers)
+
+    # kernel shape: [Nobs x (fx,fy) x 2 basis functions x Nels]
+    kernel_ux = np.zeros((Nobs, 2, 2, Nels))
+    kernel_uy = np.zeros((Nobs, 2, 2, Nels))
+    kernel_sxx = np.zeros((Nobs, 2, 2, Nels))
+    kernel_sxy = np.zeros((Nobs, 2, 2, Nels))
+    kernel_syy = np.zeros((Nobs, 2, 2, Nels))
+
+    for i in prange(Nels):
+        x_trans = x_obs - x_centers[i]
+        y_trans = y_obs - y_centers[i]
+
+        # Rotate coordinates into element-local frame
+        x_rot = rot_mats_inv[i, 0, 0] * x_trans + rot_mats_inv[i, 0, 1] * y_trans
+        y_rot = rot_mats_inv[i, 1, 0] * x_trans + rot_mats_inv[i, 1, 1] * y_trans
+
+        w = half_lengths[i]
+
+        # ----- Compute displacements and stresses for unit forces along x and y -----
+        for basis in range(0, 2):  # 2 linear basis functions
+            for fi in range(0, 2):  # force along x/y
+                # Compute your analytical kernels here for local coordinates
+                # kernel shape: [Nobs x (fx,fy) x 2 basis functions x Nels]
+                # define unit force direction
+                if fi == 0:
+                    fx, fy = 1.0, 0.0
+                else:
+                    fx, fy = 0.0, 1.0
+
+                # choose appropriate analytical kernel
+                if basis == 0:
+                    ux_local = ux_1(fx, fy, w, x_rot, y_rot, mu, nu)
+                    uy_local = uy_1(fx, fy, w, x_rot, y_rot, mu, nu)
+                    sxx_local = sxx_1(fx, fy, w, x_rot, y_rot, mu, nu)
+                    syy_local = syy_1(fx, fy, w, x_rot, y_rot, mu, nu)
+                    sxy_local = sxy_1(fx, fy, w, x_rot, y_rot, mu, nu)
+                else:
+                    ux_local = ux_2(fx, fy, w, x_rot, y_rot, mu, nu)
+                    uy_local = uy_2(fx, fy, w, x_rot, y_rot, mu, nu)
+                    sxx_local = sxx_2(fx, fy, w, x_rot, y_rot, mu, nu)
+                    syy_local = syy_2(fx, fy, w, x_rot, y_rot, mu, nu)
+                    sxy_local = sxy_2(fx, fy, w, x_rot, y_rot, mu, nu)
+
+                # ----- Rotate kernels from local -> global -----
+                rot = rot_mats[i, :, :]
+                # Displacements
+                ux_global = rot[0, 0] * ux_local + rot[0, 1] * uy_local
+                uy_global = rot[1, 0] * ux_local + rot[1, 1] * uy_local
+                kernel_ux[:, fi, basis, i] = ux_global
+                kernel_uy[:, fi, basis, i] = uy_global
+
+                # stresses (2 rotations) S' = R . S . R'
+                s00r = rot[0, 0] * sxx_local + rot[0, 1] * sxy_local
+                s01r = rot[0, 0] * sxy_local + rot[0, 1] * syy_local
+                s10r = rot[1, 0] * sxx_local + rot[1, 1] * sxy_local
+                s11r = rot[1, 0] * sxy_local + rot[1, 1] * syy_local
+                sxx_global = rot[0, 0] * s00r + rot[0, 1] * s01r
+                syy_global = rot[1, 0] * s10r + rot[1, 1] * s11r
+                sxy_global = rot[0, 0] * s10r + rot[0, 1] * s11r
+                # sxy_global = rot[1, 0] * s00r + rot[1, 1] * s01r
+
+                kernel_sxx[:, fi, basis, i] = sxx_global
+                kernel_syy[:, fi, basis, i] = syy_global
+                kernel_sxy[:, fi, basis, i] = sxy_global
+
+    return kernel_ux, kernel_uy, kernel_sxx, kernel_syy, kernel_sxy
