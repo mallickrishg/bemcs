@@ -3,75 +3,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import bemcs
 import pandas as pd
-import GF
+import bemcs.bemAssembly as GF
 import warnings
 
 # Suppress all warnings
 warnings.filterwarnings("ignore")
-
-
-def plot_BEM_field(
-    toplot, els, xo, yo, xlimits, ylimits, maxval, n_levels=10, cmap="coolwarm"
-):
-    """
-    Plot BEM scalar field with element geometry and automatically computed contours.
-
-    Parameters
-    ----------
-    toplot : ndarray
-        Scalar field values at observation points (1D array of size nx_obs*ny_obs)
-    els : object
-        Mesh object with attributes x1, x2, y1, y2
-    xo, yo : ndarray
-        Observation point coordinates (1D arrays)
-    xlimits, ylimits : tuple
-        (xmin, xmax) and (ymin, ymax)
-    maxval : float
-        Maximum absolute value for color scaling
-    n_levels : int, optional
-        Number of contour levels (default 10)
-    cmap : str, optional
-        Colormap (default "coolwarm")
-    """
-
-    # Determine grid shape
-    nx_obs = len(np.unique(xo))
-    ny_obs = len(np.unique(yo))
-
-    X = xo.reshape(ny_obs, nx_obs)
-    Y = yo.reshape(ny_obs, nx_obs)
-    Z = toplot.reshape(ny_obs, nx_obs)
-
-    # color limits
-    vmin, vmax = -maxval, maxval
-
-    # contour levels
-    levels = np.linspace(vmin, vmax, n_levels)
-
-    # plot field using colors
-    plt.pcolor(X, Y, Z, cmap=cmap, vmin=vmin, vmax=vmax)
-
-    # overlay mesh elements
-    n_els = len(els.x1)
-    for i in range(n_els):
-        plt.plot(
-            [els.x1[i], els.x2[i]],
-            [els.y1[i], els.y2[i]],
-            "k.-",
-            linewidth=0.2,
-            markersize=1,
-        )
-
-    # colorbar
-    plt.colorbar()
-
-    # contour lines
-    plt.contour(X, Y, Z, colors="k", levels=levels, linewidths=0.5)
-
-    # limits and aspect
-    plt.xlim(xlimits)
-    plt.ylim(ylimits)
-    plt.gca().set_aspect("equal", adjustable="box")
 
 
 # %% Read source file and mesh of the domain
@@ -136,7 +72,7 @@ plt.figure(figsize=(10, 10))
 plt.subplot(3, 1, 1)
 toplot = u.reshape(ny_obs, nx_obs)
 maxval = 0.5
-plot_BEM_field(
+GF.plot_BEM_field(
     toplot, els, xo, yo, xlimits, ylimits, maxval, n_levels=11, cmap="coolwarm"
 )
 plt.title("Displacement field $u$")
@@ -144,14 +80,14 @@ plt.title("Displacement field $u$")
 plt.subplot(3, 1, 2)
 toplot = sx.reshape(ny_obs, nx_obs)
 maxval = 1
-plot_BEM_field(
+GF.plot_BEM_field(
     toplot, els, xo, yo, xlimits, ylimits, maxval, n_levels=11, cmap="RdYlBu_r"
 )
 plt.title("Displacement gradient $u_{,x}$")
 
 plt.subplot(3, 1, 3)
 toplot = sy.reshape(ny_obs, nx_obs)
-plot_BEM_field(
+GF.plot_BEM_field(
     toplot, els, xo, yo, xlimits, ylimits, maxval, n_levels=11, cmap="RdYlBu_r"
 )
 plt.title("Displacement gradient $u_{,y}$")
