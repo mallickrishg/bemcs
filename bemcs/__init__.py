@@ -46,9 +46,11 @@ from .bemcs import (
     displacements_stresses_triangle_force_antiplane,
 )
 
+from . import bemAssembly
+
 try:
     __version__ = pkg_resources.get_distribution(__name__).version
 except Exception:
     __version__ = "unknown"
 
-__all__ = []
+__all__ = ["bemAssembly"]
