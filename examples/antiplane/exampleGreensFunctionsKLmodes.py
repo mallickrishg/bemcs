@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import bemcs
 import pandas as pd
-import GF
+import bemcs.bemAssembly as GF
 import warnings
 
 # Suppress all warnings
@@ -27,22 +27,24 @@ bemcs.plot_els_geometry(els)
 
 # construct distance-weighted eigenmodes
 r_mat = np.zeros((len(els.x1), len(els.x1)))
+r_norm = 1
 for i in range(len(els.x1)):
     r_mat[:, i] = np.sqrt(
         (els.x_centers[i] - els.x_centers) ** 2
         + (els.y_centers[i] - els.y_centers) ** 2
     )
-C_r = np.exp(-(r_mat**1))
+C_r = np.exp(-((r_mat / r_norm) ** 1))
 # compute K-L expansion of the distance-covariance matrix
 KLmodes, _, _ = np.linalg.svd(C_r)
 
 # Slip operator
-MaxMode = 5
-for i in range(MaxMode):
+MinMode = 3
+MaxMode = MinMode + 3
+for i in range(MinMode, MaxMode):
     index = i  # choose KL mode index
     weights = KLmodes[:, index]
     matrix_slip_c, matrix_slip_nodes, BC_slip_c, BC_slip_nodes = (
-        GF.construct_linearoperator_slip(els, BCtype, weights)
+        GF.construct_linearoperator_slip_antiplane(els, BCtype, weights)
     )
     # Only slip elements → simpler system
     BC_vector = np.vstack((BC_slip_c, BC_slip_nodes))
@@ -62,10 +64,10 @@ for i in range(MaxMode):
     # xlimits = [-5, 5]
     plt.figure(figsize=(8, 2))
     plt.subplot2grid((1, 3), (0, 0), colspan=2)
-    plt.plot(xf[yf == 0], slipnodes[yf == 0], "-")
+    plt.plot(xf[yf == np.max(yf)], slipnodes[yf == np.max(yf)], "-")
     plt.plot(
-        els.x_centers[els.y_centers == 0],
-        slipnodecenters[els.y_centers == 0],
+        els.x_centers[els.y_centers == np.max(els.y_centers)],
+        slipnodecenters[els.y_centers == np.max(els.y_centers)],
         ".",
         label="slip at element centers",
     )
