@@ -15,110 +15,6 @@ except ImportError:
 
 from numba import njit, prange
 
-"""
-get_kernels_linforce(x_obs, y_obs, els, connect_matrix, mu=1):
-    Build per-global-force antiplane displacement and stress kernels using linear (2-point) element coefficients.
-
-get_kernels_trapezoidalforce(x_obs, y_obs, els, connect_matrix, mu=1):
-    Build per-global-force antiplane displacement and stress kernels using trapezoidal (3-point) element coefficients.
-
-coeffs_from_GFcoeffs(els, connect_matrix, f):
-    Scatter global-force coefficients into per-node element coefficient arrays.
-
-construct_linearoperator_slip(els, BCtype, BCval, mu=1):
-    Assemble the linear operator matrix and stacked boundary-condition vector for the antiplane slip problem.
-"""
-
-
-def get_kernels_linforce(x_obs, y_obs, els, connect_matrix, mu=1):
-    """
-    Compute stress and displacement kernels for an antiplane linear-force basis.
-    This function constructs Green's-function-like kernels for a set of observation
-    points by assembling element subsets defined in `connect_matrix`, calling the
-    bemcs antiplane kernel routine for each subset, and projecting the returned
-    tensor kernels onto a two-component linear force basis.
-    Parameters
-    ----------
-    x_obs : array_like, shape (n_obs,)
-        x coordinates of observation points where kernels are evaluated.
-    y_obs : array_like, shape (n_obs,)
-        y coordinates of observation points where kernels are evaluated.
-    els : object
-        Element container with array attributes x1, y1, x2, y2 describing the
-        geometry of all available elements. Each attribute should be indexable by
-        integer arrays taken from `connect_matrix`.
-    connect_matrix : array_like, shape (n_GFs, n_els_per_GF)
-        Integer indices selecting which elements from `els` form each Green's
-        function (GF). Each row corresponds to one GF; entries are element indices
-        into the arrays in `els`.
-    mu : float, optional
-        Shear modulus (defaults to 1). Passed to the underlying bemcs kernel
-        calculator.
-    Returns
-    -------
-    kernel_sx : ndarray, shape (n_obs, n_GFs)
-        Projected kernel for the stress component sigma_x (rows = observation
-        points, columns = Green's functions).
-    kernel_sy : ndarray, shape (n_obs, n_GFs)
-        Projected kernel for the stress component sigma_y (rows = observation
-        points, columns = Green's functions).
-    kernel_u : ndarray, shape (n_obs, n_GFs)
-        Projected out-of-plane displacement kernel (rows = observation points,
-        columns = Green's functions).
-    Notes
-    -----
-    - For each GF (each row in `connect_matrix`) a temporary element set `els_mod`
-      is created by selecting corresponding entries from `els`. The element
-      geometry is standardized with bemcs.standardize_els_geometry(..., reorder=False).
-    - The function calls bemcs.get_displacement_stress_kernel_force_antiplane to
-      compute raw tensor kernels K_sx, K_sy, K_u for the selected elements, then
-      projects these tensors onto the two-component linear force basis
-      lincoefs = [[1, 0], [0, 1]] using numpy.tensordot.
-    - The input `connect_matrix` must contain valid integer indices into `els`.
-    - Returned arrays have dtype float and shape (n_obs, n_GFs).
-    Raises
-    ------
-    IndexError
-        If indices in `connect_matrix` are out of range for the arrays in `els`.
-    ValueError
-        If input array shapes are inconsistent (for example, x_obs and y_obs must
-        have the same length).
-    Example
-    -------
-    # Typical usage:
-    # kernel_sx, kernel_sy, kernel_u = get_kernels_linforce(x_obs, y_obs, els, connect_matrix, mu=1.0)
-    """
-
-    n_obs = len(x_obs)
-    n_GFs = len(connect_matrix[:, 0])
-
-    kernel_u = np.zeros((n_obs, n_GFs))
-    kernel_sx = np.zeros((n_obs, n_GFs))
-    kernel_sy = np.zeros((n_obs, n_GFs))
-
-    # provide coefficients for forces
-    lincoefs = np.array([[1.0, 0.0], [0.0, 1.0]])
-
-    for i in range(0, n_GFs):
-        # define new els for GF calculation
-        els_mod = bemcs.initialize_els()
-        els_mod.x1 = els.x1[connect_matrix[i, :].astype(int)]
-        els_mod.y1 = els.y1[connect_matrix[i, :].astype(int)]
-        els_mod.x2 = els.x2[connect_matrix[i, :].astype(int)]
-        els_mod.y2 = els.y2[connect_matrix[i, :].astype(int)]
-        bemcs.standardize_els_geometry(els_mod, reorder=False)
-
-        K_sx, K_sy, K_u = bemcs.get_displacement_stress_kernel_force_antiplane(
-            x_obs, y_obs, els_mod, mu
-        )
-
-        # compute displacements and stress components
-        kernel_u[:, i] = np.tensordot(K_u, lincoefs, axes=([2, 1], [0, 1]))
-        kernel_sx[:, i] = np.tensordot(K_sx, lincoefs, axes=([2, 1], [0, 1]))
-        kernel_sy[:, i] = np.tensordot(K_sy, lincoefs, axes=([2, 1], [0, 1]))
-
-    return kernel_sx, kernel_sy, kernel_u
-
 
 def get_kernels_trapezoidalforce_antiplane(x_obs, y_obs, els, connect_matrix, mu=1):
     """
@@ -232,17 +128,7 @@ def get_kernels_trapezoidalforce_antiplane(x_obs, y_obs, els, connect_matrix, mu
     return kernel_sx, kernel_sy, kernel_u
 
 
-def coeffs_from_GFcoeffs(els, connect_matrix, f):
-    n_GFs = len(connect_matrix[:, 0])
-    coeffs = np.zeros((len(els.x1), 2))
-    for i in range(0, n_GFs):
-        coeffs[connect_matrix[i, 0].astype(int), :] += np.array([1, 0]) * f[i]
-        coeffs[connect_matrix[i, 1].astype(int), :] += np.array([0, 1]) * f[i]
-
-    return coeffs
-
-
-def construct_linearoperator_slip(els, BCtype, BCval, mu=1):
+def construct_linearoperator_slip_antiplane(els, BCtype, BCval, mu=1):
     """
     Construct the global linear operator and right-hand side vector for the
     antiplane boundary-integral problem using quadratic slip basis functions.
@@ -446,7 +332,7 @@ def solveAntiplaneBEM(fileinput, connectivityfile=None, mu=1):
 
     # Slip operator
     matrix_slip_c, matrix_slip_nodes, BC_slip_c, BC_slip_nodes = (
-        construct_linearoperator_slip(els_s, BCtype[bc_mask], BCval[bc_mask])
+        construct_linearoperator_slip_antiplane(els_s, BCtype[bc_mask], BCval[bc_mask])
     )
 
     # --- Assemble and solve system ---
