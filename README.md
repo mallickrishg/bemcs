@@ -21,7 +21,10 @@ pip install --no-use-pep517 -e .
 ```
 
 For a full step-by-step walkthrough, see the
-👉 [**Tutorial: Setting up and solving an elastostatic problem**](https://github.com/mallickrishg/bemcs/wiki/Tutorial-on-setting-up-and-solving-an-elastostatic-problem-using-the-Boundary-Element-Method)
+
+👉 [**Tutorial: Setting up and solving an elastostatic plane strain problem**](https://github.com/mallickrishg/bemcs/wiki/Tutorial-on-setting-up-and-solving-an-elastostatic-problem-using-the-Boundary-Element-Method)
+
+👉 [**Tutorial: Solving an antiplane problem in a heterogeneous elastic medium**](https://github.com/mallickrishg/bemcs/wiki/Tutorial-on-antiplane-slip-In-a-heterogeneous-elastic-medium)
 
 ---
 
@@ -47,7 +50,5 @@ If you use **bemcs** in your research, please cite:
 > **Mallick, R. & Meade, B. J.** (2025). *Smooth slip is all you need: A singularity-free boundary element method for fault slip problems.*
 > Computers & Geosciences, 196, 105820.
 > [https://doi.org/10.1016/j.cageo.2024.105820](https://doi.org/10.1016/j.cageo.2024.105820)
-
-Zenodo release: [![DOI](https://zenodo.org/badge/651550360.svg)](https://zenodo.org/doi/10.5281/zenodo.10676299)
 
 ---
