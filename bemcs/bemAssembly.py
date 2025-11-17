@@ -1702,7 +1702,9 @@ def compute_coefs_trapezoidalforce_planestrain(els, connect_matrix):
     return fcoefs_s, fcoefs_n
 
 
-def get_kernels_trapezoidalforce_planestrain(x_obs, y_obs, els, connect_matrix, mu=1):
+def get_kernels_trapezoidalforce_planestrain(
+    x_obs, y_obs, els, connect_matrix, mu=1, nu=0.25
+):
     """
     Construct trapezoidal basis kernels for plane-strain BEM using 3-element patches.
 
@@ -1751,7 +1753,8 @@ def get_kernels_trapezoidalforce_planestrain(x_obs, y_obs, els, connect_matrix, 
         els.half_lengths,
         els.rot_mats,
         els.rot_mats_inv,
-        mu=1.0,
+        mu,
+        nu,
     )
     # compute coefficients for trapezoidal basis functions
     # each fcoefs matrix : (Nels, 2, 2, Ntrapz) ndarray
