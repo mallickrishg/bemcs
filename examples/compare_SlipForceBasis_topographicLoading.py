@@ -326,7 +326,7 @@ for count in range(3):
 plt.show()
 
 # %% evaluate stress fields at the surface
-npts_per_elt = 10
+npts_per_elt = 3
 dr = -1e-9  # small offset to avoid discontinuity
 x_obs = np.zeros((len(els.x1[BCtype == "t_global"]) * npts_per_elt,))
 y_obs = np.zeros((len(els.x1[BCtype == "t_global"]) * npts_per_elt,))
@@ -365,7 +365,7 @@ sxx_f = K_sxx[:, 0::2] @ fcoefs_s + K_sxx[:, 1::2] @ fcoefs_n
 syy_f = K_syy[:, 0::2] @ fcoefs_s + K_syy[:, 1::2] @ fcoefs_n
 sxy_f = K_sxy[:, 0::2] @ fcoefs_s + K_sxy[:, 1::2] @ fcoefs_n
 
-plt.figure(figsize=(15, 1.5))
+plt.figure(figsize=(15, 5))
 plt.subplot(1, 3, 1)
 plt.plot(x_obs, sxx, ".", label="slip")
 plt.plot(x_obs, sxx_f, "-", label="force")
