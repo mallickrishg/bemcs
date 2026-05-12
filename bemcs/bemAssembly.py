@@ -1799,6 +1799,7 @@ def get_kernels_trapezoidalforce_planestrain(
 
     return kernel_ux, kernel_uy, kernel_sxx, kernel_syy, kernel_sxy
 
+
 def compute_coefs_quadratichatslip_planestrain(els, connect_matrix):
     """
     Compute quadratic hat slip coefficients for plane strain BEM elements.
@@ -1862,18 +1863,20 @@ def compute_coefs_quadratichatslip_planestrain(els, connect_matrix):
 
         # operator matrix for slip and slip gradient in global reference frame for all the open and 2-overlap nodes
         mat_slip, mat_slip_gradient = bemcs.get_matrices_slip_slip_gradient(
-            els_subset, reference="global")
+            els_subset, reference="global"
+        )
         # operator matrix ONLY for slip at the central node of the central element in local reference frame (where the quadratic hat is defined)
         mat_slip_local, _ = bemcs.get_matrices_slip_slip_gradient(
-            els_subset, reference="local")
+            els_subset, reference="local"
+        )
 
         # constraint equations and build matrix system
         # For quadratic, 3 elements × 3 nodes × 2 comp = 18 unknowns
         # Constraints: 2 for central, 4 per open, 4 per overlap = 18
-        Nunknowns = 18 # hardcoded for 3-element quadratic hat patch
+        Nunknowns = 18  # hardcoded for 3-element quadratic hat patch
         N_o = 4 * len(index_open)  # open node equations
         N_i = 4 * len(index_overlap)  # overlapping node equations
-        
+
         # define matrix system for open and overlapping nodes
         mat_system_o = np.zeros((N_o, Nunknowns))
         mat_system_i = np.zeros((N_i, Nunknowns))
@@ -1886,7 +1889,9 @@ def compute_coefs_quadratichatslip_planestrain(els, connect_matrix):
             mat_system_o[4 * iter + 1, :] = mat_slip[2 * id1 + 1, :]  # y component
             # slip gradient constraints
             mat_system_o[4 * iter + 2, :] = mat_slip_gradient[2 * id1, :]  # x component
-            mat_system_o[4 * iter + 3, :] = mat_slip_gradient[2 * id1 + 1, :]  # y component
+            mat_system_o[4 * iter + 3, :] = mat_slip_gradient[
+                2 * id1 + 1, :
+            ]  # y component
 
         # Linear operator for overlapping nodes
         for iter in range(len(index_overlap)):
@@ -1921,7 +1926,9 @@ def compute_coefs_quadratichatslip_planestrain(els, connect_matrix):
             )  # y
 
         # Linear operator for central node of central element (in local reference frame)
-        id1 = 4  # hard-coded node [0,1,2],[3,4,5],[5,6,7] → node 4 is center of element 1
+        id1 = (
+            4  # hard-coded node [0,1,2],[3,4,5],[5,6,7] → node 4 is center of element 1
+        )
         mat_system_c = np.zeros((2, Nunknowns))
         mat_system_c[0, :] = mat_slip_local[2 * id1, :]  # shear component
         mat_system_c[1, :] = mat_slip_local[2 * id1 + 1, :]  # normal component
@@ -1932,7 +1939,7 @@ def compute_coefs_quadratichatslip_planestrain(els, connect_matrix):
         rhs_shear = np.zeros((N_o + N_i + 2, 1))
         rhs_shear[0, 0] = 1  # unit shear slip at central node
         rhs_normal = np.zeros((N_o + N_i + 2, 1))
-        rhs_normal[1, 0] = 1  # unit normal slip at central node    
+        rhs_normal[1, 0] = 1  # unit normal slip at central node
 
         # Solve for coefficients
         coefs_shear = np.linalg.solve(mat_system, rhs_shear).flatten()
@@ -1945,6 +1952,7 @@ def compute_coefs_quadratichatslip_planestrain(els, connect_matrix):
             coefs_n[elem_id, :, i] = coefs_normal[base : base + 6]
 
     return coefs_s, coefs_n
+
 
 def get_kernels_quadratichatslip_planestrain(
     x_obs, y_obs, els, connect_matrix, mu=1, nu=0.25
