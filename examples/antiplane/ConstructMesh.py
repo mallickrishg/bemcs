@@ -21,7 +21,7 @@ yf1 = np.array([0, -0.5, -1.0])
 xf2 = np.array([0, 0, 0]) + np.min(xvals[xvals >= 0])
 # yf2 = np.array([-1.0, -0.5, 0])
 yf2 = np.array([-0.5, -1.0, -1.5])
-slip_values = np.array([0.5, 1.0, 0.5])  # slip on fault segments
+slip_values = np.array([0.75, 1.0, 0.5])  # slip on fault segments
 
 # %% provide layered structure in terms of number of layers, location of layers (iterface with jump in μ), and μ values
 nlayers = 2
@@ -35,8 +35,8 @@ y2 = []
 
 # calculation the dμ/dx and dμ/dy terms as α,β
 beta = np.zeros(nlayers * (npts_layer - 1))
-y1perturb = np.sin(2 * np.pi * 4 * xt1 / Lscale) * 0.5
-y2perturb = np.sin(2 * np.pi * 4 * xt2 / Lscale) * 0.5
+y1perturb = np.sin(2 * np.pi * 4 * xt1 / Lscale) * 0.005
+y2perturb = np.sin(2 * np.pi * 4 * xt2 / Lscale) * 0.005
 for i in range(nlayers):
     xvals = np.linspace(-Lscale, Lscale, npts_layer)
     x1 = np.hstack([x1, xvals[0:-1]])
@@ -55,11 +55,11 @@ for i in range(nlayers):
     start_idx = i * (npts_layer - 1) + len(xf1) + len(xt1)
     end_idx = start_idx + (npts_layer - 1)
     local_idx = np.arange(start_idx, end_idx)
-    # for j in range(0, len(local_idx) - 2, 2):
-    # connectivity.append(local_idx[j : j + 3])
-    # sliding window of 3 consecutive indices with stride 1
-    for j in range(len(local_idx) - 2):
+    for j in range(0, len(local_idx) - 2, 2):
         connectivity.append(local_idx[j : j + 3])
+    # sliding window of 3 consecutive indices with stride 1
+    # for j in range(len(local_idx) - 2):
+    #     connectivity.append(local_idx[j : j + 3])
 connectivity = np.array(connectivity)
 
 print(connectivity)
