@@ -25,3 +25,4 @@ runs/
 *.json
 examples/antiplane/solene/*
 *.csv
+heterogeneous_theory.md
