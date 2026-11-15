@@ -526,8 +526,9 @@ def test_matches_old_function(els_curved, obs_points, case):
         np.testing.assert_allclose(new, old, rtol=1e-10, atol=1e-12, err_msg=str(sel))
 
 
+@pytest.mark.parametrize("geometry", GEOMETRIES)
 @pytest.mark.parametrize("kind", ["slip", "force"])
-def test_points_on_an_element_give_the_two_sided_average(els_curved, kind):
+def test_points_on_an_element_give_the_two_sided_average(els_curved, kind, geometry):
     """On an element (local y at rounding level) stresses and displacements are
     the mean of the values just above and below the element."""
     e = 1
@@ -536,7 +537,7 @@ def test_points_on_an_element_give_the_two_sided_average(els_curved, kind):
     x_on = els_curved.x_centers[e] + R[0, 0] * t
     y_on = els_curved.y_centers[e] + R[1, 0] * t
     nx, ny = els_curved.x_normals[e], els_curved.y_normals[e]
-    kw = dict(geometry="planestrain", mu=MU, nu=NU)
+    kw = dict(geometry=geometry, mu=MU, nu=NU)
     U0, S0, _ = LEVEL2[kind](x_on, y_on, els_curved, **kw)
     Up, Sp, _ = LEVEL2[kind](x_on + 1e-9 * nx, y_on + 1e-9 * ny, els_curved, **kw)
     Um, Sm, _ = LEVEL2[kind](x_on - 1e-9 * nx, y_on - 1e-9 * ny, els_curved, **kw)

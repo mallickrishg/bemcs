@@ -119,10 +119,14 @@ Square system of `2(N_s + N_f)` equations.
    jump across `+/-1e-9` from both slip and force kernels (force kernels are continuous so it cancels, but
    it is wasteful). Check the hat-basis DOF really equals slip at the central element, and that the `'s'` row can
    be replaced by the identity.
-5. **Test script calls `bemcs.plot_BEM_field`**, which is defined in `bemAssembly` and not exported from
+5. ~~**Test script calls `bemcs.plot_BEM_field`**~~ **SOLVED** (export added; the script runs end to end). Original: the script calls it, but it is defined in `bemAssembly` and not exported from
    `bemcs/__init__.py`. Confirmed by running the script in the `bemcs` env: it solves fine (cond. number ~1.18) and then fails at the first plot call with `AttributeError`. Use `GF.plot_BEM_field`, or export it.
    **Fixed (stage 2):** `plot_BEM_field` is exported from `bemcs`; the script runs end to end.
-6. **Trapezoidal force basis was previously flagged as unreliable** (commit `8fd5a0f`: "weird issues"; later
+6. ~~**Trapezoidal force basis was previously flagged as unreliable**~~ **SOLVED and tested (2026-11-16).**
+   `tests/test_operators.py` checks continuity in the global frame and the taper to 0 at open ends, and that
+   `A T = 0`. `tests/test_get_kernels.py` checks that trapezoids are exact combinations of the linear-force kernels,
+   which match Kelvin/Laplace point-force quadrature in both geometries. `tests/test_near_field.py` checks they are
+   bounded near every support node. Original note: (commit `8fd5a0f`: "weird issues"; later
    commits fixed stride and arctan bugs). It still needs a standalone check against the constant-force or
    line-force result.
 7. **Duplicated functions** in `bemcs.py` and `bemAssembly.py` (audited, see section 6). The 3 slip/gradient
@@ -142,7 +146,7 @@ Square system of `2(N_s + N_f)` equations.
     so it costs **~140 s of JIT compilation** in every fresh Python process (it dominates the test-suite runtime).
 11. **11 public functions in `bemcs.py` are not exported** from `bemcs/__init__.py`, including
     `kelvin_point_source_disp/_stress` and `get_displacement_stress_kernel_constant` (list in `tests/test_api.py::KNOWN_UNEXPORTED`).
-12. **A third copy of kernels lives in `examples/antiplane/GF.py`** (it also defines
+12. ~~**A third copy of kernels lives in `examples/antiplane/GF.py`**~~ **SOLVED** (file removed) (it also defines
     `get_displacement_stress_kernel_force_planestrain`, among others).
 13. `bemcs.py` lines 3009, 3036 and 3063 use `"$\sigma_{..}$"` in non-raw strings (invalid escape, `DeprecationWarning`,
     a `SyntaxWarning` on Python ≥ 3.12).
@@ -153,13 +157,15 @@ Square system of `2(N_s + N_f)` equations.
     `patch number:` / `trapezoid number:` for every patch. `bemAssembly` prints the numba version on import.
     Partly fixed: `label_nodes(els, verbose=True)` gained a `verbose` flag, and the new code calls it quietly.
     The trapezoid builder no longer prints. The old hat builder (deleted in stage 3) and the numba import message remain.
-18. **Points on an element return the two-sided average (convention, stage 2).** In-plane stress (and slip
+18. ~~**Points on an element return the two-sided average**~~ **SOLVED and tested (convention, both
+    geometries, slip and force:** `test_points_on_an_element_give_the_two_sided_average`). In-plane stress (and slip
     displacement) jumps across an element. The old kernels returned one side or the other, decided by the sign of a
     ~1e-17 rounding error in the local y. Plane-strain kernels now treat |y_local| <= 1e-12 (a + |xi|) as on the
     element and return the mean of the two sides: exactly for slip (y = 0), and by evaluating at y = +-1e-300 for
     force. To get one side, offset the point explicitly (as the solvers do with `dr`). Antiplane slip and force
     follow the same convention (two-sided average via y = +-1e-300) since the near-field work below.
-19. **Force-element collocation count (open question for T1).** Linear force with continuity rows (open ends
+19. ~~**Force-element collocation count**~~ **SOLVED (decision: trapezoids only; enforced and tested by
+    `test_mesh_continuity_operator_rejects_linear_force`).** Original question: Linear force with continuity rows (open ends
     force = 0, overlaps continuous) plus one collocation row per element and direction over-determines an open chain
     by 2 rows per direction. A closed loop is square. Options: collocate at interior nodes instead of element centres
     (square for chains and loops; the nodal "tent" functions are then the force analogue of slip hats), or keep
@@ -167,7 +173,9 @@ Square system of `2(N_s + N_f)` equations.
     **Decided 2026-11-16: force uses trapezoids only.** There is no general-form force solve:
     `Mesh.continuity_operator` raises for basis "linear" force. Linear force remains the element kernel that
     trapezoids are built from, and `continuity_rows(kind="force")` is kept to check that trapezoids are continuous.
-16. **Quadratic slip kernel loses float64 precision near every element endpoint (confirmed, section 8.2).**
+16. ~~**Quadratic slip kernel loses float64 precision near every element endpoint**~~ **SOLVED and tested
+    (2026-11-16):** both geometries are at the float64 floor (`tests/test_kernel_precision.py`,
+    `tests/test_near_field.py`); the optional curvature form stays in the task list. History:
     `quadratic_kernel_farfield` (via `displacements_stresses_quadratic_no_rotation`) vs the same formula at 50 digits:
     relative error 1e-11 at d = 1e-2 L, 1e-7 at 1e-3 L, 2e-4 at 1e-4 L, O(1) at d <= 1e-5 L, and NaN directly above
     an endpoint (probably `np.sign(y / (a - x))` with `a - x` rounding to 0; not confirmed). Cause: large
@@ -212,8 +220,8 @@ Square system of `2(N_s + N_f)` equations.
 
 ### TA. Code audit and API consolidation (do before T1)
 - [x] Add a `pytest` suite skeleton (`tests/`, `pytest.ini`); run with
-  `/Users/mallickrishg/miniconda3/envs/bemcs/bin/python -m pytest`. Current status: 193 passed, 30 skipped, 2 expected
-  xfail, ~1 s.
+  `/Users/mallickrishg/miniconda3/envs/bemcs/bin/python -m pytest`. Current status: 285 passed, 30 skipped, 2 expected
+  xfail, ~3 s.
   **Numba tests are opt-in.** They are marked `@pytest.mark.numba` and run only with `pytest --numba`. While developing,
   never trigger JIT; test through the numpy path. Pay the compile once, when the code is functional. (The numba cache
   is invalidated by any edit to `bemAssembly.py`; we keep the kernels in that module anyway.)
@@ -335,7 +343,7 @@ Square system of `2(N_s + N_f)` equations.
   limit; (c) a circular/layered inclusion with a known analytic solution, or an independent FEM result;
   (d) symmetry `mu1 <-> mu2` with sign-flipped `alpha`; (e) traction continuity across the interface.
 - [ ] Add a `'t'`-row test (prescribed projected strain).
-- [ ] Verify the trapezoidal-force kernels in isolation (issue 4.6).
+- [x] Verify the trapezoidal-force kernels in isolation (issue 4.6; see the issue for the tests).
 
 ### T2. Package integration
 - [ ] Move `solve_planestrain_heterogeneous` into `bemcs/bemAssembly.py` (mirroring `solveAntiplaneBEM`).
