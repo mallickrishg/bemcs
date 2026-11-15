@@ -349,3 +349,249 @@ def solve_bem_system_force(
     fcoefs_n = fcoefs[1::2]
 
     return fcoefs_s, fcoefs_n
+
+
+def solve_planestrain_heterogeneous(
+    els,
+    connect_slip,
+    BCtype_slip,
+    BCval_slip,
+    connect_force,
+    alpha_force,
+    mu=1.0,
+    nu=0.25,
+):
+    """
+    Solve a plane strain heterogeneous boundary element problem using
+    quadratic hat slip elements and trapezoidal force elements.
+
+    Parameters
+    ----------
+    els : object
+        BEM element structure containing arrays of element endpoints (x1, y1, x2, y2).
+    connect_slip : (N_s, 3) int ndarray
+        Element connectivity matrix for slip patches.
+    BCtype_slip : list or array of strings, length N_s
+        Boundary condition type for each slip patch. 's' for slip, 't' for projected strain.
+    BCval_slip : (N_s, 2) float ndarray
+        Prescribed values for each slip patch.
+        If 's', it's local (shear, normal) slip.
+        If 't', it's global (x, y) projected strain.
+    connect_force : (N_f, 3) int ndarray
+        Element connectivity matrix for force patches.
+    alpha_force : (N_f,) float ndarray
+        Normalized gradient of shear modulus alpha = (1/mu) * d_mu/d_n.
+    mu : float, optional
+        Shear modulus (default 1.0).
+    nu : float, optional
+        Poisson's ratio (default 0.25).
+
+    Returns
+    -------
+    coefs_slip : (2*N_s,) float ndarray
+        Slip coefficients interleaved [shear1, normal1, shear2, normal2, ...]
+    coefs_force : (2*N_f,) float ndarray
+        Force coefficients interleaved [fx1, fy1, fx2, fy2, ...]
+    """
+    import bemcs.bemAssembly as GF
+
+    # Allow empty connectivity arrays
+    if connect_slip is not None and len(connect_slip) > 0:
+        N_s = len(connect_slip[:, 0])
+        colloc_slip_idx = connect_slip[:, 1].astype(int)
+    else:
+        N_s = 0
+        colloc_slip_idx = np.array([], dtype=int)
+        connect_slip = np.zeros((0, 3), dtype=int)
+
+    if connect_force is not None and len(connect_force) > 0:
+        N_f = len(connect_force[:, 0])
+        colloc_force_idx = connect_force[:, 1].astype(int)
+    else:
+        N_f = 0
+        colloc_force_idx = np.array([], dtype=int)
+        connect_force = np.zeros((0, 3), dtype=int)
+
+    N_obs = N_s + N_f
+    if N_obs == 0:
+        return np.zeros(0), np.zeros(0)
+
+    dr = -1e-9
+
+    # Extract properties of collocation elements (the central element of each patch)
+    colloc_idx = np.hstack((colloc_slip_idx, colloc_force_idx))
+
+    x_obs = els.x_centers[colloc_idx] + dr * els.x_normals[colloc_idx]
+    y_obs = els.y_centers[colloc_idx] + dr * els.y_normals[colloc_idx]
+    nx_obs = els.x_normals[colloc_idx]
+    ny_obs = els.y_normals[colloc_idx]
+
+    # Compute kernels
+    if N_s > 0:
+        # kernels_slip will have shape (N_obs, 2 * N_s)
+        K_ux_s, K_uy_s, K_sxx_s, K_syy_s, K_sxy_s = (
+            GF.get_kernels_quadratichatslip_planestrain(
+                x_obs, y_obs, els, connect_slip, mu, nu
+            )
+        )
+    else:
+        K_sxx_s = np.zeros((N_obs, 0))
+        K_syy_s = np.zeros((N_obs, 0))
+        K_sxy_s = np.zeros((N_obs, 0))
+
+    if N_f > 0:
+        # kernels_force will have shape (N_obs, 2 * N_f)
+        K_ux_f, K_uy_f, K_sxx_f, K_syy_f, K_sxy_f = (
+            GF.get_kernels_trapezoidalforce_planestrain(
+                x_obs, y_obs, els, connect_force, mu, nu
+            )
+        )
+    else:
+        K_sxx_f = np.zeros((N_obs, 0))
+        K_syy_f = np.zeros((N_obs, 0))
+        K_sxy_f = np.zeros((N_obs, 0))
+
+    # Helper to convert stresses to projected strains and augmented strains
+    def compute_strains(sxx, syy, sxy, nx, ny):
+        if sxx.shape[1] == 0:
+            return sxx.copy(), sxx.copy(), sxx.copy(), sxx.copy()
+
+        nu_prime = nu / (1 + nu)
+        exx = (1 / (2 * mu)) * ((1 - nu_prime) * sxx - nu_prime * syy)
+        eyy = (1 / (2 * mu)) * (-nu_prime * sxx + (1 - nu_prime) * syy)
+        exy = (1 / (2 * mu)) * sxy
+
+        Lambda = exx + eyy
+
+        Psi_x = exx * nx[:, None] + exy * ny[:, None]
+        Psi_y = exy * nx[:, None] + eyy * ny[:, None]
+
+        factor = nu / (1 - 2 * nu)
+        Psi_tilde_x = Psi_x + factor * nx[:, None] * Lambda
+        Psi_tilde_y = Psi_y + factor * ny[:, None] * Lambda
+
+        return Psi_x, Psi_y, Psi_tilde_x, Psi_tilde_y
+
+    Psi_x_s, Psi_y_s, Psi_t_x_s, Psi_t_y_s = compute_strains(
+        K_sxx_s, K_syy_s, K_sxy_s, nx_obs, ny_obs
+    )
+    Psi_x_f, Psi_y_f, Psi_t_x_f, Psi_t_y_f = compute_strains(
+        K_sxx_f, K_syy_f, K_sxy_f, nx_obs, ny_obs
+    )
+
+    # Evaluate slip kernels at slip element centers for enforcing slip BCs
+    if N_s > 0:
+        dr_slip = 1e-9
+        x_slip = els.x_centers[colloc_slip_idx]
+        y_slip = els.y_centers[colloc_slip_idx]
+        nx_slip = els.x_normals[colloc_slip_idx]
+        ny_slip = els.y_normals[colloc_slip_idx]
+        
+        K_ux_s_p, K_uy_s_p, _, _, _ = GF.get_kernels_quadratichatslip_planestrain(
+            x_slip + dr_slip * nx_slip,
+            y_slip + dr_slip * ny_slip,
+            els, connect_slip, mu, nu
+        )
+        K_ux_s_m, K_uy_s_m, _, _, _ = GF.get_kernels_quadratichatslip_planestrain(
+            x_slip - dr_slip * nx_slip,
+            y_slip - dr_slip * ny_slip,
+            els, connect_slip, mu, nu
+        )
+        K_sx_global_s = K_ux_s_p - K_ux_s_m
+        K_sy_global_s = K_uy_s_p - K_uy_s_m
+        
+        if N_f > 0:
+            K_ux_f_p, K_uy_f_p, _, _, _ = GF.get_kernels_trapezoidalforce_planestrain(
+                x_slip + dr_slip * nx_slip,
+                y_slip + dr_slip * ny_slip,
+                els, connect_force, mu, nu
+            )
+            K_ux_f_m, K_uy_f_m, _, _, _ = GF.get_kernels_trapezoidalforce_planestrain(
+                x_slip - dr_slip * nx_slip,
+                y_slip - dr_slip * ny_slip,
+                els, connect_force, mu, nu
+            )
+            K_sx_global_f = K_ux_f_p - K_ux_f_m
+            K_sy_global_f = K_uy_f_p - K_uy_f_m
+        else:
+            K_sx_global_f = np.zeros((N_s, 0))
+            K_sy_global_f = np.zeros((N_s, 0))
+            
+        K_slip_shear_s = np.zeros_like(K_sx_global_s)
+        K_slip_normal_s = np.zeros_like(K_sx_global_s)
+        K_slip_shear_f = np.zeros_like(K_sx_global_f)
+        K_slip_normal_f = np.zeros_like(K_sx_global_f)
+        
+        for i in range(N_s):
+            Rinv = els.rot_mats_inv[colloc_slip_idx[i]]
+            K_slip_shear_s[i, :] = Rinv[0, 0] * K_sx_global_s[i, :] + Rinv[0, 1] * K_sy_global_s[i, :]
+            K_slip_normal_s[i, :] = Rinv[1, 0] * K_sx_global_s[i, :] + Rinv[1, 1] * K_sy_global_s[i, :]
+            if N_f > 0:
+                K_slip_shear_f[i, :] = Rinv[0, 0] * K_sx_global_f[i, :] + Rinv[0, 1] * K_sy_global_f[i, :]
+                K_slip_normal_f[i, :] = Rinv[1, 0] * K_sx_global_f[i, :] + Rinv[1, 1] * K_sy_global_f[i, :]
+
+    N_eq = 2 * N_obs
+    A = np.zeros((N_eq, N_eq))
+    b = np.zeros((N_eq, 1))
+
+    # Assembly
+    # Part 1: Equations for slip/traction boundaries (first 2 * N_s rows)
+    for i in range(N_s):
+        row_x = 2 * i
+        row_y = 2 * i + 1
+
+        if BCtype_slip[i] == "s":
+            # Prescribed slip
+            A[row_x, :2*N_s] = K_slip_shear_s[i, :]
+            A[row_y, :2*N_s] = K_slip_normal_s[i, :]
+            if N_f > 0:
+                A[row_x, 2*N_s:] = K_slip_shear_f[i, :]
+                A[row_y, 2*N_s:] = K_slip_normal_f[i, :]
+                
+            b[row_x] = BCval_slip[i, 0]
+            b[row_y] = BCval_slip[i, 1]
+
+        elif BCtype_slip[i] == "t":
+            # Prescribed projected strain
+            A[row_x, : 2 * N_s] = Psi_x_s[i, :]
+            if N_f > 0:
+                A[row_x, 2 * N_s :] = Psi_x_f[i, :]
+
+            A[row_y, : 2 * N_s] = Psi_y_s[i, :]
+            if N_f > 0:
+                A[row_y, 2 * N_s :] = Psi_y_f[i, :]
+
+            b[row_x] = BCval_slip[i, 0]
+            b[row_y] = BCval_slip[i, 1]
+        else:
+            raise ValueError(f"Unknown BCtype_slip: {BCtype_slip[i]}")
+
+    # Part 2: Equations for heterogeneous materials ('h' rows)
+    for i in range(N_f):
+        row_x = 2 * N_s + 2 * i
+        row_y = 2 * N_s + 2 * i + 1
+        colloc_idx_f = N_s + i
+
+        alpha = alpha_force[i]
+
+        # alpha * Psi_tilde^(s) * s + (I + alpha * Psi_tilde^(f)) * f = 0
+        if N_s > 0:
+            A[row_x, : 2 * N_s] = alpha * Psi_t_x_s[colloc_idx_f, :]
+            A[row_y, : 2 * N_s] = alpha * Psi_t_y_s[colloc_idx_f, :]
+
+        A[row_x, 2 * N_s :] = alpha * Psi_t_x_f[colloc_idx_f, :]
+        A[row_x, 2 * N_s + 2 * i] += 1.0  # The I part for f_x
+
+        A[row_y, 2 * N_s :] = alpha * Psi_t_y_f[colloc_idx_f, :]
+        A[row_y, 2 * N_s + 2 * i + 1] += 1.0  # The I part for f_y
+
+        b[row_x] = 0.0
+        b[row_y] = 0.0
+
+    print("Heterogeneous BEM Linear Operator Condition Number:", np.linalg.cond(A))
+    sol = np.linalg.solve(A, b)
+
+    coefs_slip = sol[: 2 * N_s].flatten()
+    coefs_force = sol[2 * N_s :].flatten()
+
+    return coefs_slip, coefs_force
