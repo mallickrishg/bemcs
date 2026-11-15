@@ -277,3 +277,42 @@ def test_mesh_values_through_patch_basis(els_curved, geometry):
     _, _, v = mesh.values_on_elements(x, "slip", geometry=geometry, n_eval=3, frame="local")
     centre = 3 * 1 + 1
     np.testing.assert_allclose(v[centre], 1.0 if geometry == "antiplane" else [1.0, 0.0], atol=1e-12)
+
+
+# ----------------------------------------------------------------------------
+# triple-junction orientation (tasks.md issue 17)
+# ----------------------------------------------------------------------------
+
+
+def _star(directions):
+    """3 unit elements at the origin; 'out' starts at the origin, 'in' ends there."""
+    x1, y1, x2, y2 = [], [], [], []
+    for k, d in enumerate(directions):
+        a = np.deg2rad(90 + 120 * k)
+        tip = (np.cos(a), np.sin(a))
+        start, end = ((0.0, 0.0), tip) if d == "out" else (tip, (0.0, 0.0))
+        x1.append(start[0]); y1.append(start[1]); x2.append(end[0]); y2.append(end[1])
+    return _els(x1, y1, x2, y2)
+
+
+@pytest.mark.parametrize("directions", [("out", "out", "out"), ("in", "in", "in")])
+def test_unsupported_triple_junction_orientation_is_rejected(directions):
+    els = _star(directions)
+    where = "start" if directions[0] == "out" else "end"
+    with pytest.raises(ValueError, match=rf"elements \[0, 1, 2\] all {where} there.*Reverse one branch"):
+        core.label_nodes(els)
+    with pytest.raises(ValueError, match="Unsupported triple junction"):
+        bemcs.Mesh(els, "slip").continuity_operator(geometry="planestrain")
+
+
+@pytest.mark.parametrize("directions", [("in", "out", "out"), ("in", "in", "out")])
+@pytest.mark.parametrize("geometry", ["antiplane", "planestrain"])
+def test_supported_triple_junction_orientations(directions, geometry):
+    els = _star(directions)
+    _, _, triple = core.label_nodes(els)
+    assert len(triple) == 1
+    A, info = GF.continuity_rows(els, kind="slip", geometry=geometry)
+    pe = 1 if geometry == "antiplane" else 2
+    assert (info["node_type"] == "triple").sum() == 3 * pe
+    # full row rank: 3 open tips (clamped) + junction rows are independent
+    assert np.linalg.matrix_rank(A) == len(A)

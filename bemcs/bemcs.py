@@ -2613,6 +2613,19 @@ def label_nodes(els, verbose=False):
             else:
                 id_combo = np.hstack((id1[0] * 3, -(id2[0] * 3 + 2)))
 
+        elif (np.size(id1) == 3 and np.size(id2) == 0) or (
+            np.size(id2) == 3 and np.size(id1) == 0
+        ):  # triple junction with all branches pointing out of J, or all into J
+            starts = np.size(id1) == 3
+            elems = (id1 if starts else id2)[0].tolist()
+            where = "start" if starts else "end"
+            raise ValueError(
+                f"Unsupported triple junction at ({pts[0, 0]:.6g}, {pts[0, 1]:.6g}): elements "
+                f"{elems} all {where} there. Reverse one branch (swap its x1, y1 and x2, y2) so that "
+                "1 element ends at the junction and 2 start there, or 2 end and 1 starts. Reversing an "
+                "element flips its shear/normal sign convention, so change the sign of that element's "
+                "BC values with it."
+            )
         elif (np.size(id2) == 1) & (np.size(id1) == 1):  # 2-overlap
             id_combo = np.hstack((id1[0] * 3, -(id2[0] * 3 + 2)))
         elif (np.size(id2) == 2) & (np.size(id1) == 0):  # 2-overlap (problematic)

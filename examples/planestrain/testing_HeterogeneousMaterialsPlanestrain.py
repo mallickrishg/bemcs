@@ -3,7 +3,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import bemcs
 import warnings
-import utilfunctions as uf
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -43,11 +42,11 @@ mu = 1.0
 nu = 0.25
 
 print("Solving Plane Strain Heterogeneous BEM system...")
-coefs_slip, coefs_force = uf.solve_planestrain_heterogeneous(
-    els, 
-    connect_slip, BCtype_slip, BCval_slip, 
-    connect_force, alpha_force, 
-    mu=mu, nu=nu
+coefs_slip, coefs_force = bemcs.bemAssembly.solve_planestrain_heterogeneous(
+    els,
+    connect_slip, BCtype_slip, BCval_slip,
+    connect_force, alpha_force,
+    mu=mu, nu=nu, verbose=True,
 )
 
 print("Slip coefficients:", coefs_slip)

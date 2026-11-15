@@ -2366,3 +2366,127 @@ def get_kernels(x_obs, y_obs, mesh, *, geometry, mu, nu=None, use_numba=False):
     info.src_index = np.concatenate([i.src_index for i in infos])
     info.src_node = np.concatenate([i.src_node for i in infos])
     return np.concatenate(U_blocks, axis=1), np.concatenate(S_blocks, axis=1), info
+
+
+# =============================================================================
+# Plane-strain heterogeneous solver (hat slip + trapezoid force), tasks.md 2.2
+# =============================================================================
+
+
+def plane_strain_compliance(sxx, syy, sxy, mu, nu):
+    """Strains from stresses for isotropic plane strain (inverse Hooke's law).
+
+    exx = ((1 - nu) sxx - nu syy) / (2 mu), eyy = ((1 - nu) syy - nu sxx) / (2 mu),
+    exy = sxy / (2 mu); so exx + eyy = (1 - 2 nu)(sxx + syy) / (2 mu).
+    """
+    exx = ((1 - nu) * sxx - nu * syy) / (2 * mu)
+    eyy = ((1 - nu) * syy - nu * sxx) / (2 * mu)
+    exy = sxy / (2 * mu)
+    return exx, eyy, exy
+
+
+def solve_planestrain_heterogeneous(
+    els,
+    connect_slip,
+    BCtype_slip,
+    BCval_slip,
+    connect_force,
+    alpha_force,
+    mu=1.0,
+    nu=0.25,
+    dr=-1e-9,
+    verbose=False,
+):
+    """Solve a plane-strain problem with hat slip patches and trapezoid force patches
+    on heterogeneous-material interfaces (equivalent body forces, tasks.md 2.2).
+
+    Parameters
+    ----------
+    els : element structure (slip and interface elements together)
+    connect_slip : (N_s, 3) int array
+        Hat patches (global element indices); the collocation point of each is
+        the centre of its middle element.
+    BCtype_slip : sequence of "s" | "t", length N_s
+        "s": prescribed slip (local shear, normal) at the collocation point;
+        "t": prescribed projected strain psi = eps . n (global x, y).
+    BCval_slip : (N_s, 2) array
+        The prescribed values.
+    connect_force : (N_f, 3) int array
+        Trapezoid patches on the interface elements.
+    alpha_force : (N_f,) array
+        alpha = (d mu / d n) / mu at each force collocation point.
+    mu, nu : float
+        Reference shear modulus and (uniform) Poisson's ratio.
+    dr : float
+        Offset of the collocation points along the element normal (side of
+        evaluation; tasks.md issue 2).
+    verbose : bool
+        Print the condition number of the system.
+
+    Returns
+    -------
+    coefs_slip : (2 N_s,) array, interleaved [t0, n0, t1, n1, ...] per hat
+    coefs_force : (2 N_f,) array, interleaved per trapezoid
+
+    Rows (notes, section 2.2): "s" rows: slip at the collocation point;
+    "t" rows: Psi^(s) s + Psi^(f) f = psi_given; "h" rows:
+    alpha Psi~^(s) s + (I + alpha Psi~^(f)) f = 0, with
+    Psi~ = Psi + nu / (1 - 2 nu) n eps_kk.
+    """
+    geometry = "planestrain"
+    connect_slip = np.zeros((0, 3), dtype=int) if connect_slip is None else np.asarray(connect_slip, dtype=int)
+    connect_force = np.zeros((0, 3), dtype=int) if connect_force is None else np.asarray(connect_force, dtype=int)
+    N_s, N_f = len(connect_slip), len(connect_force)
+    if N_s + N_f == 0:
+        return np.zeros(0), np.zeros(0)
+    colloc = np.concatenate((connect_slip[:, 1], connect_force[:, 1])).astype(int)
+    nx, ny = els.x_normals[colloc], els.y_normals[colloc]
+    x_obs = els.x_centers[colloc] + dr * nx
+    y_obs = els.y_centers[colloc] + dr * ny
+    kw = dict(geometry=geometry, mu=mu, nu=nu)
+
+    blocks = []  # projected strain Psi and augmented Psi~ per source type: (N_obs, 2 comp, 2 N_src)
+    for n_p, kind, basis, conn in ((N_s, "slip", "hat", connect_slip), (N_f, "force", "trapezoid", connect_force)):
+        if n_p == 0:
+            blocks.append((np.zeros((len(colloc), 2, 0)), np.zeros((len(colloc), 2, 0))))
+            continue
+        fn = get_slip_kernels if kind == "slip" else get_force_kernels
+        _, S, _ = fn(x_obs, y_obs, els, basis=basis, connectivity=conn, **kw)
+        exx, eyy, exy = plane_strain_compliance(S[:, :, 0, :], S[:, :, 1, :], S[:, :, 2, :], mu, nu)
+        psi_x = exx * nx[:, None, None] + exy * ny[:, None, None]
+        psi_y = exy * nx[:, None, None] + eyy * ny[:, None, None]
+        trace = (exx + eyy) * nu / (1 - 2 * nu)
+        n_obs = len(colloc)
+        Psi = np.stack((psi_x, psi_y), axis=1).reshape(n_obs, 2, -1)
+        Psi_t = np.stack((psi_x + nx[:, None, None] * trace, psi_y + ny[:, None, None] * trace), axis=1).reshape(n_obs, 2, -1)
+        blocks.append((Psi, Psi_t))
+    (Psi_s, Psit_s), (Psi_f, Psit_f) = blocks
+
+    A = np.zeros((2 * (N_s + N_f), 2 * (N_s + N_f)))
+    b = np.zeros(2 * (N_s + N_f))
+    if N_s:
+        # slip at the centre of each collocation element (local frame), exactly from the hat basis
+        T = basis_transform(els, kind="slip", basis="hat", geometry=geometry, connectivity=connect_slip)
+        T = T.reshape(T.shape[0] * 2, -1)  # (2 * 3 n_els, 2 N_s)
+        m_local, _ = slip_node_matrices(els, geometry=geometry, reference="local")
+    for i in range(N_s):
+        rows = slice(2 * i, 2 * i + 2)
+        if BCtype_slip[i] == "s":
+            j = connect_slip[i, 1]
+            A[rows, : 2 * N_s] = m_local[2 * (3 * j + 1) : 2 * (3 * j + 1) + 2] @ T
+        elif BCtype_slip[i] == "t":
+            A[rows, : 2 * N_s] = Psi_s[i]
+            A[rows, 2 * N_s :] = Psi_f[i]
+        else:
+            raise ValueError(f"Unknown BCtype_slip: {BCtype_slip[i]!r}")
+        b[rows] = BCval_slip[i]
+    for i in range(N_f):
+        rows = slice(2 * (N_s + i), 2 * (N_s + i) + 2)
+        alpha = alpha_force[i]
+        A[rows, : 2 * N_s] = alpha * Psit_s[N_s + i]
+        A[rows, 2 * N_s :] = alpha * Psit_f[N_s + i]
+        A[rows, 2 * N_s + 2 * i : 2 * N_s + 2 * i + 2] += np.eye(2)
+    if verbose:
+        print("Heterogeneous BEM linear operator condition number:", np.linalg.cond(A))
+    sol = np.linalg.solve(A, b)
+    return sol[: 2 * N_s], sol[2 * N_s :]
