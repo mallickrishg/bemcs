@@ -145,6 +145,11 @@ Square system of `2(N_s + N_f)` equations.
     `get_displacement_stress_kernel_force_planestrain`, among others).
 13. `bemcs.py` lines 3009, 3036 and 3063 use `"$\sigma_{..}$"` in non-raw strings (invalid escape, `DeprecationWarning`,
     a `SyntaxWarning` on Python ≥ 3.12).
+14. **`get_kernels_trapezoidalforce_antiplane` ignores its `mu` argument** (it always passes `mu=1.0` to the element
+    kernel), so displacements are wrong by a factor `1/mu` for `mu != 1`. `get_kernels(..., basis="trapezoid")` passes `mu`
+    through; the old function is compared at `mu = 1` only.
+15. **Debug prints in library code:** `label_nodes` prints node counts, and the hat/trapezoid coefficient builders print
+    `patch number:` / `trapezoid number:` for every patch. `bemAssembly` prints the numba version on import.
 
 ---
 
@@ -155,15 +160,31 @@ Square system of `2(N_s + N_f)` equations.
 
 ### TA. Code audit and API consolidation (do before T1)
 - [x] Add a `pytest` suite skeleton (`tests/`, `pytest.ini`); run with
-  `conda run -n bemcs python -m pytest`. Current status: 70 passed, 2 expected xfail, ~2.5 min (numba JIT).
+  `conda run -n bemcs python -m pytest`. Current status: 120 passed, 2 expected xfail; ~1 s with a warm numba cache (~2.5 min on the first run, which compiles).
 - [x] Static API checks (`tests/test_api.py`): `__init__` exports resolve, no function defined twice in a module,
   no undefined global names, list of duplicates across modules, list of unexported functions.
 - [x] Numerical equivalence of duplicated pairs (`tests/test_duplicates_consistent.py`).
 - [x] Plane-strain force kernels vs an independent Kelvin reference (`tests/test_force_kernels_reference.py`),
   at 0, 90, 30 and -40 degrees.
-- [ ] Agree on the package layout and the unified kernel API (see section 7), then implement it.
+- [x] Agree on the package layout and the unified kernel API (see section 7).
+- [x] Stage 1: `bemcs.get_kernels` + `KernelInfo` in `bemAssembly.py`, tested in `tests/test_get_kernels.py`
+  (argument errors, shapes/info, mixed labels, numpy vs numba, old vs new) and against the Kelvin reference.
+- [ ] Stage 1b: restructure into the three levels of section 7.2 (mesh / source type / basis), with derived constant
+  bases, required `mu`/`nu`, `Mesh`, and reference kernels moved to `tests/`. Test each level (section 7.5).
+- [ ] Stage 2: `mesh.continuity_operator()` (section 7.4) in interleaved columns, replacing `construct_smoothoperator*`;
+  switch `get_matrices_slip_slip_gradient` and the hat-coefficient builder to interleaved columns; migrate callers.
+- [ ] Stage 3: delete the old kernel functions and the old-vs-new comparison tests.
 - [ ] Fix issue 9 (numpy plane-strain force kernel), or replace it with the unified implementation.
-- [ ] Add `cache=True` to every `@njit` and make numba an optional, lazily imported dependency (issue 10).
+- [x] Add `cache=True` to every `@njit` (issue 10, first half).
+- [ ] Make numba an optional, lazily imported dependency (issue 10, second half).
+- [ ] Rewrite the plane-strain force numba kernel so it compiles fast. Measured first-call compile (no cache):
+  plane-strain force 90 s serial / 142 s `parallel=True`; antiplane kernels 2-3 s. Cause: 10 inner closures with
+  long symbolic expressions (62 log/arctan calls) are inlined into one function, and they operate on whole arrays,
+  so numba builds a separate loop and temporary for every sub-expression (and `parallel=True` then analyses each
+  one for fusion). Fix: loop over observation points with scalar math, put the formulas in small `@njit` helpers,
+  and compute the shared logs/arctans once per point. Target: compile in seconds and no slower at run time. Guarded by
+  `tests/test_force_kernels_reference.py` (Kelvin reference) and `test_numba_backend_matches_numpy`.
+  Apply the same pattern to the antiplane kernels if it helps.
 - [ ] Add reference tests for the remaining kernels: slip (plane strain and antiplane, constant and quadratic),
   antiplane force, triangle forces, hat-slip and trapezoid-force patches.
 - [ ] Resolve `KNOWN_UNEXPORTED` and `KNOWN_DUPLICATES` until both are empty. Then the strict xfail
@@ -213,75 +234,162 @@ Square system of `2(N_s + N_f)` equations.
 
 ## 7. Unified kernel API (agreed design)
 
-Decisions (2026-11-15): keep two modules; remove the old kernel functions (no deprecated wrappers);
-`basis` defaults per source; return displacements and stresses as N-D arrays plus an info object.
+Decisions 2026-11-15:
+- keep two modules;
+- remove the old kernel functions (no deprecated wrappers);
+- return displacements and stresses as N-D arrays plus an info object.
+
+Decisions 2026-11-16:
+- a three-level structure (mesh → source type → basis);
+- constant bases derived from the higher-order ones;
+- a general continuity-operator path alongside the reduced patch bases;
+- a reference `mu` and a uniform `nu`, both required.
 
 Work happens on branch `coderevamp` (from `main` after merging `het-planestrain`). All `examples/**/*.ipynb`
 were converted to percent-format `.py` scripts (`# %%` cells, outputs dropped, display/autoreload magics
 commented out), and `notebooks/`, `point_source/` and `examples/hrf/` are untracked and git-ignored (personal work).
 `examples/antiplane/` keeps only `antiplane101.py` (+ `example_mesh.csv`), `ConstructMesh.py` and
 `HeterogeneousElasticity_forces.py` (run `ConstructMesh.py` first to generate its two CSV inputs); both run cleanly.
-When old functions are removed, the `examples/**/*.py` scripts that call them must be migrated to `get_kernels`.
+When old functions are removed, the `examples/**/*.py` scripts that call them must be migrated.
 
 ### 7.1 Module rule
 
 - **`bemcs/bemcs.py`: single-element physics and geometry.** It covers `els` construction and standardization,
-  analytic element solutions (numpy), basis/shape functions, rotations and point sources. It **never imports
-  `bemAssembly`**, so the dependency is one-way (enforced by a test).
-- **`bemcs/bemAssembly.py`: everything that combines elements.** This covers `get_kernels` and its info object, numba
-  backends, hat/trapezoid patch bases, smoothness and BC operators, system assembly, solvers and field plotting.
-- `bemcs/__init__.py` re-exports the public API, including `bemcs.get_kernels`.
+  analytic element solutions in the local frame, basis/shape functions, rotations and point sources. It **never
+  imports `bemAssembly`** (enforced by `tests/test_api.py`).
+- **`bemcs/bemAssembly.py`: everything that combines elements.** That means all three levels below, the numba
+  backends, continuity and BC operators (`construct_smoothoperator*` moves here), solvers and field plotting.
+- `bemcs/__init__.py` re-exports the public API.
+- Reference solutions used only to check the code live in `tests/` (`tests/reference_kernels.py`). These are the
+  analytic constant-slip kernels (Crouch & Starfield) and the Kelvin point-force quadrature.
+  `get_displacement_stress_kernel_constant` moves there; it is no longer part of the package.
 
-### 7.2 Signature
+### 7.2 Three levels
 
-```python
-U, S, info = bemcs.get_kernels(
-    x_obs, y_obs, els,
-    *,
-    geometry,              # REQUIRED: "antiplane" | "planestrain"
-    source,                # REQUIRED: "slip" | "force"
-    basis=None,            # None -> default for source (below)
-    connectivity=None,     # (n_patches, 3) int; required for patch bases, rejected otherwise
-    mu=1.0,
-    nu=0.25,               # planestrain only
-    use_numba=False,
-)
+```
+Level 1  mesh       bemcs.Mesh(...)  +  bemcs.get_kernels(x_obs, y_obs, mesh, geometry=, mu=, nu=)
+                    what users work with: splits the mesh by source type, calls level 2, stacks [slip; force]
+Level 2  source     bemcs.get_slip_kernels(...)   bemcs.get_force_kernels(...)
+                    public, but users are pointed to level 1; tested extensively in their own right
+Level 3  basis      element kernels (quadratic slip, linear force) x basis transform T
 ```
 
-| geometry | source | basis (default first) | DOFs per element / patch | numba |
-| --- | --- | --- | --- | --- |
-| antiplane | slip | **quadratic** | 3 per element `[c0 c1 c2]` | yes |
-| antiplane | force | **linear**, trapezoid | 2 per element `[b0 b1]`; 1 per patch | yes |
-| planestrain | slip | **quadratic**, constant, hat | 6 per element `[s0 s1 s2 n0 n1 n2]`; 2; 2 per patch `[s n]` | no |
-| planestrain | force | **linear**, trapezoid | 4 per element `[t.b0 t.b1 n.b0 n.b1]`; 2 per patch `[t n]` | yes |
+**Level 3: basis.** There are only two element kernel families, which are the highest-order bases:
+- **Quadratic slip:** 3 nodes per element.
+- **Linear force:** 2 nodes per element.
 
-Here `s/n` = shear/normal slip, `t/n` = force along/normal to the element (local frame), and `b0/b1` = the
-linear ramps `(w+s)/2w` and `(w-s)/2w`.
+Every basis is an element kernel times a transform `T` (`n_elem_dof x n_basis_dof`, with a direction axis in plane
+strain):
 
-Errors: a missing `geometry`/`source` raises `TypeError` (keyword-only, no default). An unknown value or an
-unsupported combination raises `ValueError`. `use_numba=True` without a numba kernel raises `NotImplementedError`
-(no silent fallback). A patch basis without `connectivity` raises `ValueError`.
+| kind | basis | DOF per slip/force component | `T` |
+| --- | --- | --- | --- |
+| slip | `quadratic` | 3 per element | identity |
+| slip | `constant` | 1 per element | weights `[1, 1, 1]` on the element's nodes |
+| slip | `hat` | 1 per 3-element patch | hat coefficients from `connectivity` |
+| force | `linear` | 2 per element | identity |
+| force | `constant` | 1 per element | weights `[1, 1]` on the element's ramps |
+| force | `trapezoid` | 1 per 3-element patch | trapezoid coefficients from `connectivity` |
 
-### 7.3 Outputs
+- Constant bases exist **only** as derived bases. The analytic constant kernels are kept in `tests/` to check that the
+  quadratic/linear kernels and their weights are right.
+- Every basis is available in both geometries. Antiplane gets constant slip and hat slip for free.
+- Level-3 functions (`element_kernels_*`, `basis_transform`, `hat_coefficients`, `trapezoid_coefficients`) are public in
+  `bemAssembly` but not re-exported from `bemcs`.
 
-- `U`: displacements, shape `(N_obs, n_u, N_dof)`, where `n_u = 1` (`uz`) or `2` (`ux, uy`).
-- `S`: stresses, shape `(N_obs, n_s, N_dof)`, where `n_s = 2` (`sxz, syz`) or `3` (`sxx, syy, sxy`).
-- Columns are element-major (patch-major for patch bases), then direction, then basis node. So
-  `U[:, k, :] @ coefs` is displacement component `k` for a coefficient vector `coefs`.
-- `info` (a `KernelInfo` dataclass) holds `geometry, source, basis, mu, nu, backend`,
-  `displacement_components`, `stress_components`, and a per-column DOF table (source index, direction,
-  basis node, frame). `print(info)` gives a readable summary.
+**Level 2: source type.**
+```python
+U, S, info = bemcs.get_slip_kernels(x_obs, y_obs, els, *, geometry, mu, nu=None,
+                                    basis="quadratic", connectivity=None, use_numba=False)
+U, S, info = bemcs.get_force_kernels(x_obs, y_obs, els, *, geometry, mu, nu=None,
+                                     basis="linear", connectivity=None, use_numba=False)
+```
+- `els` contains only elements of that type.
+- `connectivity` (n_patches, 3) is required for patch bases and rejected otherwise.
 
-### 7.4 Implementation notes
+**Level 1: mesh.**
+```python
+mesh = bemcs.Mesh(els, labels,                         # labels: "s"/"f" per element
+                  basis={"slip": "hat", "force": "trapezoid"},
+                  connectivity={"slip": ..., "force": ...},   # global element indices
+                  bc_type=None, bc_value=None, alpha=None)    # filled in with T1/T2
+U, S, info = bemcs.get_kernels(x_obs, y_obs, mesh, *, geometry, mu, nu=None, use_numba=False)
+A, rows = mesh.continuity_operator()                   # element-DOF bases only, see 7.4
+```
+- Default bases are `quadratic` (slip) and `linear` (force), i.e. the general element-DOF formulation.
+- The source axis is ordered `x = [slip; force]`.
+- CSV input and automatic patch generation from shared nodes come with T2.
 
-- numpy and numba backends share one source: `use_numba=False` calls the jitted function's `.py_func`.
-  On the 3 numba kernels this is bit-identical, and it costs 0.003 s instead of a 148.6 s first-call JIT for plane-strain force.
-- The numpy-only `els`-based duplicates in `bemcs.py` (including the buggy plane-strain force kernel,
-  issue 9) are deleted rather than fixed.
-- Triangle (area) force sources are not `els`-based and stay as separate functions for now.
-- Mixed labels (`source` = per-element array of `"s"`/`"f"`): requested, but the column ordering is undecided.
-  Option (a): element-major, follows the mesh. Option (b): all slip DOFs, then all force DOFs; this matches `x = [s; f]` in the
-  heterogeneous formulation. Until decided, callers concatenate two calls along the DOF axis.
-- Stages: (1) add `get_kernels` + tests alongside the old functions, with tests comparing old and new;
-  (2) migrate internal callers (`bemAssembly` solvers, `examples/*.py`); (3) delete the old functions and
-  the comparison tests; empty `KNOWN_DUPLICATES`.
+### 7.3 Arguments, outputs and errors
+
+- **Required keyword arguments.** `geometry` (`"antiplane"` | `"planestrain"`) and `mu` are required everywhere, with no
+  defaults; `nu` is required for plane strain.
+  - `mu` is the user's **reference** shear modulus and `nu` is uniform over the medium (variable `nu` is out of scope).
+  - Heterogeneity is not a kernel argument. It is mesh data: `alpha = d(ln mu)/dn` on `'h'` (interface) elements.
+    For a sharp interface alpha integrates to `ln(mu2/mu1)`; which side's `psi` it multiplies is still open
+    (issues 4.2, 4.3).
+- **Outputs.** Axis order follows the notes' `Sigma_ijkl` (observation, source coefficient, component, direction):
+
+  | | displacements `U` | stresses `S` |
+  | --- | --- | --- |
+  | planestrain (4-D) | `(N_obs, N_src, 2, 2)`: `[ux, uy]` x `[t, n]` | `(N_obs, N_src, 3, 2)`: `[sxx, syy, sxy]` x `[t, n]` |
+  | antiplane (3-D) | `(N_obs, N_src, 1)`: `[uz]` | `(N_obs, N_src, 2)`: `[sxz, syz]` |
+
+  - `t`/`n` are element-local (shear/normal slip; along/normal force).
+  - `N_src` is element-major then basis node, or patch index for patch bases.
+  - A system-matrix block is `S[:, :, k, :].reshape(N_obs, -1)`, with columns interleaved `[t0, n0, t1, n1, ...]`.
+    `get_matrices_slip_slip_gradient`, the continuity operator and the hat-coefficient builder all use this same order.
+- **`info`** (`KernelInfo`) records:
+  - geometry, basis, `mu`, `nu` and backend;
+  - axis labels;
+  - a per-`N_src` table: source label, element/patch index and basis node (`-1` for derived/patch bases).
+- **Errors.**
+  - Missing required keywords: `TypeError`.
+  - Unknown values, unsupported combinations, or a patch basis without `connectivity`: `ValueError`.
+  - `use_numba=True` without a numba kernel (plane-strain slip): `NotImplementedError`, with no silent fallback.
+
+### 7.4 Two ways to impose continuity
+
+The same element kernels support both. They differ only in where the continuity conditions go.
+
+| | general (element DOFs) | reduced (patch bases) |
+| --- | --- | --- |
+| unknowns | element coefficients `c`: plane strain 6N (slip), 4N (force) | patch amplitudes `a`: 2N |
+| continuity | explicit rows `A c = 0` stacked under the BC rows | built in: `c = T a` with `A T = 0` |
+| triple junctions | handled by `A` | not available (no hat shape) |
+
+Continuity rules (`mesh.continuity_operator()`, built on `label_nodes`):
+- **Slip** (as in today's `construct_smoothoperator`):
+  - open nodes: slip value (2 rows);
+  - overlap nodes: continuity of slip and slip gradient (4 rows);
+  - triple junctions: slip kinematics and gradient (6 rows).
+- **Force:**
+  - overlap nodes: force continuous;
+  - open ends: force tapers to 0;
+  - force elements never form triple junctions (raise if found).
+- **Slip-force contact.** A node where a slip element meets a force element is treated as **open for both**: each tapers to
+  0, and no continuity is enforced between the two element types.
+- **Later (T4):** mix both forms in one mesh (hats away from junctions, element DOFs near triple junctions).
+
+### 7.5 Implementation notes and stages
+
+- numpy and numba share one source: `use_numba=False` calls the jitted function's `.py_func`.
+- The numpy `els`-based duplicates in `bemcs.py` (including the buggy plane-strain force kernel, issue 9) are deleted,
+  not fixed.
+- Triangle (area) force sources are not `els`-based and stay separate for now.
+- **Stages:**
+  1. **[done]** A first `get_kernels(x_obs, y_obs, els, geometry, source, ...)` with tests (uncommitted at
+     the time of this redesign).
+  2. **1b:** restructure into the three levels above, with:
+     - derived constant bases;
+     - required `mu`/`nu`;
+     - `Mesh` (labels, bases, connectivity);
+     - reference kernels moved to `tests/`.
+  3. **Tests for each level:**
+     - level 3: weights/transforms (constant = sum of nodes vs analytic Crouch & Starfield; Kelvin reference for
+       linear and constant force; hat and trapezoid satisfy `A T = 0`);
+     - level 2: argument errors, shapes/info, numpy vs numba, old vs new;
+     - level 1: mixed labels, global connectivity, ordering.
+  4. **Stage 2:**
+     - `mesh.continuity_operator()` in interleaved columns, replacing `construct_smoothoperator*`;
+     - migrate the solvers and `examples/*.py`.
+  5. **Stage 3:** delete the old functions and the old-vs-new comparison tests; empty `KNOWN_DUPLICATES`.
