@@ -26,3 +26,24 @@ def obs_points():
     xo = np.linspace(-3.0, 7.0, 11) + 0.13
     yo = np.linspace(-2.0, 1.0, 11)
     return xo, yo
+
+
+# --- numba tests are opt-in: they trigger JIT compilation (minutes on a cold cache) ---
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--numba",
+        action="store_true",
+        default=False,
+        help="also run tests that compile numba kernels (slow on a cold cache)",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--numba"):
+        return
+    skip = pytest.mark.skip(reason="compiles numba kernels; run with --numba")
+    for item in items:
+        if "numba" in item.keywords:
+            item.add_marker(skip)

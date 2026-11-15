@@ -2059,6 +2059,473 @@ def get_kernels_quadratichatslip_planestrain(
 
 
 # =============================================================================
+# Plane-strain element kernels: scalar formulas shared by numpy and numba drivers
+#
+# _quadratic_slip_f and _linear_force_g were generated with sympy from the
+# original closed forms (bemcs.quadratic_kernel_farfield and the inner closures
+# of get_displacement_stress_kernel_force_planestrain) by common-subexpression
+# elimination only. In addition, every (a -/+ x)^2 + y^2 is evaluated in that
+# factored form (R, inside logs and denominators) instead of the expanded
+# polynomial, which removes most of the precision loss near element endpoints
+# (tasks.md issue 16). They work on scalars (numba drivers) and on numpy arrays
+# (numpy drivers, through .py_func).
+# =============================================================================
+
+@njit(cache=True, error_model="numpy")
+def _quadratic_slip_f(x, y, a, nu, f):
+    """Fill f (7, 3) with f0..f6 for the 3 quadratic shape functions at local (x, y).
+        Generated from bemcs.quadratic_kernel_farfield (common subexpressions only)."""
+    Am = np.pi / 2 * np.sign(y / (a - x)) - np.arctan(y / (a - x))
+    Ap = np.pi / 2 * np.sign(y / (a + x)) - np.arctan(y / (a + x))
+    Rp = (a + x) ** 2 + y**2
+    Rm = (a - x) ** 2 + y**2
+    Lp = np.log(Rp)
+    Lm = np.log(Rm)
+    x0 = x**3
+    x1 = y**2
+    x2 = 3*x
+    x3 = -x2
+    x4 = a + x3
+    x5 = x**2
+    x6 = a*x5
+    x7 = 0.046875*x0 + 0.046875*x1*x4 - 0.046875*x6
+    x8 = a**3
+    x9 = Lp*x8
+    x10 = a**2
+    x11 = x*x10
+    x12 = 0.1875*x11
+    x13 = Am + Ap
+    x14 = x13*y
+    x15 = 2*a
+    x16 = 0.09375*x
+    x17 = x16*(x15 + x3)
+    x18 = a*x1
+    x19 = 0.1875*x18
+    x20 = y**3
+    x21 = x13*x20
+    x22 = x19 - 0.09375*x21 - 0.1875*x6 + 0.125*x8
+    x23 = 1/(np.pi*x10*(nu - 1))
+    x24 = Lm*x8
+    x25 = 0.375*x18
+    x26 = Lp*x
+    x27 = 3*x5
+    x28 = -x27
+    x29 = 4*x10
+    x30 = 9*x1
+    x31 = 0.03125*x28 + 0.03125*x29 + 0.03125*x30
+    x32 = 9*x5
+    x33 = x29 - x32
+    x34 = 0.0625*x33
+    x35 = Lm*x
+    x36 = a + x2
+    x37 = 0.046875*x0 - 0.046875*x1*x36 + 0.046875*x6
+    x38 = x16*(x15 + x2)
+    x39 = x1*x13
+    x40 = 0.28125*x39
+    x41 = a*y
+    x42 = 0.5625*x41
+    x43 = 0.09375*y
+    x44 = x4*x43
+    x45 = 0.5625*y
+    x46 = x36*x43
+    x47 = 0.375*x10
+    x48 = 3*x1
+    x49 = x*x15
+    x50 = 0.046875*x28 + 0.046875*x48 + 0.046875*x49
+    x51 = a*x
+    x52 = 0.5625*x51
+    x53 = 0.1875*x14
+    x54 = 0.03125*x30 + 0.03125*x33
+    x55 = 1.125*x51
+    x56 = 1.125*x
+    x57 = 0.046875*x27 - 0.046875*x48 + 0.046875*x49
+    x58 = x**5
+    x59 = 3*x58
+    x60 = a**4
+    x61 = x2*x60
+    x62 = 6*x0*x10
+    x63 = a**5
+    x64 = x**4
+    x65 = a*x64
+    x66 = 2*x8
+    x67 = -x5*x66 + x63 + x65
+    x68 = -x59 - x61 + x62 + x67
+    x69 = 0.1875*x68
+    x70 = -x20*x47
+    x71 = y**4
+    x72 = x4*x71
+    x73 = 0.1875*x13
+    x74 = 3*x0
+    x75 = x10*x2
+    x76 = x6 + x8
+    x77 = -x74 - x75 + x76
+    x78 = 0.375*x39
+    x79 = x10 + x5
+    x80 = 2*x1
+    x81 = 2*x10*x5
+    x82 = x60 + x64 - x81
+    x83 = x71 + x79*x80 + x82
+    x84 = Lp*x83
+    x85 = 0.28125*y
+    x86 = x84*x85
+    x87 = a*x2
+    x88 = x47*y
+    x89 = Lm*x83
+    x90 = x85*x89
+    x91 = x23/(Rm*Rp)
+    x92 = x56*x82
+    x93 = x59 + x61 - x62 + x67
+    x94 = 0.1875*x93
+    x95 = x36*x71
+    x96 = x74 + x75 + x76
+    x97 = 0.5625*x63
+    x98 = 0.09375*x68 + 0.09375*x72 + 0.09375*x77*x80
+    x99 = y**5
+    x100 = x13*x99
+    x101 = 0.5625*x100
+    x102 = x5*x8
+    x103 = 1.6875*x102
+    x104 = 1.125*x65
+    x105 = a*x71
+    x106 = 1.125*x105
+    x107 = x14*x82
+    x108 = 0.5625*x107
+    x109 = x21*x79
+    x110 = 1.125*x109
+    x111 = 12*x5
+    x112 = 9*x10 + x111
+    x113 = -0.375*x*x60 + x0*x47
+    x114 = 0.5625*x83
+    x115 = 0.09375*x80*x96 + 0.09375*x93 + 0.09375*x95
+    x116 = a**8
+    x117 = x60*x64
+    x118 = a**6
+    x119 = x118*x5
+    x120 = 1.5*x119
+    x121 = 4*x63
+    x122 = x111*x8
+    x123 = 9*x58 + x61
+    x124 = 9*x0 + 12*x11
+    x125 = 0.375*x105
+    x126 = y**8
+    x127 = x71*(3*x60 + 3*x64 + x81)
+    x128 = x**6
+    x129 = x10*x64
+    x130 = x5*x60
+    x131 = x118 + x128 - x129 - x130
+    x132 = y**6
+    x133 = x132*x79
+    x134 = x**8 + x116 + 6*x117 - 4*x119 - x128*x29
+    x135 = 4*x1*x131 + x126 + 2*x127 + 4*x133 + x134
+    x136 = 0.28125*x135
+    x137 = a*x**7
+    x138 = x0*x63
+    x139 = a**7*x
+    x140 = x58*x8
+    x141 = Lm*x136 - Lp*x136 + x132*x55 + 1.125*x137 + 5.625*x138 - 2.25*x139 - 4.5*x140
+    x142 = x23/(Rm**2*Rp**2)
+    x143 = 0.5625*x135
+    x144 = 27*x64
+    x145 = 8*x10
+    x146 = x145*x5
+    x147 = 8*x
+    x148 = x147*x63
+    x149 = 8*x0*x8
+    x150 = 6*x118 + 3*x128 - 12*x129 + x27*x60
+    x151 = 0.375*x41
+    x152 = x147*x8
+    x153 = 15*x60 + 9*x64
+    x154 = a*x20
+    x155 = 0.375*x154
+    x156 = 0.5625*x134
+    x157 = x126*x13
+    x158 = a*y**7
+    x159 = x127*x13
+    x160 = x131*x39
+    x161 = x13*x133
+    x162 = a*x99
+    x163 = Am*x156 + Ap*x156 + 0.5625*x157 - 1.125*x158 + 1.125*x159 + 2.25*x160 + 2.25*x161 - 1.125*x162*(x27 + x29)
+    x164 = 1.125*x134
+    f[0, 0] = x23*(-Lm*x7 + Lp*x7 + x12 - x14*x17 + x22 + 0.09375*x9)
+    f[0, 1] = x23*(x14*x34 + 0.1875*x21 + 0.03125*x24 - x25 + x26*x31 - x31*x35 + 0.375*x6 - 0.25*x8 + 0.03125*x9)
+    f[0, 2] = x23*(-Lm*x37 + Lp*x37 - x12 + x14*x38 + x22 + 0.09375*x24)
+    f[1, 0] = -x23*(Am*x17 + Ap*x17 + Lm*x44 - Lp*x44 + x40 - x42)
+    f[1, 1] = x23*(Am*x34 + Ap*x34 + x26*x45 - x35*x45 + 0.5625*x39 - 1.125*x41)
+    f[1, 2] = x23*(Am*x38 + Ap*x38 + Lm*x46 - Lp*x46 - x40 + x42)
+    f[2, 0] = -x23*(-Lm*x50 + Lp*x50 + x4*x53 - x47 + x52)
+    f[2, 1] = -x23*(Lm*x54 - Lp*x54 + x14*x56 - x55)
+    f[2, 2] = -x23*(Lm*x57 - Lp*x57 - x36*x53 + x47 + x52)
+    f[3, 0] = -x91*(Am*x69 + Ap*x69 + x70 + x72*x73 + x77*x78 + x86 - x88*(x79 - x87) - x90)
+    f[3, 1] = -x91*(Am*x92 + Ap*x92 + 2.25*x*x39*x79 - 1.25*x*x8*y + x13*x56*x71 - x45*x84 + x45*x89)
+    f[3, 2] = x91*(Am*x94 + Ap*x94 + x70 + x73*x95 + x78*x96 - x86 - x88*(x79 + x87) + x90)
+    f[4, 0] = x91*(Lm*x98 - Lp*x98 + x101 + x103 - x104 - x106 + x108 + x110 + x113 - x19*(x112 - x49) - x97)
+    f[4, 1] = x91*(-1.125*x100 - 3.875*x102 + 2.25*x105 - 1.125*x107 - 2.25*x109 - x114*x26 + x114*x35 + 0.125*x18*(31*x10 + 36*x5) + 1.625*x63 + 2.25*x65)
+    f[4, 2] = -x91*(Lm*x115 - Lp*x115 - x101 - x103 + x104 + x106 - x108 - x110 + x113 + x19*(x112 + x49) + x97)
+    f[5, 0] = x142*(0.75*x116 + 0.75*x117 - x120 + x125*(x124 + x66) + x141 + x25*(x121 - x122 + x123))
+    f[5, 1] = -x142*(Lm*x143 - Lp*x143 + 0.25*x*x18*(x144 - x146 + x60) + 2.25*x132*x51 + 2.25*x137 + 9.25*x138 - 3.5*x139 - 8.0*x140 + 0.75*x51*x71*(x145 + x32))
+    f[5, 2] = -x142*(0.75*x116 - x120 - x125*(x124 - x66) - x141 - x25*(-x121 + x122 + x123) + 0.75*x60*x64)
+    f[6, 0] = -x142*(-x151*(-x148 + x149 + x150) - x155*(-x152 + x153) + x163)
+    f[6, 1] = x142*(Am*x164 + Ap*x164 - 0.25*x154*(x144 + x146 + 37*x60) + 1.125*x157 - 2.25*x158 + 2.25*x159 + 4.5*x160 + 4.5*x161 - 0.25*x162*(32*x10 + 27*x5) - 0.25*x41*(14*x118 + 9*x128 - 24*x129 + x130))
+    f[6, 2] = -x142*(-x151*(x148 - x149 + x150) - x155*(x152 + x153) + x163)
+
+
+@njit(cache=True, error_model="numpy")
+def _linear_force_g(x, y, w, mu, nu, g):
+    """Fill g (2 ramps, 2 force directions, 5 = [ux, uy, sxx, syy, sxy]) in the local
+        frame at local (x, y). Generated from the closures of the old
+        get_displacement_stress_kernel_force_planestrain (common subexpressions only)."""
+    RFp = (w + x) ** 2 + y**2
+    RFm = (w - x) ** 2 + y**2
+    LFp = np.log(RFp)
+    LFm = np.log(RFm)
+    Tp = np.arctan((w + x) / y)
+    Tm = np.arctan((w - x) / y)
+    x0 = y**2
+    x1 = 5*x0
+    x2 = w + x
+    x3 = x2**2
+    x4 = 3*x3
+    x5 = 4*nu
+    x6 = -x4 + x5*(x2 - y)*(x2 + y)
+    x7 = x0*(x5 - 5)
+    x8 = -x
+    x9 = w + x8
+    x10 = 3*w
+    x11 = x + x10
+    x12 = x5 - 3
+    x13 = x*x12
+    x14 = nu - 1
+    x15 = 8*w
+    x16 = x14*x15
+    x17 = LFm*x9
+    x18 = Tm*x14
+    x19 = x2*y
+    x20 = 0.25*x19
+    x21 = Tp*x14
+    x22 = 1/mu
+    x23 = 1/x14
+    x24 = 1/np.pi
+    x25 = 1/w
+    x26 = x23*x24*x25
+    x27 = x22*x26
+    x28 = 4*w
+    x29 = LFm - LFp
+    x30 = x2*x29
+    x31 = Tm + Tp
+    x32 = 2*y
+    x33 = x31*x32
+    x34 = x27*y
+    x35 = 0.03125*x34*(x28 + x30 - x33)
+    x36 = -w*x5
+    x37 = nu - 2
+    x38 = x32*x37
+    x39 = x9**2
+    x40 = 4*x0
+    x41 = 1/RFm
+    x42 = 2*w
+    x43 = x41*x42
+    x44 = 2*nu
+    x45 = x44 - 3
+    x46 = 0.125*x26
+    x47 = -nu*x15
+    x48 = x44 - 1
+    x49 = x30*x48
+    x50 = 4*y
+    x51 = 2*x0
+    x52 = 0.0625*x26
+    x53 = x29*x45
+    x54 = x53*y
+    x55 = x9*y
+    x56 = x43*x55
+    x57 = 2*x2
+    x58 = x18*x57 + x21*x57
+    x59 = x0*(x5 - 1)
+    x60 = x12*x28
+    x61 = 8*x19*x48
+    x62 = x2*x44
+    x63 = x29*y
+    x64 = x63*(x44 + 1)
+    x65 = -x56
+    x66 = 0.5*x48*x63
+    x67 = x44*y
+    x68 = x2*(x10 + x8)
+    x69 = -x5*(x0 + x68) + 3*x68
+    x70 = LFm*x12*x39
+    x71 = -LFp*x9 - 4*w + x17 + x33
+    x72 = (1/32)*x34
+    x73 = x37*x50
+    x74 = -x44*(x0 + x3)
+    x75 = 1/RFp
+    x76 = x28*x75
+    x77 = x42*x75
+    x78 = x48*x9
+    x79 = x29*x78
+    x80 = 4*x9
+    x81 = x19*x76
+    x82 = x5*x9
+    x83 = 2*x9
+    x84 = x5*y
+    g[0, 0, 0] = x27*(0.015625*LFm*(3*x11*x9 - x7) - 0.015625*LFp*(x1 + x6) - 0.0625*nu*x11*x17 + 0.0625*w*(x13 + x16) - x18*x20 - x20*x21)
+    g[0, 0, 1] = x35
+    g[0, 0, 2] = -x46*(Tm*x38 + Tp*x38 - 0.5*x30*x45 + x36 + x43*(3*x39 + x40))
+    g[0, 0, 3] = x52*(x18*x50 + x21*x50 + x28*x41*(x39 + x51) + x47 - x49)
+    g[0, 0, 4] = -x46*(0.5*x54 + x56 + x58)
+    g[0, 1, 0] = x35
+    g[0, 1, 1] = -0.015625*x27*(-LFm*(-3*w**2*x12 + 2*w*x*x12 + x**2*x12 - x59) + LFp*(x0 + x6) + Tm*x61 + Tp*x61 - x60*(x + x42))
+    g[0, 1, 2] = x46*(Tm*x62 + Tp*x62 + 0.5*x64 + x65)
+    g[0, 1, 3] = -x46*(x58 + x65 + x66)
+    g[0, 1, 4] = -x46*(Tm*x67 + Tp*x67 + x36 + x39*x43 - 0.5*x49)
+    g[1, 0, 0] = (1/64)*x22*x24*x25*(-x23*x70 + x23*(LFm*x7 + LFp*(x1 + x69) + x28*(-x13 + x16)) - 16*x31*x55)
+    g[1, 0, 1] = x71*x72
+    g[1, 0, 2] = x52*(Tm*x73 + Tp*x73 + x53*x9 + x76*(x4 + x40 + x74))
+    g[1, 0, 3] = -x46*(x18*x32 + x21*x32 + x77*(x3 + x51 + x74) + 0.5*x79)
+    g[1, 0, 4] = -x52*(x18*x80 + x21*x80 - x54 + x81)
+    g[1, 1, 0] = x71*x72
+    g[1, 1, 1] = (1/64)*x27*(LFm*x59 + LFp*(x0 + x69) - 8*x31*x78*y + x60*(x42 + x8) - x70)
+    g[1, 1, 2] = x52*(Tm*x82 + Tp*x82 - x64 - x81)
+    g[1, 1, 3] = -x46*(x18*x83 - x19*x77 + x21*x83 - x66)
+    g[1, 1, 4] = x52*(Tm*x84 + Tp*x84 + x3*x76 + x47 + x79)
+
+
+@njit(cache=True, error_model="numpy")
+def _slip_local(f, node, y, mu, nu, cx, cy):
+    """Local displacement and stress of quadratic node `node` for slip (cx, cy)
+    along (t, n); generalization of Crouch & Starfield (sign as in
+    bemcs.f_slip_to_displacement_stress)."""
+    cx = -cx
+    cy = -cy
+    f1 = f[1, node]
+    f2 = f[2, node]
+    f3 = f[3, node]
+    f4 = f[4, node]
+    f5 = f[5, node]
+    f6 = f[6, node]
+    ux = cx * (2 * (1 - nu) * f1 - y * f4) + cy * (-(1 - 2 * nu) * f2 - y * f3)
+    uy = cx * ((1 - 2 * nu) * f2 - y * f3) + cy * (2 * (1 - nu) * f1 + y * f4)
+    sxx = 2 * mu * (cx * (2 * f3 + y * f5) + cy * (-f4 + y * f6))
+    syy = 2 * mu * (cx * (-y * f5) + cy * (-f4 - y * f6))
+    sxy = 2 * mu * (cx * (-f4 + y * f6) + cy * (-y * f5))
+    return ux, uy, sxx, syy, sxy
+
+
+@njit(cache=True, error_model="numpy")
+def _to_global(R, ux, uy, sxx, syy, sxy):
+    """Rotate a local displacement vector and stress tensor to global: u = R u', S = R S' R^T."""
+    gx = R[0, 0] * ux + R[0, 1] * uy
+    gy = R[1, 0] * ux + R[1, 1] * uy
+    gxx = R[0, 0] ** 2 * sxx + 2 * R[0, 0] * R[0, 1] * sxy + R[0, 1] ** 2 * syy
+    gyy = R[1, 0] ** 2 * sxx + 2 * R[1, 0] * R[1, 1] * sxy + R[1, 1] ** 2 * syy
+    gxy = (
+        R[0, 0] * R[1, 0] * sxx
+        + (R[0, 0] * R[1, 1] + R[0, 1] * R[1, 0]) * sxy
+        + R[0, 1] * R[1, 1] * syy
+    )
+    return gx, gy, gxx, gyy, gxy
+
+
+@njit(parallel=True, cache=True, error_model="numpy")
+def _slip_planestrain_numba(x_obs, y_obs, x_centers, y_centers, half_lengths, rot_mats, mu, nu):
+    """Quadratic slip, plane strain: U (n_obs, 3 n_els, 2, 2), S (n_obs, 3 n_els, 3, 2)."""
+    n_obs = x_obs.shape[0]
+    n_els = x_centers.shape[0]
+    U = np.zeros((n_obs, 3 * n_els, 2, 2))
+    S = np.zeros((n_obs, 3 * n_els, 3, 2))
+    for i in prange(n_obs):
+        f = np.empty((7, 3))
+        for e in range(n_els):
+            R = rot_mats[e]
+            dx = x_obs[i] - x_centers[e]
+            dy = y_obs[i] - y_centers[e]
+            xl = R[0, 0] * dx + R[1, 0] * dy  # local = R^T (global - centre)
+            yl = R[0, 1] * dx + R[1, 1] * dy
+            _quadratic_slip_f(xl, yl, half_lengths[e], nu, f)
+            for node in range(3):
+                for l in range(2):
+                    loc = _slip_local(f, node, yl, mu, nu, 1.0 - l, float(l))
+                    g = _to_global(R, loc[0], loc[1], loc[2], loc[3], loc[4])
+                    j = 3 * e + node
+                    U[i, j, 0, l] = g[0]
+                    U[i, j, 1, l] = g[1]
+                    S[i, j, 0, l] = g[2]
+                    S[i, j, 1, l] = g[3]
+                    S[i, j, 2, l] = g[4]
+    return U, S
+
+
+def _slip_planestrain_numpy(x_obs, y_obs, x_centers, y_centers, half_lengths, rot_mats, mu, nu):
+    """Same as _slip_planestrain_numba, vectorized over observation points."""
+    n_obs, n_els = x_obs.shape[0], x_centers.shape[0]
+    U = np.zeros((n_obs, 3 * n_els, 2, 2))
+    S = np.zeros((n_obs, 3 * n_els, 3, 2))
+    f = np.empty((7, 3, n_obs))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        for e in range(n_els):
+            R = rot_mats[e]
+            dx, dy = x_obs - x_centers[e], y_obs - y_centers[e]
+            xl = R[0, 0] * dx + R[1, 0] * dy
+            yl = R[0, 1] * dx + R[1, 1] * dy
+            _quadratic_slip_f.py_func(xl, yl, half_lengths[e], nu, f)
+            for node in range(3):
+                for l in range(2):
+                    loc = _slip_local.py_func(f, node, yl, mu, nu, 1.0 - l, float(l))
+                    g = _to_global.py_func(R, *loc)
+                    j = 3 * e + node
+                    U[:, j, 0, l], U[:, j, 1, l] = g[0], g[1]
+                    S[:, j, 0, l], S[:, j, 1, l], S[:, j, 2, l] = g[2], g[3], g[4]
+    return U, S
+
+
+@njit(parallel=True, cache=True, error_model="numpy")
+def _force_planestrain_numba(x_obs, y_obs, x_centers, y_centers, half_lengths, rot_mats, mu, nu):
+    """Linear force, plane strain: U (n_obs, 2 n_els, 2, 2), S (n_obs, 2 n_els, 3, 2)."""
+    n_obs = x_obs.shape[0]
+    n_els = x_centers.shape[0]
+    U = np.zeros((n_obs, 2 * n_els, 2, 2))
+    S = np.zeros((n_obs, 2 * n_els, 3, 2))
+    for i in prange(n_obs):
+        g = np.empty((2, 2, 5))
+        for e in range(n_els):
+            R = rot_mats[e]
+            dx = x_obs[i] - x_centers[e]
+            dy = y_obs[i] - y_centers[e]
+            xl = R[0, 0] * dx + R[1, 0] * dy
+            yl = R[0, 1] * dx + R[1, 1] * dy
+            _linear_force_g(xl, yl, half_lengths[e], mu, nu, g)
+            for r in range(2):
+                for l in range(2):
+                    o = _to_global(R, g[r, l, 0], g[r, l, 1], g[r, l, 2], g[r, l, 3], g[r, l, 4])
+                    j = 2 * e + r
+                    U[i, j, 0, l] = o[0]
+                    U[i, j, 1, l] = o[1]
+                    S[i, j, 0, l] = o[2]
+                    S[i, j, 1, l] = o[3]
+                    S[i, j, 2, l] = o[4]
+    return U, S
+
+
+def _force_planestrain_numpy(x_obs, y_obs, x_centers, y_centers, half_lengths, rot_mats, mu, nu):
+    """Same as _force_planestrain_numba, vectorized over observation points."""
+    n_obs, n_els = x_obs.shape[0], x_centers.shape[0]
+    U = np.zeros((n_obs, 2 * n_els, 2, 2))
+    S = np.zeros((n_obs, 2 * n_els, 3, 2))
+    g = np.empty((2, 2, 5, n_obs))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        for e in range(n_els):
+            R = rot_mats[e]
+            dx, dy = x_obs - x_centers[e], y_obs - y_centers[e]
+            xl = R[0, 0] * dx + R[1, 0] * dy
+            yl = R[0, 1] * dx + R[1, 1] * dy
+            _linear_force_g.py_func(xl, yl, half_lengths[e], mu, nu, g)
+            for r in range(2):
+                for l in range(2):
+                    o = _to_global.py_func(R, *g[r, l])
+                    j = 2 * e + r
+                    U[:, j, 0, l], U[:, j, 1, l] = o[0], o[1]
+                    S[:, j, 0, l], S[:, j, 1, l], S[:, j, 2, l] = o[2], o[3], o[4]
+    return U, S
+
+
+# =============================================================================
 # Kernel API in three levels (see tasks.md section 7)
 #   level 1  Mesh + get_kernels              (what users work with)
 #   level 2  get_slip_kernels, get_force_kernels
@@ -2077,7 +2544,7 @@ _PATCH_BASES = ("hat", "trapezoid")
 _HAS_NUMBA_KERNEL = {
     ("antiplane", "slip"): True,
     ("antiplane", "force"): True,
-    ("planestrain", "slip"): False,
+    ("planestrain", "slip"): True,
     ("planestrain", "force"): True,
 }
 _COMPONENTS = {
@@ -2221,17 +2688,14 @@ def _subset_els(els, idx):
 def element_kernels_slip(x_obs, y_obs, els, *, geometry, mu, nu=None, use_numba=False):
     """Quadratic-slip kernels, 3 nodes per element: U, S in the get_kernels layout."""
     _check_material(geometry, mu, nu)
-    if use_numba and not _HAS_NUMBA_KERNEL[(geometry, "slip")]:
-        raise NotImplementedError(f"no numba kernel for {geometry} slip; use use_numba=False")
     xo, yo = _obs(x_obs, y_obs)
     if geometry == "antiplane":
         f = _backend(get_displacement_stress_kernel_slip_antiplane, use_numba)
         sxz, syz, u = f(xo, yo, *_els_arrays(els), float(mu))
         return u[:, :, None], np.stack((sxz, syz), axis=2)
-    kt = _core.get_displacement_stress_kernel(xo, yo, els, mu, nu, "shear")
-    kn = _core.get_displacement_stress_kernel(xo, yo, els, mu, nu, "normal")
-    comp = [np.stack((kt[c], kn[c]), axis=-1) for c in range(5)]  # sxx syy sxy ux uy
-    return np.stack(comp[3:5], axis=2), np.stack(comp[0:3], axis=2)
+    driver = _slip_planestrain_numba if use_numba else _slip_planestrain_numpy
+    xc, yc, hl, rot, _ = _els_arrays(els)
+    return driver(xo, yo, xc, yc, hl, rot, float(mu), float(nu))
 
 
 def element_kernels_force(x_obs, y_obs, els, *, geometry, mu, nu=None, use_numba=False):
@@ -2250,13 +2714,9 @@ def element_kernels_force(x_obs, y_obs, els, *, geometry, mu, nu=None, use_numba
             return K.transpose(0, 2, 1).reshape(n_obs, -1)
 
         return r(u)[:, :, None], np.stack((r(sxz), r(syz)), axis=2)
-    f = _backend(get_displacement_stress_kernel_force_planestrain, use_numba)
-    ux, uy, sxx, syy, sxy = f(xo, yo, *_els_arrays(els), float(mu), float(nu))
-
-    def r(K):  # (n_obs, direction, ramp, n_els) -> (n_obs, n_els * ramp, direction)
-        return K.transpose(0, 3, 2, 1).reshape(n_obs, -1, 2)
-
-    return np.stack((r(ux), r(uy)), axis=2), np.stack((r(sxx), r(syy), r(sxy)), axis=2)
+    driver = _force_planestrain_numba if use_numba else _force_planestrain_numpy
+    xc, yc, hl, rot, _ = _els_arrays(els)
+    return driver(xo, yo, xc, yc, hl, rot, float(mu), float(nu))
 
 
 def _per_element_transform(n_els, n_nodes, weights, geometry):

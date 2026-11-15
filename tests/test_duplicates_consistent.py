@@ -54,7 +54,7 @@ def test_get_matrices_slip_slip_gradient_agree(els_curved):
 def test_antiplane_kernels_agree(name, els_curved, obs_points):
     xo, yo = obs_points
     A = getattr(bemcs, name)(xo, yo, els_curved, mu=1.0)
-    B = getattr(GF, name)(xo, yo, *_array_args(els_curved), mu=1.0)
+    B = getattr(GF, name).py_func(xo, yo, *_array_args(els_curved), mu=1.0)  # no JIT
     assert len(A) == len(B) == 3
     for p, q in zip(A, B):
         np.testing.assert_allclose(p, q, rtol=1e-8, atol=1e-10)

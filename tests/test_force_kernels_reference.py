@@ -34,7 +34,7 @@ SHAPES = {"linear": ref.RAMPS, "constant": [ref.CONSTANT]}
 
 @pytest.mark.parametrize("angle", ANGLES)
 @pytest.mark.parametrize("basis", ["linear", "constant"])
-@pytest.mark.parametrize("use_numba", [False, True])
+@pytest.mark.parametrize("use_numba", [False, pytest.param(True, marks=pytest.mark.numba)])
 def test_planestrain_force_matches_kelvin(angle, basis, use_numba):
     els = _element(angle)
     U, S, info = bemcs.get_force_kernels(
@@ -49,7 +49,7 @@ def test_planestrain_force_matches_kelvin(angle, basis, use_numba):
 
 @pytest.mark.parametrize("angle", ANGLES)
 @pytest.mark.parametrize("basis", ["linear", "constant"])
-@pytest.mark.parametrize("use_numba", [False, True])
+@pytest.mark.parametrize("use_numba", [False, pytest.param(True, marks=pytest.mark.numba)])
 def test_antiplane_force_matches_laplace(angle, basis, use_numba):
     els = _element(angle)
     U, S, info = bemcs.get_force_kernels(

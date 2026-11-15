@@ -260,12 +260,6 @@ def test_hat_patch_must_be_a_chain(els_curved, obs_points):
         )
 
 
-@pytest.mark.parametrize("basis", ["quadratic", "constant", "hat"])
-def test_planestrain_slip_has_no_numba_kernel(els_curved, obs_points, basis):
-    with pytest.raises(NotImplementedError):
-        _level2(els_curved, obs_points, "planestrain", "slip", basis, use_numba=True)
-
-
 @pytest.mark.parametrize("case", CASES, ids=CASE_IDS)
 def test_level2_shapes_and_info(els_curved, obs_points, case):
     geometry, kind, basis, n_src = case
@@ -334,10 +328,8 @@ def test_displacement_scales_with_one_over_mu(els_curved, obs_points, geometry, 
         np.testing.assert_allclose(S2, S1, rtol=1e-12, atol=1e-14)
 
 
-NUMBA_CASES = [c for c in CASES if not (c[0] == "planestrain" and c[1] == "slip")]
-
-
-@pytest.mark.parametrize("case", NUMBA_CASES, ids=["-".join(c[:3]) for c in NUMBA_CASES])
+@pytest.mark.numba
+@pytest.mark.parametrize("case", CASES, ids=CASE_IDS)
 def test_numba_backend_matches_numpy(els_curved, obs_points, case):
     geometry, kind, basis, _ = case
     Un, Sn, info_n = _level2(els_curved, obs_points, geometry, kind, basis)
@@ -393,8 +385,6 @@ def test_get_kernels_requires_mesh_and_keywords(els_curved, obs_points):
         bemcs.get_kernels(*obs_points, mesh, geometry="antiplane")
     with pytest.raises(TypeError, match="nu"):
         bemcs.get_kernels(*obs_points, mesh, geometry="planestrain", mu=1.0)
-    with pytest.raises(NotImplementedError):
-        bemcs.get_kernels(*obs_points, mesh, geometry="planestrain", mu=1.0, nu=NU, use_numba=True)
 
 
 @pytest.mark.parametrize("geometry", GEOMETRIES)
@@ -465,14 +455,15 @@ def test_mesh_with_patches_uses_global_connectivity(els_curved, obs_points, geom
 # temporary: agreement with the old per-case functions (remove in stage 3)
 # ============================================================================
 
+_JIT = pytest.mark.numba  # the old function calls a numba-jitted kernel internally
 OLD_CASES = [
     ("antiplane", "slip", "quadratic"),
     ("antiplane", "force", "linear"),
-    ("antiplane", "force", "trapezoid"),
+    pytest.param(("antiplane", "force", "trapezoid"), marks=_JIT, id="antiplane-force-trapezoid"),
     ("planestrain", "slip", "quadratic"),
     ("planestrain", "slip", "hat"),
     ("planestrain", "force", "linear"),
-    ("planestrain", "force", "trapezoid"),
+    pytest.param(("planestrain", "force", "trapezoid"), marks=_JIT, id="planestrain-force-trapezoid"),
 ]
 
 
@@ -516,7 +507,9 @@ def _old(els, obs, geometry, kind, basis):
     return out
 
 
-@pytest.mark.parametrize("case", OLD_CASES, ids=["-".join(c) for c in OLD_CASES])
+@pytest.mark.parametrize(
+    "case", OLD_CASES, ids=lambda c: "-".join(c) if isinstance(c, tuple) else None
+)
 def test_matches_old_function(els_curved, obs_points, case):
     geometry, kind, basis = case
     mu = 1.0 if (geometry, basis) == ("antiplane", "trapezoid") else MU
