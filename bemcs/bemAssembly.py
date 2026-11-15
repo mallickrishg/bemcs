@@ -1,5 +1,8 @@
+from dataclasses import dataclass, field
+
 import numpy as np
 import bemcs
+from . import bemcs as _core
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -393,7 +396,7 @@ def solveAntiplaneBEM(fileinput, connectivityfile=None, mu=1):
     return els, els_s, quadcoefs, forcecoefs
 
 
-@njit(fastmath=True, parallel=True)
+@njit(fastmath=True, parallel=True, cache=True)
 def get_displacement_stress_kernel_slip_antiplane(
     x_obs,
     y_obs,
@@ -772,7 +775,7 @@ def get_displacement_stress_kernel_force_antiplane(
     return kernel_sxz, kernel_syz, kernel_u
 
 
-@njit(parallel=True, fastmath=True)
+@njit(parallel=True, fastmath=True, cache=True)
 def get_displacement_stress_kernel_force_planestrain(
     x_obs,
     y_obs,
@@ -2053,3 +2056,569 @@ def get_kernels_quadratichatslip_planestrain(
         kernel_sxy[:, 2 * k + 1] = sxy_n
 
     return kernel_ux, kernel_uy, kernel_sxx, kernel_syy, kernel_sxy
+
+
+# =============================================================================
+# Kernel API in three levels (see tasks.md section 7)
+#   level 1  Mesh + get_kernels              (what users work with)
+#   level 2  get_slip_kernels, get_force_kernels
+#   level 3  element_kernels_slip/force x basis_transform
+# =============================================================================
+
+_GEOMETRIES = ("antiplane", "planestrain")
+_KINDS = ("slip", "force")  # block order along the source axis at level 1
+_ELEMENT_BASIS = {"slip": "quadratic", "force": "linear"}
+_NODES = {"slip": 3, "force": 2}  # nodes per element of the element basis
+_BASES = {
+    "slip": ("quadratic", "constant", "hat"),
+    "force": ("linear", "constant", "trapezoid"),
+}
+_PATCH_BASES = ("hat", "trapezoid")
+_HAS_NUMBA_KERNEL = {
+    ("antiplane", "slip"): True,
+    ("antiplane", "force"): True,
+    ("planestrain", "slip"): False,
+    ("planestrain", "force"): True,
+}
+_COMPONENTS = {
+    "antiplane": (("uz",), ("sxz", "syz"), ()),
+    "planestrain": (("ux", "uy"), ("sxx", "syy", "sxy"), ("t", "n")),
+}
+
+
+@dataclass
+class KernelInfo:
+    """Describes the arrays returned by the kernel functions.
+
+    Axes of U and S: (observation, source coefficient, component[, direction]).
+    The direction axis exists only in plane strain: "t" is along the element
+    (shear slip or tangential force) and "n" is the element normal, both in the
+    element-local frame. Components are in the global x-y frame.
+
+    Per source coefficient j (axis 1): `src_label[j]` is "s" (slip) or "f"
+    (force); `src_index[j]` is the global element index, or the connectivity
+    row for patch bases; `src_node[j]` is the node of the element basis, or -1
+    for constant and patch bases. At the mesh level, slip comes before force.
+    """
+
+    geometry: str
+    basis: dict
+    mu: float
+    nu: object
+    backend: str
+    n_obs: int
+    displacement_components: tuple
+    stress_components: tuple
+    directions: tuple
+    src_label: np.ndarray = field(repr=False)
+    src_index: np.ndarray = field(repr=False)
+    src_node: np.ndarray = field(repr=False)
+
+    @property
+    def n_src(self):
+        return len(self.src_label)
+
+    def _shape(self, components):
+        extra = (len(self.directions),) if self.directions else ()
+        return (self.n_obs, self.n_src, len(components)) + extra
+
+    @property
+    def u_shape(self):
+        return self._shape(self.displacement_components)
+
+    @property
+    def s_shape(self):
+        return self._shape(self.stress_components)
+
+    def __str__(self):
+        dirs = f", direction{list(self.directions)}" if self.directions else ""
+        nu = f", nu={self.nu}" if self.nu is not None else ""
+        lines = [
+            f"KernelInfo: {self.geometry}, basis={self.basis}, backend={self.backend}, "
+            f"mu={self.mu}{nu}",
+            f"  U {self.u_shape}: (obs, src, component{list(self.displacement_components)}{dirs})",
+            f"  S {self.s_shape}: (obs, src, component{list(self.stress_components)}{dirs})",
+        ]
+        for kind in _KINDS:
+            sel = self.src_label == kind[0]
+            if not sel.any():
+                continue
+            first = int(np.flatnonzero(sel)[0])
+            unit = "patches" if self.basis[kind] in _PATCH_BASES else "elements"
+            lines.append(
+                f"  src {first}:{first + int(sel.sum())} -> {kind}, {self.basis[kind]} basis "
+                f"on {len(np.unique(self.src_index[sel]))} {unit}"
+            )
+        if self.directions:
+            lines.append(
+                "  directions are element-local (t = along element, n = normal); a system "
+                "block S[:, :, k, :].reshape(n_obs, -1) has columns [t0, n0, t1, n1, ...]"
+            )
+        return "\n".join(lines)
+
+
+# ----------------------------------------------------------------------------
+# shared helpers
+# ----------------------------------------------------------------------------
+
+
+def _backend(fn, use_numba):
+    """The numba-jitted kernel, or its pure-Python source (same code, no JIT)."""
+    return fn if use_numba else fn.py_func
+
+
+def _els_arrays(els):
+    return tuple(
+        np.ascontiguousarray(getattr(els, name), dtype=float)
+        for name in ("x_centers", "y_centers", "half_lengths", "rot_mats", "rot_mats_inv")
+    )
+
+
+def _obs(x_obs, y_obs):
+    xo = np.ascontiguousarray(x_obs, dtype=float).ravel()
+    yo = np.ascontiguousarray(y_obs, dtype=float).ravel()
+    if xo.shape != yo.shape:
+        raise ValueError(f"x_obs and y_obs differ in size: {xo.size} vs {yo.size}")
+    return xo, yo
+
+
+def _check_material(geometry, mu, nu):
+    if geometry not in _GEOMETRIES:
+        raise ValueError(f"geometry must be one of {_GEOMETRIES}, got {geometry!r}")
+    if not np.isscalar(mu) or not mu > 0:
+        raise ValueError(f"mu must be a positive scalar (reference shear modulus), got {mu!r}")
+    if geometry == "planestrain":
+        if nu is None:
+            raise TypeError("nu is required for planestrain")
+        if not np.isscalar(nu) or not -1 < nu < 0.5:
+            raise ValueError(f"nu must be a scalar in (-1, 0.5), got {nu!r}")
+
+
+def _check_connectivity(conn, n_els):
+    c = np.asarray(conn)
+    if c.ndim != 2 or c.shape[1] != 3 or not np.issubdtype(c.dtype, np.integer):
+        raise ValueError(
+            f"connectivity must be an (n_patches, 3) int array, got shape {c.shape} {c.dtype}"
+        )
+    if c.size and (c.min() < 0 or c.max() >= n_els):
+        raise ValueError("connectivity has element indices out of range")
+    return c
+
+
+def _subset_els(els, idx):
+    sub = _core.initialize_els()
+    for name in ("x1", "y1", "x2", "y2"):
+        setattr(sub, name, np.asarray(getattr(els, name), dtype=float)[idx].copy())
+    _core.standardize_els_geometry(sub, reorder=False)
+    return sub
+
+
+# ----------------------------------------------------------------------------
+# level 3: element kernels and basis transforms
+# ----------------------------------------------------------------------------
+
+
+def element_kernels_slip(x_obs, y_obs, els, *, geometry, mu, nu=None, use_numba=False):
+    """Quadratic-slip kernels, 3 nodes per element: U, S in the get_kernels layout."""
+    _check_material(geometry, mu, nu)
+    if use_numba and not _HAS_NUMBA_KERNEL[(geometry, "slip")]:
+        raise NotImplementedError(f"no numba kernel for {geometry} slip; use use_numba=False")
+    xo, yo = _obs(x_obs, y_obs)
+    if geometry == "antiplane":
+        f = _backend(get_displacement_stress_kernel_slip_antiplane, use_numba)
+        sxz, syz, u = f(xo, yo, *_els_arrays(els), float(mu))
+        return u[:, :, None], np.stack((sxz, syz), axis=2)
+    kt = _core.get_displacement_stress_kernel(xo, yo, els, mu, nu, "shear")
+    kn = _core.get_displacement_stress_kernel(xo, yo, els, mu, nu, "normal")
+    comp = [np.stack((kt[c], kn[c]), axis=-1) for c in range(5)]  # sxx syy sxy ux uy
+    return np.stack(comp[3:5], axis=2), np.stack(comp[0:3], axis=2)
+
+
+def element_kernels_force(x_obs, y_obs, els, *, geometry, mu, nu=None, use_numba=False):
+    """Linear-force kernels, 2 ramps per element: U, S in the get_kernels layout.
+
+    Ramp 0 is (w+s)/2w and ramp 1 is (w-s)/2w, with s in [-w, w] along the element.
+    """
+    _check_material(geometry, mu, nu)
+    xo, yo = _obs(x_obs, y_obs)
+    n_obs = len(xo)
+    if geometry == "antiplane":
+        f = _backend(get_displacement_stress_kernel_force_antiplane, use_numba)
+        sxz, syz, u = f(xo, yo, *_els_arrays(els), float(mu))  # (n_obs, ramp, n_els)
+
+        def r(K):
+            return K.transpose(0, 2, 1).reshape(n_obs, -1)
+
+        return r(u)[:, :, None], np.stack((r(sxz), r(syz)), axis=2)
+    f = _backend(get_displacement_stress_kernel_force_planestrain, use_numba)
+    ux, uy, sxx, syy, sxy = f(xo, yo, *_els_arrays(els), float(mu), float(nu))
+
+    def r(K):  # (n_obs, direction, ramp, n_els) -> (n_obs, n_els * ramp, direction)
+        return K.transpose(0, 3, 2, 1).reshape(n_obs, -1, 2)
+
+    return np.stack((r(ux), r(uy)), axis=2), np.stack((r(sxx), r(syy), r(sxy)), axis=2)
+
+
+def _per_element_transform(n_els, n_nodes, weights, geometry):
+    """Block-diagonal transform: per element, basis = weights . element nodes."""
+    w = np.asarray(weights, dtype=float).reshape(n_nodes, -1)  # (node, n_basis_per_element)
+    T = np.kron(np.eye(n_els), w)  # (n_els * n_nodes, n_els * n_basis)
+    if geometry == "antiplane":
+        return T
+    return np.einsum("sb,lm->slbm", T, np.eye(2))
+
+
+def hat_coefficients(els, connectivity, *, geometry):
+    """Transform from quadratic-slip element DOFs to hat patches (one per row of connectivity).
+
+    Each hat has unit slip at the central node of its middle element, zero slip and
+    slip gradient at the open ends, and continuous slip and slip gradient at the two
+    internal nodes. Returns (3 n_els, n_patches) in antiplane and
+    (3 n_els, 2, n_patches, 2) [dof, direction_in, patch, direction_out] in plane strain.
+    """
+    conn = _check_connectivity(connectivity, len(els.x_centers))
+    n_els, n_p = len(els.x_centers), len(conn)
+    if geometry == "planestrain":
+        cs, cn = compute_coefs_quadratichatslip_planestrain(els, conn)  # (n_els, 6, n_p)
+        c = np.stack((cs, cn), axis=-1).reshape(n_els, 2, 3, n_p, 2)
+        return c.transpose(0, 2, 1, 3, 4).reshape(n_els * 3, 2, n_p, 2)
+    if geometry != "antiplane":
+        raise ValueError(f"geometry must be one of {_GEOMETRIES}, got {geometry!r}")
+    T = np.zeros((n_els * 3, n_p))
+    for p in range(n_p):
+        sub = _subset_els(els, conn[p])
+        index_open, index_overlap, _ = _core.label_nodes(sub)
+        m_slip, m_grad = _core.get_matrices_slip_slip_gradient_antiplane(sub)
+        rows = [m_slip[4]]  # central node of the middle element
+        for node in index_open:
+            n = int(np.abs(node).item())
+            rows += [m_slip[n], m_grad[n]]
+        for a, b in index_overlap:
+            if a != 0 and b != 0:
+                sa, sb = np.sign(a), np.sign(b)
+            elif a == 0:
+                sa, sb = 1, -1
+            else:
+                sa, sb = -1, 1
+            rows += [
+                sa * m_slip[abs(a)] + sb * m_slip[abs(b)],
+                sa * m_grad[abs(a)] + sb * m_grad[abs(b)],
+            ]
+        A = np.array(rows)
+        if A.shape != (9, 9):
+            raise ValueError(
+                f"patch {p} ({conn[p].tolist()}) is not a chain of 3 connected elements"
+            )
+        rhs = np.zeros(9)
+        rhs[0] = 1.0
+        coefs = np.linalg.solve(A, rhs)
+        for local, e in enumerate(conn[p]):
+            T[3 * e : 3 * e + 3, p] = coefs[3 * local : 3 * local + 3]
+    return T
+
+
+def trapezoid_coefficients(els, connectivity, *, geometry):
+    """Transform from linear-force element DOFs to trapezoid patches.
+
+    Returns (2 n_els, n_patches) in antiplane and (2 n_els, 2, n_patches, 2) in plane strain.
+    """
+    conn = _check_connectivity(connectivity, len(els.x_centers))
+    n_els, n_p = len(els.x_centers), len(conn)
+    if geometry == "planestrain":
+        fs, fn = compute_coefs_trapezoidalforce_planestrain(els, conn)  # (e, l, ramp, p)
+        c = np.stack((fs, fn), axis=-1)
+        return c.transpose(0, 2, 1, 3, 4).reshape(n_els * 2, 2, n_p, 2)
+    if geometry != "antiplane":
+        raise ValueError(f"geometry must be one of {_GEOMETRIES}, got {geometry!r}")
+    trapcoefs = np.array([[1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
+    C = np.zeros((n_els, 2, n_p))
+    for p in range(n_p):
+        for m in range(3):
+            C[conn[p, m], :, p] = trapcoefs[m, :]
+    return C.reshape(n_els * 2, n_p)
+
+
+def basis_transform(els, *, kind, basis, geometry, connectivity=None):
+    """Transform T from element-basis DOFs to the requested basis (see tasks.md 7.2)."""
+    n_els = len(els.x_centers)
+    n_nodes = _NODES[kind]
+    if basis == _ELEMENT_BASIS[kind]:
+        return _per_element_transform(n_els, n_nodes, np.eye(n_nodes), geometry)
+    if basis == "constant":
+        return _per_element_transform(n_els, n_nodes, np.ones(n_nodes), geometry)
+    if basis == "hat":
+        return hat_coefficients(els, connectivity, geometry=geometry)
+    return trapezoid_coefficients(els, connectivity, geometry=geometry)
+
+
+def _apply_transform(U, S, T, geometry):
+    if geometry == "antiplane":
+        return np.einsum("osc,sb->obc", U, T), np.einsum("osc,sb->obc", S, T)
+    return np.einsum("oscl,slbm->obcm", U, T), np.einsum("oscl,slbm->obcm", S, T)
+
+
+# ----------------------------------------------------------------------------
+# level 2: one source type
+# ----------------------------------------------------------------------------
+
+
+def _source_kernels(kind, x_obs, y_obs, els, geometry, mu, nu, basis, connectivity, use_numba):
+    _check_material(geometry, mu, nu)
+    if basis not in _BASES[kind]:
+        raise ValueError(f"basis {basis!r} is not available for {kind}; choose from {_BASES[kind]}")
+    n_els = len(els.x_centers)
+    if basis in _PATCH_BASES:
+        if connectivity is None:
+            raise ValueError(f"basis {basis!r} needs connectivity (n_patches, 3)")
+        connectivity = _check_connectivity(connectivity, n_els)
+    elif connectivity is not None:
+        raise ValueError(f"connectivity is only used with patch bases, not {basis!r}")
+    if use_numba and not _HAS_NUMBA_KERNEL[(geometry, kind)]:
+        raise NotImplementedError(f"no numba kernel for {geometry} {kind}; use use_numba=False")
+
+    element_kernels = element_kernels_slip if kind == "slip" else element_kernels_force
+    U, S = element_kernels(
+        x_obs, y_obs, els, geometry=geometry, mu=mu, nu=nu, use_numba=use_numba
+    )
+    if basis != _ELEMENT_BASIS[kind]:
+        T = basis_transform(
+            els, kind=kind, basis=basis, geometry=geometry, connectivity=connectivity
+        )
+        U, S = _apply_transform(U, S, T, geometry)
+
+    n_nodes = _NODES[kind]
+    if basis == _ELEMENT_BASIS[kind]:
+        index, node = np.repeat(np.arange(n_els), n_nodes), np.tile(np.arange(n_nodes), n_els)
+    elif basis == "constant":
+        index, node = np.arange(n_els), np.full(n_els, -1)
+    else:
+        index, node = np.arange(len(connectivity)), np.full(len(connectivity), -1)
+
+    disp_c, stress_c, dirs = _COMPONENTS[geometry]
+    info = KernelInfo(
+        geometry=geometry,
+        basis={kind: basis},
+        mu=mu,
+        nu=nu if geometry == "planestrain" else None,
+        backend="numba" if use_numba else "numpy",
+        n_obs=U.shape[0],
+        displacement_components=disp_c,
+        stress_components=stress_c,
+        directions=dirs,
+        src_label=np.full(U.shape[1], kind[0]),
+        src_index=index,
+        src_node=node,
+    )
+    return U, S, info
+
+
+def get_slip_kernels(
+    x_obs, y_obs, els, *, geometry, mu, nu=None, basis="quadratic", connectivity=None,
+    use_numba=False,
+):
+    """Displacement and stress kernels of slip sources on all elements of `els`.
+
+    Most users should build a `Mesh` and call `get_kernels` instead.
+
+    Parameters
+    ----------
+    x_obs, y_obs : array_like
+        Observation coordinates (any shape; flattened).
+    els : addict.Dict
+        Standardized element geometry, all of them slip elements.
+    geometry : {"antiplane", "planestrain"}
+    mu : float
+        Reference shear modulus.
+    nu : float
+        Poisson's ratio, uniform; required for plane strain, ignored in antiplane.
+    basis : {"quadratic", "constant", "hat"}
+        "quadratic": 3 nodes per element; "constant": 1 per element (derived from
+        the quadratic one); "hat": 1 per 3-element patch in `connectivity`.
+    connectivity : (n_patches, 3) int array
+        Element indices of each patch; only for basis="hat".
+    use_numba : bool
+        Use the numba-jitted kernel (antiplane only). The first call compiles.
+
+    Returns
+    -------
+    U, S, info : see `get_kernels`.
+    """
+    return _source_kernels(
+        "slip", x_obs, y_obs, els, geometry, mu, nu, basis, connectivity, use_numba
+    )
+
+
+def get_force_kernels(
+    x_obs, y_obs, els, *, geometry, mu, nu=None, basis="linear", connectivity=None,
+    use_numba=False,
+):
+    """Displacement and stress kernels of line-force sources on all elements of `els`.
+
+    Most users should build a `Mesh` and call `get_kernels` instead.
+
+    basis : {"linear", "constant", "trapezoid"}
+        "linear": 2 ramps per element, (w+s)/2w and (w-s)/2w; "constant": 1 per
+        element (sum of the ramps); "trapezoid": 1 per 3-element patch in
+        `connectivity`.
+
+    Other parameters and returns are as in `get_slip_kernels`; `use_numba`
+    works in both geometries.
+    """
+    return _source_kernels(
+        "force", x_obs, y_obs, els, geometry, mu, nu, basis, connectivity, use_numba
+    )
+
+
+# ----------------------------------------------------------------------------
+# level 1: mesh
+# ----------------------------------------------------------------------------
+
+
+class Mesh:
+    """A boundary mesh: elements, their source type, and the basis used for each type.
+
+    Parameters
+    ----------
+    els : addict.Dict
+        Standardized element geometry.
+    labels : "slip" | "force" | sequence of "s"/"f"
+        Source type of every element.
+    basis : dict, optional
+        {"slip": ..., "force": ...}. Defaults: "quadratic" slip, "linear" force
+        (the general element-DOF formulation).
+    connectivity : dict, optional
+        {"slip": (n, 3) int, "force": (m, 3) int} with *global* element
+        indices; required for the patch bases "hat" and "trapezoid".
+    bc_type, bc_value, alpha : optional
+        Per-element boundary-condition data (used by the solvers; T1/T2).
+    """
+
+    def __init__(self, els, labels, basis=None, connectivity=None, bc_type=None,
+                 bc_value=None, alpha=None):
+        n_els = len(els.x_centers)
+        if isinstance(labels, str):
+            if labels not in _KINDS:
+                raise ValueError(f"labels must be 'slip', 'force' or per-element 's'/'f', got {labels!r}")
+            labels = np.full(n_els, labels[0])
+        labels = np.asarray(labels).astype(str)
+        if labels.shape != (n_els,):
+            raise ValueError(f"labels must have shape ({n_els},), got {labels.shape}")
+        bad = sorted(set(labels.tolist()) - {"s", "f"})
+        if bad:
+            raise ValueError(f"labels must be 's' or 'f', got {bad}")
+
+        basis = dict(basis or {})
+        connectivity = dict(connectivity or {})
+        for name, d in (("basis", basis), ("connectivity", connectivity)):
+            unknown = set(d) - set(_KINDS)
+            if unknown:
+                raise ValueError(f"{name} keys must be 'slip'/'force', got {sorted(unknown)}")
+
+        self.els = els
+        self.labels = labels
+        self.kinds = [k for k in _KINDS if (labels == k[0]).any()]
+        self.basis = {}
+        self.connectivity = {}
+        for k in self.kinds:
+            b = basis.get(k, _ELEMENT_BASIS[k])
+            if b not in _BASES[k]:
+                raise ValueError(f"basis {b!r} is not available for {k}; choose from {_BASES[k]}")
+            c = connectivity.get(k)
+            if b in _PATCH_BASES:
+                if c is None:
+                    raise ValueError(f"{k} basis {b!r} needs connectivity[{k!r}]")
+                c = _check_connectivity(c, n_els)
+                if not (labels[c] == k[0]).all():
+                    raise ValueError(f"{k} connectivity refers to elements not labelled {k[0]!r}")
+            elif c is not None:
+                raise ValueError(f"connectivity[{k!r}] is only used with patch bases, not {b!r}")
+            self.basis[k], self.connectivity[k] = b, c
+        for k in set(basis) | set(connectivity):
+            if k not in self.kinds:
+                raise ValueError(f"basis/connectivity given for {k!r} but no element is labelled {k[0]!r}")
+        self.bc_type, self.bc_value, self.alpha = bc_type, bc_value, alpha
+
+    @property
+    def n_els(self):
+        return len(self.labels)
+
+    def elements(self, kind):
+        """Global indices of the elements of one source type."""
+        return np.flatnonzero(self.labels == kind[0])
+
+    def subset(self, kind):
+        """(els, global indices, connectivity in subset indices) for one source type."""
+        idx = self.elements(kind)
+        sub = self.els if len(idx) == self.n_els else _subset_els(self.els, idx)
+        conn = self.connectivity[kind]
+        if conn is not None:
+            g2l = np.full(self.n_els, -1)
+            g2l[idx] = np.arange(len(idx))
+            conn = g2l[conn]
+        return sub, idx, conn
+
+    def __repr__(self):
+        parts = [f"{k}: {len(self.elements(k))} elements, {self.basis[k]} basis" for k in self.kinds]
+        return f"Mesh({self.n_els} elements; " + "; ".join(parts) + ")"
+
+
+def get_kernels(x_obs, y_obs, mesh, *, geometry, mu, nu=None, use_numba=False):
+    """Displacement and stress kernels of every source in a mesh.
+
+    Parameters
+    ----------
+    x_obs, y_obs : array_like
+        Observation coordinates (any shape; flattened).
+    mesh : Mesh
+        Elements, their source type (slip/force) and the basis for each type.
+    geometry : {"antiplane", "planestrain"}
+        Required.
+    mu : float
+        Required reference shear modulus. Heterogeneity is mesh data (alpha =
+        d ln(mu)/dn on interface elements), not a kernel argument.
+    nu : float
+        Uniform Poisson's ratio; required for plane strain.
+    use_numba : bool
+        Use numba-jitted kernels where they exist (not plane-strain slip). The
+        first call compiles; default False runs the same code as plain Python.
+
+    Returns
+    -------
+    U : ndarray
+        planestrain: (n_obs, n_src, 2, 2) = [ux, uy] x [t, n];
+        antiplane: (n_obs, n_src, 1) = [uz].
+    S : ndarray
+        planestrain: (n_obs, n_src, 3, 2) = [sxx, syy, sxy] x [t, n];
+        antiplane: (n_obs, n_src, 2) = [sxz, syz].
+    info : KernelInfo
+        Meaning of every axis and source coefficient; `print(info)` summarizes.
+        All slip coefficients come first, then all force coefficients.
+    """
+    if not isinstance(mesh, Mesh):
+        raise TypeError(
+            "get_kernels takes a bemcs.Mesh; for one source type on bare els use "
+            "get_slip_kernels / get_force_kernels"
+        )
+    _check_material(geometry, mu, nu)
+    for k in mesh.kinds:  # check every block before computing any
+        if use_numba and not _HAS_NUMBA_KERNEL[(geometry, k)]:
+            raise NotImplementedError(f"no numba kernel for {geometry} {k}; use use_numba=False")
+
+    U_blocks, S_blocks, infos = [], [], []
+    for k in mesh.kinds:
+        sub, idx, conn = mesh.subset(k)
+        U, S, info = _source_kernels(
+            k, x_obs, y_obs, sub, geometry, mu, nu, mesh.basis[k], conn, use_numba
+        )
+        if mesh.basis[k] not in _PATCH_BASES:
+            info.src_index = idx[info.src_index]  # subset -> global element index
+        U_blocks.append(U)
+        S_blocks.append(S)
+        infos.append(info)
+
+    info = infos[0]
+    info.basis = dict(mesh.basis)
+    info.src_label = np.concatenate([i.src_label for i in infos])
+    info.src_index = np.concatenate([i.src_index for i in infos])
+    info.src_node = np.concatenate([i.src_node for i in infos])
+    return np.concatenate(U_blocks, axis=1), np.concatenate(S_blocks, axis=1), info

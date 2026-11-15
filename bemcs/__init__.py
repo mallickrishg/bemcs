@@ -47,10 +47,24 @@ from .bemcs import (
 )
 
 from . import bemAssembly
+from .bemAssembly import (
+    Mesh,
+    KernelInfo,
+    get_kernels,
+    get_slip_kernels,
+    get_force_kernels,
+)
 
 try:
     __version__ = pkg_resources.get_distribution(__name__).version
 except Exception:
     __version__ = "unknown"
 
-__all__ = ["bemAssembly"]
+__all__ = [
+    "bemAssembly",
+    "Mesh",
+    "KernelInfo",
+    "get_kernels",
+    "get_slip_kernels",
+    "get_force_kernels",
+]

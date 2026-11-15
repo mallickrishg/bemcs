@@ -1,19 +1,23 @@
-"""Check plane-strain linear-force kernels against an independent reference:
-numerical integration of the Kelvin point-source solution along the element.
+"""Force kernels against an independent reference: Gauss-Legendre integration of
+the point-force solution along the element (Kelvin in plane strain, the 2-D
+Laplace Green's function in antiplane).
 
-Conventions established by these tests: force DOFs are in the element-local
-frame (index 0 = along the element, 1 = normal), and basis functions 0 and 1 are
-the linear ramps (w+s)/2w and (w-s)/2w for s in [-w, w] (local coordinate).
+Conventions checked here: plane-strain force DOFs are in the element-local
+frame (direction 0 = along the element, 1 = normal); linear ramp 0 is (w+s)/2w
+and ramp 1 is (w-s)/2w for s in [-w, w]; constant force is their sum.
 """
 
 import numpy as np
 import pytest
 
 import bemcs
-import bemcs.bemAssembly as GF
 import bemcs.bemcs as core
+import reference_kernels as ref
 
-MU, NU = 1.0, 0.3
+MU, NU = 1.3, 0.3
+XO = np.array([-1.0, 0.5, 2.5, 1.0, 3.0])
+YO = np.array([0.7, -0.8, 1.5, 2.0, -1.0])
+ANGLES = [0.0, np.pi / 2, np.pi / 6, -0.7]
 
 
 def _element(angle):
@@ -25,74 +29,49 @@ def _element(angle):
     return els
 
 
-def _kelvin_reference(els, xo, yo, f_local, ramp):
-    """ux, uy, sxx, syy, sxy at (xo, yo) for one local-frame force with a ramp basis."""
-    R = els.rot_mats[0]
-    w = els.half_lengths[0]
-    f_global = R @ f_local
-    gl, gw = np.polynomial.legendre.leggauss(80)
-    out = np.zeros((5, len(xo)))
-    for s, wt in zip(gl * w, gw * w):
-        xs = els.x_centers[0] + R[0, 0] * s
-        ys = els.y_centers[0] + R[1, 0] * s
-        b = ramp(s, w) * wt
-        u = core.kelvin_point_source_disp(xo, yo, xs, ys, *f_global, MU, NU)
-        t = core.kelvin_point_source_stress(xo, yo, xs, ys, *f_global, MU, NU)
-        out += b * np.array([u[0], u[1], t[0], t[1], t[2]], dtype=float)
-    return out
+SHAPES = {"linear": ref.RAMPS, "constant": [ref.CONSTANT]}
 
 
-# basis 0 ramps up towards the element's end node, basis 1 towards its start node
-RAMPS = [lambda s, w: (w + s) / (2 * w), lambda s, w: (w - s) / (2 * w)]
-
-
-@pytest.fixture(scope="module", params=[0.0, np.pi / 2, np.pi / 6, -0.7])
-def element_and_numba_kernel(request):
-    els = _element(request.param)
-    xo = np.array([-1.0, 0.5, 2.5, 1.0, 3.0])
-    yo = np.array([0.7, -0.8, 1.5, 2.0, -1.0])
-    K = GF.get_displacement_stress_kernel_force_planestrain(
-        xo,
-        yo,
-        els.x_centers,
-        els.y_centers,
-        els.half_lengths,
-        els.rot_mats,
-        els.rot_mats_inv,
-        mu=MU,
-        nu=NU,
+@pytest.mark.parametrize("angle", ANGLES)
+@pytest.mark.parametrize("basis", ["linear", "constant"])
+@pytest.mark.parametrize("use_numba", [False, True])
+def test_planestrain_force_matches_kelvin(angle, basis, use_numba):
+    els = _element(angle)
+    U, S, info = bemcs.get_force_kernels(
+        XO, YO, els, geometry="planestrain", mu=MU, nu=NU, basis=basis, use_numba=use_numba
     )
-    return els, xo, yo, K
+    for j, shape in enumerate(SHAPES[basis]):
+        for l in range(2):  # direction t, n
+            want = ref.kelvin_line_force_planestrain(els, 0, XO, YO, np.eye(2)[l], shape, MU, NU)
+            got = np.concatenate([U[:, j, :, l].T, S[:, j, :, l].T])
+            np.testing.assert_allclose(got, want, rtol=1e-7, atol=1e-9)
 
 
-@pytest.mark.parametrize("force_dir", [0, 1])
-@pytest.mark.parametrize("basis", [0, 1])
-def test_bemAssembly_planestrain_force_kernel_matches_kelvin(
-    element_and_numba_kernel, force_dir, basis
-):
-    els, xo, yo, K = element_and_numba_kernel
-    ref = _kelvin_reference(els, xo, yo, np.eye(2)[force_dir], RAMPS[basis])
-    for k in range(5):
-        np.testing.assert_allclose(
-            K[k][:, force_dir, basis, 0], ref[k], rtol=1e-7, atol=1e-9
-        )
+@pytest.mark.parametrize("angle", ANGLES)
+@pytest.mark.parametrize("basis", ["linear", "constant"])
+@pytest.mark.parametrize("use_numba", [False, True])
+def test_antiplane_force_matches_laplace(angle, basis, use_numba):
+    els = _element(angle)
+    U, S, info = bemcs.get_force_kernels(
+        XO, YO, els, geometry="antiplane", mu=MU, basis=basis, use_numba=use_numba
+    )
+    for j, shape in enumerate(SHAPES[basis]):
+        want = ref.laplacian_line_force_antiplane(els, 0, XO, YO, shape, MU)
+        got = np.concatenate([U[:, j, :].T, S[:, j, :].T])
+        np.testing.assert_allclose(got, want, rtol=1e-7, atol=1e-9)
 
 
 @pytest.mark.xfail(
     strict=True,
     reason="bemcs.bemcs.get_displacement_stress_kernel_force_planestrain applies "
     "rot_mats_inv to displacements and mis-rotates stresses: wrong for any "
-    "non-horizontal element (errors up to ~0.16 vs the Kelvin reference).",
+    "non-horizontal element (issue 9; to be deleted in stage 3).",
 )
-def test_bemcs_planestrain_force_kernel_matches_kelvin_rotated():
+def test_old_bemcs_planestrain_force_kernel_matches_kelvin_rotated():
     els = _element(np.pi / 6)
-    xo = np.array([-1.0, 0.5, 2.5, 1.0, 3.0])
-    yo = np.array([0.7, -0.8, 1.5, 2.0, -1.0])
-    K = core.get_displacement_stress_kernel_force_planestrain(
-        xo, yo, els, mu=MU, nu=NU
-    )
-    ref = _kelvin_reference(els, xo, yo, np.eye(2)[0], RAMPS[0])
+    K = core.get_displacement_stress_kernel_force_planestrain(XO, YO, els, mu=MU, nu=NU)
+    want = ref.kelvin_line_force_planestrain(els, 0, XO, YO, np.eye(2)[0], ref.RAMPS[0], MU, NU)
     err = max(
-        min(np.abs(K[k][:, 0, b, 0] - ref[k]).max() for b in (0, 1)) for k in range(5)
+        min(np.abs(K[k][:, 0, b, 0] - want[k]).max() for b in (0, 1)) for k in range(5)
     )
     assert err < 1e-7

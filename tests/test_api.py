@@ -112,7 +112,6 @@ def test_no_redundancy_between_modules():
 # Public functions of bemcs.bemcs that bemcs/__init__.py does not re-export.
 # Review each one: export it, or rename it with a leading "_" if internal.
 KNOWN_UNEXPORTED = {
-    "get_displacement_stress_kernel_constant",
     "get_transformed_coordinates",
     "get_triangle_area",
     "kelvin_point_source_disp",
@@ -136,3 +135,16 @@ def test_unexported_public_functions_are_listed():
         f"newly unexported: {sorted(unexported - KNOWN_UNEXPORTED)}; "
         f"now exported: {sorted(KNOWN_UNEXPORTED - unexported)}"
     )
+
+
+def test_core_module_does_not_import_bemAssembly():
+    """Dependency is one-way: bemAssembly builds on bemcs.bemcs, never the reverse."""
+    tree = ast.parse(pathlib.Path(core.__file__).read_text())
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported |= {a.name for a in node.names}
+        elif isinstance(node, ast.ImportFrom):
+            imported.add(node.module or "")
+            imported |= {a.name for a in node.names}
+    assert not any("bemAssembly" in name for name in imported)
