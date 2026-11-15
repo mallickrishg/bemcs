@@ -1586,15 +1586,74 @@ def _per_element_transform(n_els, n_nodes, weights, geometry):
     return np.einsum("sb,lm->slbm", T, np.eye(2))
 
 
-def hat_coefficients(els, connectivity, *, geometry):
-    """Transform from quadratic-slip element DOFs to hat patches (one per row of connectivity).
+def hat_elements(els, connectivity=None):
+    """Element whose centre carries the unit slip of each hat: the middle element of
+    each connectivity row, or every non-tip element for one-ring hats."""
+    if connectivity is None:
+        return np.setdiff1d(np.arange(len(els.x_centers)), tip_elements(els))
+    return _check_connectivity(connectivity, len(els.x_centers))[:, 1]
 
-    Each hat has unit slip (t or n in plane strain, element-local frame) at the
-    central node of its middle element, zero slip and slip gradient at the open
-    ends, and continuous slip and slip gradient (global frame) at the two
-    internal nodes. Returns (3 n_els, n_patches) in antiplane and
-    (3 n_els, 2, n_patches, 2) [dof, direction_in, patch, direction_out] in plane strain.
+
+def one_ring_hat_coefficients(els, *, geometry):
+    """One-ring hats (tasks.md 7.4): one hat per non-tip element of the mesh.
+
+    Support: the element plus every element sharing one of its end nodes (two
+    neighbours at a triple junction). Inside the support: the continuity rows of
+    `continuity_rows` on the sub-mesh (overlap and triple-junction rows; slip and
+    slip gradient = 0 at every open node, i.e. patch truncations and fault tips).
+    Normalisation: unit slip (t or n, local frame) at the element centre. With
+    clamped tips the hats span exactly the null space of the mesh continuity
+    rows. Returns T as `hat_coefficients` does; hat p belongs to element
+    `hat_elements(els)[p]`.
     """
+    if geometry not in _GEOMETRIES:
+        raise ValueError(f"geometry must be one of {_GEOMETRIES}, got {geometry!r}")
+    n_els = len(els.x_centers)
+    pe = 1 if geometry == "antiplane" else 2
+    centres = hat_elements(els)
+    x1, y1 = np.asarray(els.x1, dtype=float), np.asarray(els.y1, dtype=float)
+    x2, y2 = np.asarray(els.x2, dtype=float), np.asarray(els.y2, dtype=float)
+    at_point = {}
+    for e in range(n_els):
+        for pt in ((x1[e], y1[e]), (x2[e], y2[e])):
+            at_point.setdefault(pt, set()).add(e)
+    T = np.zeros((n_els * 3, pe, len(centres), pe))
+    for p, e in enumerate(centres):
+        support = sorted(at_point[(x1[e], y1[e])] | at_point[(x2[e], y2[e])])
+        sub = _subset_els(els, support)
+        le = support.index(e)
+        A_sub, _ = continuity_rows(sub, kind="slip", geometry=geometry)
+        m_local, _ = slip_node_matrices(sub, geometry=geometry, reference="local")
+        centre_rows = m_local[pe * (3 * le + 1) : pe * (3 * le + 1) + pe]
+        M = np.vstack((centre_rows, A_sub))
+        n_unknowns = 3 * pe * len(support)
+        if M.shape != (n_unknowns, n_unknowns):
+            raise ValueError(
+                f"one-ring patch of element {e} (support {support}) gives a "
+                f"{M.shape[0]} x {n_unknowns} system"
+            )
+        rhs = np.zeros((n_unknowns, pe))
+        rhs[:pe, :] = np.eye(pe)
+        coefs = np.linalg.solve(M, rhs).reshape(len(support), 3, pe, pe)
+        for k, g in enumerate(support):
+            T[3 * g : 3 * g + 3, :, p, :] = coefs[k]
+    return T[:, 0, :, 0] if geometry == "antiplane" else T
+
+
+def hat_coefficients(els, connectivity=None, *, geometry):
+    """Transform from quadratic-slip element DOFs to hat patches.
+
+    connectivity=None: one-ring hats, one per non-tip element, from the mesh
+    topology (see `one_ring_hat_coefficients`; covers triple junctions).
+    connectivity (n_patches, 3): one hat per row on that chain of 3 elements, with
+    unit slip (t or n, local frame) at the centre of the middle element, zero slip
+    and slip gradient at the open ends, and continuous slip and slip gradient
+    (global frame) at the two internal nodes; on a straight run this equals the
+    one-ring hat of the middle element. Returns (3 n_els, n_patches) in antiplane
+    and (3 n_els, 2, n_patches, 2) [dof, direction_in, patch, direction_out] in plane strain.
+    """
+    if connectivity is None:
+        return one_ring_hat_coefficients(els, geometry=geometry)
     if geometry not in _GEOMETRIES:
         raise ValueError(f"geometry must be one of {_GEOMETRIES}, got {geometry!r}")
     conn = _check_connectivity(connectivity, len(els.x_centers))
@@ -1975,9 +2034,10 @@ def _source_kernels(kind, x_obs, y_obs, els, geometry, mu, nu, basis, connectivi
         raise ValueError(f"basis {basis!r} is not available for {kind}; choose from {_BASES[kind]}")
     n_els = len(els.x_centers)
     if basis in _PATCH_BASES:
-        if connectivity is None:
+        if connectivity is None and basis != "hat":
             raise ValueError(f"basis {basis!r} needs connectivity (n_patches, 3)")
-        connectivity = _check_connectivity(connectivity, n_els)
+        if connectivity is not None:
+            connectivity = _check_connectivity(connectivity, n_els)
     elif connectivity is not None:
         raise ValueError(f"connectivity is only used with patch bases, not {basis!r}")
     if use_numba and not _HAS_NUMBA_KERNEL[(geometry, kind)]:
@@ -1998,6 +2058,10 @@ def _source_kernels(kind, x_obs, y_obs, els, geometry, mu, nu, basis, connectivi
         index, node = np.repeat(np.arange(n_els), n_nodes), np.tile(np.arange(n_nodes), n_els)
     elif basis == "constant":
         index, node = np.arange(n_els), np.full(n_els, -1)
+    elif basis == "hat":
+        index = hat_elements(els, connectivity)
+        index = np.arange(len(index)) if connectivity is not None else index
+        node = np.full(len(index), -1)
     else:
         index, node = np.arange(len(connectivity)), np.full(len(connectivity), -1)
 
@@ -2149,7 +2213,7 @@ class Mesh:
             if b not in _BASES[k]:
                 raise ValueError(f"basis {b!r} is not available for {k}; choose from {_BASES[k]}")
             c = connectivity.get(k)
-            if b in _PATCH_BASES:
+            if b in _PATCH_BASES and not (b == "hat" and c is None):  # hat: one-ring by default
                 if c is None:
                     raise ValueError(f"{k} basis {b!r} needs connectivity[{k!r}]")
                 c = _check_connectivity(c, n_els)
@@ -2192,6 +2256,8 @@ class Mesh:
         """Number of source coefficients of one type (axis 1 of the kernels)."""
         b = self.basis[kind]
         n = len(self.elements(kind))
+        if b == "hat" and self.connectivity[kind] is None:  # one-ring: one per non-tip element
+            return len(self.elements(kind)) - len(self.tip_elements(kind))
         if b in _PATCH_BASES:
             return len(self.connectivity[kind])
         return n if b == "constant" else n * _NODES[kind]
@@ -2354,7 +2420,7 @@ def get_kernels(x_obs, y_obs, mesh, *, geometry, mu, nu=None, use_numba=False):
         U, S, info = _source_kernels(
             k, x_obs, y_obs, sub, geometry, mu, nu, mesh.basis[k], conn, use_numba
         )
-        if mesh.basis[k] not in _PATCH_BASES:
+        if mesh.basis[k] not in _PATCH_BASES or conn is None:
             info.src_index = idx[info.src_index]  # subset -> global element index
         U_blocks.append(U)
         S_blocks.append(S)

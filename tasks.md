@@ -99,7 +99,10 @@ Square system of `2(N_s + N_f)` equations.
 
 ## 4. Issues spotted during review (verify, then fix)
 
-1. **Compliance uses the wrong Poisson ratio (bug in the notes and the code, confirmed).**
+1. ~~**Compliance uses the wrong Poisson ratio**~~ **SOLVED and tested (2026-11-16):** `bemAssembly.plane_strain_compliance`
+   uses `nu` and inverts plane-strain Hooke's law exactly (`test_compliance_inverts_plane_strain_hooke`). For the
+   example geometry (horizontal fault and interface, shear slip) the solution is unchanged, because there the projected
+   strain does not depend on nu'. The notes still carry the plane-stress form; fix them. Original: bug in the notes and the code, confirmed.
    Notes and `compute_strains` use `nu' = nu/(1+nu)` with `C^-1 = 1/(2mu) [[1-nu', -nu'],[-nu', 1-nu']]`.
    Inverting the plane-strain Hooke's law above gives `eps_kk = (1-2nu) sigma_kk/(2mu)` and
    `eps_xx = (1/(2mu)) [(1-nu) sigma_xx - nu sigma_yy]`, i.e. `nu' = nu`. The `nu/(1+nu)` form is the plane-*stress*
@@ -115,7 +118,11 @@ Square system of `2(N_s + N_f)` equations.
 3. **Definition of `alpha` at a sharp interface.** `alpha = mu_,n/mu` is a delta function at a jump.
    The code takes `alpha_force` as an input. Write down how it relates to `(mu1, mu2)` (and which
    side of `psi` multiplies it) and add a helper to compute it.
-4. **`'s'` rows differ from the notes.** Notes say `I s = s_given`. Code evaluates slip as a displacement
+4. ~~**`'s'` rows differ from the notes**~~ **SOLVED and tested:** the `'s'` rows are now exact. They are slip at the
+   collocation centre, computed from the hat basis (centre row of the local slip node matrix times `T`), instead of a
+   +-1e-9 displacement jump. They are not the identity in general, because neighbouring hats are non-zero at each
+   other's centres; one-ring hats are cardinal only for their own centre (`test_each_hat_has_unit_slip_at_its_own_centre`).
+   Test: `test_alpha_zero_gives_no_force_and_the_prescribed_slip`. Original: Notes say `I s = s_given`. Code evaluates slip as a displacement
    jump across `+/-1e-9` from both slip and force kernels (force kernels are continuous so it cancels, but
    it is wasteful). Check the hat-basis DOF really equals slip at the central element, and that the `'s'` row can
    be replaced by the identity.
@@ -207,7 +214,10 @@ Square system of `2(N_s + N_f)` equations.
     triple junctions, with strength set by the angle between neighbouring elements (discrete curvature). True
     cancellation holds only for co-planar elements. This is documented in the README and in the `get_kernels`,
     `get_slip_kernels` and `element_kernels_slip` docstrings.
-17. **Triple junctions with all branches pointing into J, or all pointing out of J, crash (confirmed 2026-11-16).**
+17. ~~**Triple junctions with all branches in or all out crash**~~ **SOLVED and tested:** `label_nodes` raises a
+    `ValueError` naming the junction, its elements and their orientation, and says to reverse one branch and flip its BC
+    signs (`test_unsupported_triple_junction_orientation_is_rejected`; good orientations still give full-rank rows).
+    Original: crash, confirmed 2026-11-16.
     `label_nodes` assigns the junction signs only when 1 element ends at J and 2 start there, or the reverse. With all 3
     starting at J or all 3 ending there, the junction gets no negative sign, and `construct_smoothoperator` fails with
     `ValueError: could not broadcast input array from shape (0,36)`. Tested on a 120-degree star:
@@ -358,24 +368,34 @@ Square system of `2(N_s + N_f)` equations.
 - [x] Remove `examples/antiplane/GF.py` (issue 12). It was removed with the antiplane examples that used it.
 
 ### T1. Correctness of plane-strain heterogeneous solver
-- [ ] Fix issue 4.1 (compliance) and re-run `testing_HeterogeneousMaterialsPlanestrain.py`.
+- [x] Fix issue 4.1 (compliance) and re-run `testing_HeterogeneousMaterialsPlanestrain.py` (runs; same solution, see issue 1).
 - [ ] Resolve 4.2 and 4.3 (side of evaluation, definition and helper for `alpha`).
 - [x] Fix 4.5 so the test script runs end to end.
-- [ ] Validate: (a) `alpha = 0` must reproduce the homogeneous hat-slip solution; (b) the antiplane
+- [ ] Validate: ~~(a) `alpha = 0` must reproduce the homogeneous hat-slip solution~~ (done:
+  `tests/test_heterogeneous.py` also checks that the `'h'` and `'t'` rows hold for the solved fields); (b) the antiplane
   limit; (c) a circular/layered inclusion with a known analytic solution, or an independent FEM result;
   (d) symmetry `mu1 <-> mu2` with sign-flipped `alpha`; (e) traction continuity across the interface.
-- [ ] Add a `'t'`-row test (prescribed projected strain).
+- [x] Add a `'t'`-row test (prescribed projected strain): `test_t_rows_prescribe_the_projected_strain`.
 - [x] Verify the trapezoidal-force kernels in isolation (issue 4.6; see the issue for the tests).
 
 ### T2. Package integration
-- [ ] Move `solve_planestrain_heterogeneous` into `bemcs/bemAssembly.py` (mirroring `solveAntiplaneBEM`).
+- [x] Move `solve_planestrain_heterogeneous` into `bemcs/bemAssembly.py` (mirroring `solveAntiplaneBEM`). It uses the new
+  kernel API, has exact `'s'` rows, and prints the condition number only when `verbose=True`.
 - [ ] Build the mesh/connectivity interface (CSV: `x1,z1,x2,z2,BC_type,value`, `'h'` rows carry `alpha` or `(mu1, mu2)`).
 - [ ] Support multiple patches, and patches that share nodes (junctions between slip and interface elements).
-- [ ] Replace the 3-element hat builder with one-ring hats (section 7.4): one hat per non-tip element, built from
-  mesh topology, covering triple junctions. Tips are clamped (tip elements get no hat and no BC row). No extra
-  continuity rows are needed, since each hat satisfies them.
+- [x] One-ring hats (section 7.4), 2026-11-16:
+  - **API:** `basis="hat"` *without* connectivity builds one hat per non-tip element from the mesh topology
+    (`one_ring_hat_coefficients`, `hat_elements`), at level 2 and in `Mesh`. An explicit 3-element connectivity still
+    works, and equals the one-ring hat of the middle element on a straight run.
+  - **Tests** (`tests/test_one_ring_hats.py`) on a straight fault, a 30-degree kink, a splay (1 in / 2 out) and a Y
+    (2 in / 1 out), in both geometries:
+    - equal to 3-element hats on a straight run;
+    - number of hats = dim null(A); `A T = 0`; `rank T` full;
+    - unit slip at their own centre;
+    - the reduced solve equals the general solve;
+    - a splay hat spans both main-fault elements at J.
 - [x] Remove the duplicated functions (issue 4.7) and decide on the public API in `__init__.py` (stage 3).
-- [ ] Reject unsupported triple-junction orientations (issue 17) in `label_nodes` (and so in
+- [x] Reject unsupported triple-junction orientations (issue 17) in `label_nodes` (and so in
   `mesh.continuity_operator()`). If all 3 elements at a junction start there or all 3 end there, raise a `ValueError`
   that names the junction coordinates and the 3 element indices, with their orientation (start/end at J). It should say
   that one branch must be reversed, and that its BC values change sign with it. Add a test for both bad cases, and
