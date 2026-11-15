@@ -177,6 +177,14 @@ Square system of `2(N_s + N_f)` equations.
     triple junctions, with strength set by the angle between neighbouring elements (discrete curvature). True
     cancellation holds only for co-planar elements. This is documented in the README and in the `get_kernels`,
     `get_slip_kernels` and `element_kernels_slip` docstrings.
+17. **Triple junctions with all branches pointing into J, or all pointing out of J, crash (confirmed 2026-11-16).**
+    `label_nodes` assigns the junction signs only when 1 element ends at J and 2 start there, or the reverse. With all 3
+    starting at J or all 3 ending there, the junction gets no negative sign, and `construct_smoothoperator` fails with
+    `ValueError: could not broadcast input array from shape (0,36)`. Tested on a 120-degree star:
+    1-in/2-out and 2-in/1-out both give 24 full-rank rows; all-in and all-out both crash.
+    **Decision:** do not handle these orientations. Element orientation is the user's input. Reversing a branch also
+    flips its shear/normal sign convention, so its BC values must change with it, and the user should make that choice.
+    Reject such meshes with a clear error instead (task in T2).
 
 ---
 
@@ -275,9 +283,15 @@ Square system of `2(N_s + N_f)` equations.
 - [ ] Move `solve_planestrain_heterogeneous` into `bemcs/bemAssembly.py` (mirroring `solveAntiplaneBEM`).
 - [ ] Build the mesh/connectivity interface (CSV: `x1,z1,x2,z2,BC_type,value`, `'h'` rows carry `alpha` or `(mu1, mu2)`).
 - [ ] Support multiple patches, and patches that share nodes (junctions between slip and interface elements).
-- [ ] Replace the 3-element hat builder with one-ring hats (section 7.4): one hat per element, built from mesh
-  topology, covering tips and triple junctions. No extra continuity rows are needed, since each hat satisfies them.
+- [ ] Replace the 3-element hat builder with one-ring hats (section 7.4): one hat per non-tip element, built from
+  mesh topology, covering triple junctions. Tips are clamped (tip elements get no hat and no BC row). No extra
+  continuity rows are needed, since each hat satisfies them.
 - [ ] Remove the duplicated functions (issue 4.7) and decide on the public API in `__init__.py`.
+- [ ] Reject unsupported triple-junction orientations (issue 17) in `label_nodes` (and so in
+  `mesh.continuity_operator()`). If all 3 elements at a junction start there or all 3 end there, raise a `ValueError`
+  that names the junction coordinates and the 3 element indices, with their orientation (start/end at J). It should say
+  that one branch must be reversed, and that its BC values change sign with it. Add a test for both bad cases, and
+  check that 1-in/2-out and 2-in/1-out still pass.
 
 ### T3. Tests and docs
 - [ ] Extend `tests/` with the validation cases from T1.
@@ -424,13 +438,16 @@ The same element kernels support both. They differ only in where the continuity 
 
 | | general (element DOFs) | reduced (patch bases) |
 | --- | --- | --- |
-| unknowns | element coefficients `c`: plane strain 6N (slip), 4N (force) | patch amplitudes `a`: 2N |
+| unknowns | element coefficients `c`: plane strain 6N (slip), 4N (force) | patch amplitudes `a`: 2(N - N_tip) for slip |
 | continuity | explicit rows `A c = 0` stacked under the BC rows | built in: `c = T a` with `A T = 0` |
 | triple junctions | handled by `A` | one-ring hats (below) |
 
 Continuity rules (`mesh.continuity_operator()`, built on `label_nodes`):
 - **Slip** (as in today's `construct_smoothoperator`):
-  - open nodes: slip value (2 rows);
+  - open nodes (fault tips): **clamped**, slip = 0 and slip gradient = 0 (4 rows). Decided 2026-11-16: no singular
+    crack tips. A tip element is a taper element: it gets no hat and no BC/collocation row, in either form, so a fault
+    should extend one element past the region where BCs matter. (Today's `construct_smoothoperator` imposes slip only,
+    2 rows; change it.)
   - overlap nodes: continuity of slip and slip gradient (4 rows);
   - triple junctions: slip kinematics and gradient (6 rows).
 - **Force:**
@@ -442,14 +459,14 @@ Continuity rules (`mesh.continuity_operator()`, built on `label_nodes`):
 - **One-ring hats** (reduced form for slip; verified in section 8.3). One hat per element and slip component:
   - support: the element plus every element sharing one of its end nodes (2 neighbours at a triple junction);
   - inside the support: the slip continuity rules above (overlap 4 rows, triple junction 6 rows);
-  - patch-boundary nodes: slip = 0 and gradient = 0, except a real fault tip of the central element itself, which gets
-    slip = 0 only;
+  - patch-boundary nodes, including fault tips: slip = 0 and gradient = 0;
+  - tip elements get no hat (clamped tips, above);
   - normalisation: unit shear or normal slip, local frame, at the element centre.
 
-  Every patch system is square (including at junctions and tips). The hats span exactly the null space of `A`, so the
-  reduced form gives the same solution as the general form with 2N unknowns. On a straight run of elements they
-  equal today's 3-element hats. Unlike today's hats, they also cover tip elements, so a fault with tips no longer
-  loses 2 DOF per component.
+  Every patch system is square, including at triple junctions of any angle (section 8.3). With clamped tips in both
+  forms, the hats span exactly the null space of `A`, so the reduced form gives the same solution as the general
+  form, with 2(N - N_tip) unknowns. On a straight run of elements they equal today's 3-element hats; the new part
+  is the patch that crosses a triple junction.
 
 ### 7.5 Implementation notes and stages
 
@@ -506,11 +523,25 @@ system with constraint rows, `scipy.linalg.null_space` of the constraints (raw a
   interface, `dr`-shifted points at nodes, and fine plotting grids.
 - Not done: an independent check of the formula itself against quadrature of the point-dislocation solution.
 
-### 8.3 One-ring hats at triple junctions and fault tips (rule in section 7.4)
+### 8.3 One-ring hats at triple junctions (rule in section 7.4)
+The first tests below used free-slope tip hats, since replaced by clamped tips. Re-checked with clamped tips (tip
+elements get no hat or BC row; open nodes get slip and gradient rows) on a straight fault and all 7 junction
+geometries: the number of hats equals the null-space dimension (20 and 18), rank[Z, H] is full, |A H| <= 2e-15,
+cond(C H) = 1.87-1.94, and slip matches the general form to 1.5e-12 or better.
 - Every patch system is square, condition number 33-48, including at the junction.
 - Junction mesh: rank[Z, hats] = 2N, so the hats span exactly the constrained space.
 - cond(C · hats) ~ 2, and the end-to-end slip matches the full 6N solve.
 - Interior hats match `compute_coefs_quadratichatslip_planestrain` to 1e-16.
+- Junction angles tested: flat + 30-degree splay, symmetric 120, T (90), Y, random (200, 17, 101), and a splay 5 degrees
+  off either main branch. All square and full rank, with cond(C · hats) 1.94-1.98, and slip matching the full 6N
+  solve to 2e-12 or better. The worst patch cond is 141 (5-degree cases).
+- Shape: the hat of a splay element next to J peaks at J (1.14) and puts equal and opposite slip on the two other
+  branches (slip conservation). The hat of a main-fault element passes straight through J.
+- System cond, traction BCs at centres (constant / hat / full 6N row-scaled). 2N: 11 / 8 / 90 on a straight fault,
+  11 / 7.5 / 80 at 120 degrees, 920 / 1.5e4 / 1.1e5 for a 5-degree splay. Shear only (N): hats 6-8 everywhere vs
+  constant 8-11; for the 5-degree splay, 39 vs 130. The 5-degree 2N case is a real near-null mode: equal and opposite
+  opening on the two nearly parallel branches, i.e. the thin wedge between them sliding as a block. Forbidding
+  opening removes it.
 
 Where these findings now live: issue 16 (kernel precision); TA task "Fix near-endpoint precision"; section 7.2 hat row
 and section 7.4 (one-ring hats replace "not available" for triple junctions, and the earlier T4 idea of mixing both
