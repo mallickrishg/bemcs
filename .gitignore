@@ -26,3 +26,8 @@ runs/
 examples/antiplane/solene/*
 *.csv
 heterogeneous_theory.md
+
+# personal scratch work, not part of the package
+notebooks/
+point_source/
+examples/hrf/
