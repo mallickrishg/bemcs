@@ -157,13 +157,16 @@ Square system of `2(N_s + N_f)` equations.
     displacement) jumps across an element. The old kernels returned one side or the other, decided by the sign of a
     ~1e-17 rounding error in the local y. Plane-strain kernels now treat |y_local| <= 1e-12 (a + |xi|) as on the
     element and return the mean of the two sides: exactly for slip (y = 0), and by evaluating at y = +-1e-300 for
-    force. To get one side, offset the point explicitly (as the solvers do with `dr`). The antiplane kernels still
-    use the old behaviour; apply the same convention there.
+    force. To get one side, offset the point explicitly (as the solvers do with `dr`). Antiplane slip and force
+    follow the same convention (two-sided average via y = +-1e-300) since the near-field work below.
 19. **Force-element collocation count (open question for T1).** Linear force with continuity rows (open ends
     force = 0, overlaps continuous) plus one collocation row per element and direction over-determines an open chain
     by 2 rows per direction. A closed loop is square. Options: collocate at interior nodes instead of element centres
     (square for chains and loops; the nodal "tent" functions are then the force analogue of slip hats), or keep
     trapezoids (1 DOF per 3-element patch). Decide before building the general-form `'h'` rows.
+    **Decided 2026-11-16: force uses trapezoids only.** There is no general-form force solve:
+    `Mesh.continuity_operator` raises for basis "linear" force. Linear force remains the element kernel that
+    trapezoids are built from, and `continuity_rows(kind="force")` is kept to check that trapezoids are continuous.
 16. **Quadratic slip kernel loses float64 precision near every element endpoint (confirmed, section 8.2).**
     `quadratic_kernel_farfield` (via `displacements_stresses_quadratic_no_rotation`) vs the same formula at 50 digits:
     relative error 1e-11 at d = 1e-2 L, 1e-7 at 1e-3 L, 2e-4 at 1e-4 L, O(1) at d <= 1e-5 L, and NaN directly above
@@ -294,6 +297,26 @@ Square system of `2(N_s + N_f)` equations.
   Apply the same pattern to the antiplane kernels if it helps.
 - [ ] Add reference tests for the remaining kernels: slip (plane strain and antiplane, constant and quadratic),
   antiplane force, triangle forces, hat-slip and trapezoid-force patches.
+- [x] Near-field tests of the singularity-free patch bases (`tests/test_near_field.py`, 2026-11-16):
+  - **Setup:**
+    - hat slip and trapezoid force, in plane strain and antiplane, on a straight and a 30-degree kinked fault;
+    - approach every node of the patch support from 4 directions (one grazing the line, 0.1 degree off), down to
+      1e-8 L, against the same formulas in 50-digit mpmath.
+  - **Asserts:**
+    - straight fault: the exact stress is bounded and converges;
+    - float64 matches the exact value to `1e-12 + 2e-15/d`, on both meshes;
+    - kink node: log-singular (constant stress increment per decade) and still resolved in float64; other nodes
+      bounded;
+    - controls: a lone quadratic node basis grows like 1/d and a lone force ramp like log d.
+  - **Mutation check:** swapping the original plane-strain closed form back in fails with 2e7 to 2e8 relative errors.
+  - **Antiplane fix needed for these tests to pass:**
+    - The antiplane slip formula had the same problem as the old plane-strain one: 3e6 error at 1e-8 L. It is now
+      generated, expanded about the +w endpoint only (s = 1). Points nearer -w use the mirror symmetry: swap shape
+      functions 1 and 3 and negate the x-derivatives, verified to 6e-16.
+    - Keeping s symbolic left split terms such as `s w/R - w/R` that cancel catastrophically.
+    - The antiplane force formula was extracted unchanged into `_antiplane_force_point` with numpy/numba drivers.
+      It was already accurate near endpoints.
+    - Antiplane drivers compile in about 1 s; numba vs numpy 2e-16; examples unchanged (<= 3e-11).
 - [x] Fix near-endpoint precision of the quadratic slip kernel (issue 16): endpoint rewrite, see issue 16. Remaining,
   optional: the curvature form (section 8.4) to go below the ~1e-16 L/d float64 floor, and a check of the slip formula
   itself against quadrature of the point-dislocation solution. Previous status: mostly done: factored `R` gives
@@ -485,7 +508,7 @@ Continuity rules (`mesh.continuity_operator()`, built on `label_nodes`):
     2 rows; change it.)
   - overlap nodes: continuity of slip and slip gradient (4 rows);
   - triple junctions: slip kinematics and gradient (6 rows).
-- **Force:**
+- **Force:** solved with **trapezoids only** (decided 2026-11-16, issue 19). They satisfy these rules by construction:
   - overlap nodes: force continuous;
   - open ends: force tapers to 0;
   - force elements never form triple junctions (raise if found).

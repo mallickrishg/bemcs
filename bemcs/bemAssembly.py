@@ -2763,112 +2763,102 @@ def _force_planestrain_numpy(x_obs, y_obs, x_centers, y_centers, half_lengths, r
 
 
 @njit(cache=True, error_model="numpy")
-def _antiplane_slip_point(x, y, w):
-    """Quadratic antiplane slip at local (x, y) of an element with half-length w:
-    displacement (u1, u2, u3) and displacement gradients (ux1..3, uy1..3) of the
-    3 nodal shape functions (stress = mu * gradient). Scalars or arrays."""
-    pi = np.pi
-    # local Green’s function computations
-    log1 = np.log((w - x) ** 2 + y**2)
-    log2 = np.log((w + x) ** 2 + y**2)
-    atan1 = np.arctan((w - x) / y)
-    atan2 = np.arctan((w + x) / y)
-
-    w2 = w**2
-    w3 = w**3
-    u1 = (3 / (16 * w2 * pi)) * (
-        6 * w * y
-        + ((-2) * w * x + 3 * (x - y) * (x + y)) * (atan1 + atan2)
-        + (w - 3 * x) * y * (-log1 + log2)
-    )
-
-    u2 = (1 / (8 * w2 * pi)) * (
-        (-18) * w * y
-        + (4 * w2 + 9 * y**2) * atan1
-        + 9 * x**2 * np.arctan((-w + x) / y)
-        + (4 * w2 - 9 * x**2 + 9 * y**2) * atan2
-        + 9 * x * y * (-log1 + log2)
-    )
-
-    u3 = (3 / (16 * w2 * pi)) * (
-        6 * w * y
-        + (2 * w * x + 3 * (x - y) * (x + y)) * (atan1 + atan2)
-        + (w + 3 * x) * y * (log1 - log2)
-    )
-
-    # --- stress kernels (sxz, syz) ---
-    # Following your ux1, uy1... formulae but vectorized
-    ux1 = (3 / (16 * w2 * pi)) * (
-        (-2) * (w - 3 * x) * (atan1 + atan2)
-        + y
-        * (
-            w2 * ((-1) / ((w - x) ** 2 + y**2) + 5 / ((w + x) ** 2 + y**2))
-            + 3 * log1
-            - 3 * log2
-        )
-    )
-
-    uy1 = (3 / (16 * w2 * pi)) * (
-        w
-        * (
-            12
-            + w * (-w + x) / ((w - x) ** 2 + y**2)
-            - 5 * w * (w + x) / ((w + x) ** 2 + y**2)
-        )
-        - 6 * y * (atan1 + atan2)
-        - (w - 3 * x) * (log1 - log2)
-    )
-
-    ux2 = (1 / (8 * w2 * pi)) * (
-        (-18) * x * (atan1 + atan2)
-        + y
-        * (
-            20
-            * w3
-            * x
-            / ((w**4 + 2 * w2 * ((-1) * x**2 + y**2) + (x**2 + y**2) ** 2))
-            - 9 * log1
-            + 9 * log2
-        )
-    )
-
-    uy2 = (-1 / (8 * w2 * pi)) * (
-        w
-        * (
-            36
-            + 5 * w * (-w + x) / ((w - x) ** 2 + y**2)
-            - 5 * w * (w + x) / ((w + x) ** 2 + y**2)
-        )
-        - 18 * y * (atan1 + atan2)
-        + 9 * x * (log1 - log2)
-    )
-
-    ux3 = (3 / (16 * w2 * pi)) * (
-        2 * (w + 3 * x) * (atan1 + atan2)
-        + y
-        * (
-            w2 * ((-5) / ((w - x) ** 2 + y**2) + 1 / ((w + x) ** 2 + y**2))
-            + 3 * log1
-            - 3 * log2
-        )
-    )
-
-    uy3 = (3 / (16 * w2 * pi)) * (
-        w
-        * (
-            12
-            + 5 * w * (-w + x) / ((w - x) ** 2 + y**2)
-            - w * (w + x) / ((w + x) ** 2 + y**2)
-        )
-        - 6 * y * (atan1 + atan2)
-        + (w + 3 * x) * (log1 - log2)
-    )
-
+def _antiplane_slip_point(xi, y, w):
+    """Quadratic antiplane slip at local x = w + xi (relative to the +w endpoint), y:\n    displacement (u1, u2, u3) and displacement gradients (ux1..3, uy1..3) of the 3\n    nodal shape functions (stress = mu * gradient). Scalars or arrays. Generated with\n    sympy from the original closed form, expanded about x = w. For points nearer\n    x = -w use the mirror symmetry (see _antiplane_slip_mirrored)."""
+    wm = -xi  # w - x, exact near the endpoint x = w
+    wp = 2 * w + xi  # w + x
+    R1 = wm**2 + y**2
+    R2 = wp**2 + y**2
+    L1 = np.log(R1)
+    L2 = np.log(R2)
+    A1 = np.arctan(wm / y)
+    A2 = np.arctan(wp / y)
+    x0 = 1/w
+    x1 = x0*y
+    x2 = 2*x1
+    x3 = 4*x0
+    x4 = A1*x3
+    x5 = A2*x3
+    x6 = y**2
+    x7 = w**2
+    x8 = 1/x7
+    x9 = 3*x8
+    x10 = x6*x9
+    x11 = xi**2
+    x12 = x11*x9
+    x13 = x9*y
+    x14 = L2*x13
+    x15 = L1*x13
+    x16 = -A1*x10 + A1*x12 - A2*x10 + A2*x12 + 6*x1 - x14*xi + x15*xi
+    x17 = 1/np.pi
+    x18 = (3/16)*x17
+    x19 = 9*x8
+    x20 = x11*x19
+    x21 = 18*x0
+    x22 = A1*x21
+    x23 = A2*x21
+    x24 = L1*x19*y
+    x25 = 5*A1 + 5*A2
+    x26 = (1/8)*x17
+    x27 = 4*x1
+    x28 = 8*x0
+    x29 = A1*x28
+    x30 = A2*x28
+    x31 = 1/R1
+    x32 = x31*y
+    x33 = 1/R2
+    x34 = x33*y
+    x35 = x8*xi
+    x36 = 6*x35
+    x37 = A1*x36 + A2*x36 - x14 + x15
+    x38 = 18*x35
+    x39 = x33*xi
+    x40 = w*x33
+    x41 = 5*x39 + 10*x40
+    x42 = x8*y
+    x43 = 6*x42
+    x44 = A1*x43 + A2*x43 - 3*L1*x8*xi + L2*x9*xi - 12*x0
+    x45 = 9*x0
+    x46 = -5*x31*xi
+    x47 = x19*xi
+    x48 = 18*x42
+    u1 = x18*(A1 + A2 + L1*x2 - L2*x2 + x16 + x4*xi + x5*xi)
+    u2 = x26*(-A1*x20 + 9*A1*x6*x8 - A2*x20 + 9*A2*x6*x8 - 9*L1*x1 + 9*L2*x0*y + 9*L2*x8*xi*y - 18*x1 - x22*xi - x23*xi - x24*xi - x25)
+    u3 = x18*(L1*x27 - L2*x27 + x16 + x25 + x29*xi + x30*xi)
+    ux1 = x18*(-x32 + 5*x34 + x37 + x4 + x5)
+    ux2 = x26*(-A1*x38 - A2*x38 + 9*L2*x8*y + 20*w*x31*x33*xi*y - x22 - x23 - x24 + 20*x31*x33*x7*y)
+    ux3 = x18*(x29 + x30 - 5*x32 + x34 + x37)
+    uy1 = x18*(2*L1*x0 - 2*L2*x0 + x31*xi - x41 - x44)
+    uy2 = x26*(A1*x48 + A2*x48 - L1*x45 - L1*x47 + L2*x45 + L2*x47 - 36*x0 + x41 + x46)
+    uy3 = x18*(4*L1*x0 - L2*x3 - x39 - 2*x40 - x44 - x46)
     return u1, u2, u3, ux1, ux2, ux3, uy1, uy2, uy3
 
 
+# Antiplane: the formula is expanded about x = +w only. A point nearer x = -w is
+# evaluated at the mirror image (-x, y), with shape functions 1 and 3 swapped and
+# the x-derivatives negated (exact symmetry of the element). xi is then measured
+# from the start node: x = -w + xi, mirror xi' = -xi.
+_MIRROR = np.array([2, 1, 0, 5, 4, 3, 8, 7, 6])
+_MIRROR_SIGN = np.array([1.0, 1.0, 1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0])
+
+
+@njit(cache=True, error_model="numpy")
+def _antiplane_slip_values(xi, y, w, s):
+    """The 9 outputs of _antiplane_slip_point at x = s w + xi (s = +-1), scalars."""
+    v = _antiplane_slip_point(s * xi, y, w)
+    out = np.empty(9)
+    for k in range(9):
+        if s > 0:
+            out[k] = v[k]
+        else:
+            out[k] = _MIRROR_SIGN[k] * v[_MIRROR[k]]
+    return out
+
+
 @njit(parallel=True, cache=True, error_model="numpy")
-def _slip_antiplane_numba(x_obs, y_obs, x_centers, y_centers, half_lengths, rot_mats, mu):
+def _slip_antiplane_numba(
+    x_obs, y_obs, x_centers, y_centers, x1, y1, x2, y2, half_lengths, rot_mats, mu
+):
     """Quadratic slip, antiplane: U (n_obs, 3 n_els, 1), S (n_obs, 3 n_els, 2)."""
     n_obs = x_obs.shape[0]
     n_els = x_centers.shape[0]
@@ -2877,11 +2867,21 @@ def _slip_antiplane_numba(x_obs, y_obs, x_centers, y_centers, half_lengths, rot_
     for i in prange(n_obs):
         for e in range(n_els):
             R = rot_mats[e]
-            dx = x_obs[i] - x_centers[e]
-            dy = y_obs[i] - y_centers[e]
-            x = R[0, 0] * dx + R[1, 0] * dy
+            w = half_lengths[e]
+            # nearest endpoint (x = s w); local coordinates relative to it
+            xc = R[0, 0] * (x_obs[i] - x_centers[e]) + R[1, 0] * (y_obs[i] - y_centers[e])
+            s = 1.0 if xc >= 0 else -1.0
+            dx = x_obs[i] - (x2[e] if s > 0 else x1[e])
+            dy = y_obs[i] - (y2[e] if s > 0 else y1[e])
+            xi = R[0, 0] * dx + R[1, 0] * dy
             y = R[0, 1] * dx + R[1, 1] * dy
-            v = _antiplane_slip_point(x, y, half_lengths[e])
+            if abs(y) <= _ON_ELEMENT * (w + abs(xi)):  # on the element: two-sided average
+                v = 0.5 * (
+                    _antiplane_slip_values(xi, _TINY, w, s)
+                    + _antiplane_slip_values(xi, -_TINY, w, s)
+                )
+            else:
+                v = _antiplane_slip_values(xi, y, w, s)
             for k in range(3):
                 gx = mu * v[3 + k]
                 gy = mu * v[6 + k]
@@ -2891,23 +2891,188 @@ def _slip_antiplane_numba(x_obs, y_obs, x_centers, y_centers, half_lengths, rot_
     return U, S
 
 
-def _slip_antiplane_numpy(x_obs, y_obs, x_centers, y_centers, half_lengths, rot_mats, mu):
+def _slip_antiplane_numpy(
+    x_obs, y_obs, x_centers, y_centers, x1, y1, x2, y2, half_lengths, rot_mats, mu
+):
     """Same as _slip_antiplane_numba, vectorized over observation points."""
     n_obs, n_els = x_obs.shape[0], x_centers.shape[0]
     U = np.zeros((n_obs, 3 * n_els, 1))
     S = np.zeros((n_obs, 3 * n_els, 2))
+    f = _antiplane_slip_point.py_func
     with np.errstate(divide="ignore", invalid="ignore"):
         for e in range(n_els):
             R = rot_mats[e]
-            dx, dy = x_obs - x_centers[e], y_obs - y_centers[e]
-            x = R[0, 0] * dx + R[1, 0] * dy
+            w = half_lengths[e]
+            xc = R[0, 0] * (x_obs - x_centers[e]) + R[1, 0] * (y_obs - y_centers[e])
+            s = np.where(xc >= 0, 1.0, -1.0)
+            dx = x_obs - np.where(s > 0, x2[e], x1[e])
+            dy = y_obs - np.where(s > 0, y2[e], y1[e])
+            xi = R[0, 0] * dx + R[1, 0] * dy
             y = R[0, 1] * dx + R[1, 1] * dy
-            v = _antiplane_slip_point.py_func(x, y, half_lengths[e])
+            on = np.abs(y) <= _ON_ELEMENT * (w + np.abs(xi))
+            neg = s < 0
+
+            def values(yy):
+                v = np.array(f(s * xi, yy, w))  # mirrored for points nearer -w
+                v[:, neg] = _MIRROR_SIGN[:, None] * v[_MIRROR][:, neg]
+                return v
+
+            v = values(np.where(on, _TINY, y))
+            if on.any():  # on the element: two-sided average
+                v[:, on] = 0.5 * (v[:, on] + values(np.where(on, -_TINY, y))[:, on])
             for k in range(3):
                 gx, gy = mu * v[3 + k], mu * v[6 + k]
                 U[:, 3 * e + k, 0] = v[k]
                 S[:, 3 * e + k, 0] = R[0, 0] * gx + R[0, 1] * gy
                 S[:, 3 * e + k, 1] = R[1, 0] * gx + R[1, 1] * gy
+    return U, S
+
+
+@njit(cache=True, error_model="numpy")
+def _antiplane_force_point(x, y, w):
+    """Linear antiplane force at local (x, y) of an element with half-length w:
+    mu * displacement (u_1, u_2) and stresses (ux_1, ux_2, uy_1, uy_2) of the 2
+    ramps (0: (w+s)/2w, 1: (w-s)/2w). Scalars or arrays. Formulas from the
+    original get_displacement_stress_kernel_force_antiplane, unchanged."""
+    # Displacement kernels (u1, u2)
+    u_1 = (
+        (1 / 16)
+        * np.pi ** (-1)
+        * w ** (-1)
+        * (
+            (-4) * w * (2 * w + x)
+            + 4 * (w + x) * y * np.arctan((w - x) / y)
+            + 4 * (w + x) * y * np.arctan((w + x) / y)
+            + ((w + (-1) * x) * (3 * w + x) + y**2)
+            * np.log((w + (-1) * x) ** 2 + y**2)
+            + (w + x + (-1) * y) * (w + x + y) * np.log((w + x) ** 2 + y**2)
+        )
+    )
+
+    u_2 = (
+        (1 / 16)
+        * np.pi ** (-1)
+        * w ** (-1)
+        * (
+            4 * w * ((-2) * w + x)
+            + 4 * (w + (-1) * x) * y * np.arctan((w - x) / y)
+            + 4 * (w + (-1) * x) * y * np.arctan((w + x) / y)
+            + (w + (-1) * x + (-1) * y)
+            * (w + (-1) * x + y)
+            * np.log((w + (-1) * x) ** 2 + y**2)
+            + ((3 * w + (-1) * x) * (w + x) + y**2) * np.log((w + x) ** 2 + y**2)
+        )
+    )
+
+    ux_1 = (
+        (1 / 8)
+        * np.pi ** (-1)
+        * w ** (-1)
+        * (
+            (-4) * w
+            + 2 * y * (np.arctan((w - x) / y) + np.arctan((w + x) / y))
+            + (-1) * (w + x) * np.log((w + (-1) * x) ** 2 + y**2)
+            + (w + x) * np.log((w + x) ** 2 + y**2)
+        )
+    )
+
+    ux_2 = (
+        (-1 / 8)
+        * np.pi ** (-1)
+        * w ** (-1)
+        * (
+            (-4) * w
+            + 2 * y * (np.arctan((w - x) / y) + np.arctan((w + x) / y))
+            + (w + (-1) * x)
+            * (
+                np.log((w + (-1) * x) ** 2 + y**2)
+                + (-1) * np.log((w + x) ** 2 + y**2)
+            )
+        )
+    )
+
+    uy_1 = (
+        (1 / 8)
+        * np.pi ** (-1)
+        * w ** (-1)
+        * (
+            2 * (w + x) * (np.arctan((w - x) / y) + np.arctan((w + x) / y))
+            + y
+            * (
+                np.log((w + (-1) * x) ** 2 + y**2)
+                + (-1) * np.log((w + x) ** 2 + y**2)
+            )
+        )
+    )
+
+    uy_2 = (
+        (1 / 8)
+        * np.pi ** (-1)
+        * w ** (-1)
+        * (
+            2 * (w + (-1) * x) * (np.arctan((w - x) / y) + np.arctan((w + x) / y))
+            + y
+            * (
+                (-1) * np.log((w + (-1) * x) ** 2 + y**2)
+                + np.log((w + x) ** 2 + y**2)
+            )
+        )
+    )
+
+    return u_1, u_2, ux_1, ux_2, uy_1, uy_2
+
+
+@njit(parallel=True, cache=True, error_model="numpy")
+def _force_antiplane_numba(x_obs, y_obs, x_centers, y_centers, half_lengths, rot_mats, mu):
+    """Linear force, antiplane: U (n_obs, 2 n_els, 1), S (n_obs, 2 n_els, 2)."""
+    n_obs = x_obs.shape[0]
+    n_els = x_centers.shape[0]
+    U = np.zeros((n_obs, 2 * n_els, 1))
+    S = np.zeros((n_obs, 2 * n_els, 2))
+    for i in prange(n_obs):
+        for e in range(n_els):
+            R = rot_mats[e]
+            w = half_lengths[e]
+            dx = x_obs[i] - x_centers[e]
+            dy = y_obs[i] - y_centers[e]
+            x = R[0, 0] * dx + R[1, 0] * dy
+            y = R[0, 1] * dx + R[1, 1] * dy
+            if abs(y) <= _ON_ELEMENT * (w + abs(x)):  # on the element: two-sided average
+                vp = _antiplane_force_point(x, _TINY, w)
+                vm = _antiplane_force_point(x, -_TINY, w)
+                v = [0.5 * (vp[k] + vm[k]) for k in range(6)]
+            else:
+                vt = _antiplane_force_point(x, y, w)
+                v = [vt[k] for k in range(6)]
+            for r in range(2):
+                U[i, 2 * e + r, 0] = v[r] / mu
+                S[i, 2 * e + r, 0] = R[0, 0] * v[2 + r] + R[0, 1] * v[4 + r]
+                S[i, 2 * e + r, 1] = R[1, 0] * v[2 + r] + R[1, 1] * v[4 + r]
+    return U, S
+
+
+def _force_antiplane_numpy(x_obs, y_obs, x_centers, y_centers, half_lengths, rot_mats, mu):
+    """Same as _force_antiplane_numba, vectorized over observation points."""
+    n_obs, n_els = x_obs.shape[0], x_centers.shape[0]
+    U = np.zeros((n_obs, 2 * n_els, 1))
+    S = np.zeros((n_obs, 2 * n_els, 2))
+    f = _antiplane_force_point.py_func
+    with np.errstate(divide="ignore", invalid="ignore"):
+        for e in range(n_els):
+            R = rot_mats[e]
+            w = half_lengths[e]
+            dx, dy = x_obs - x_centers[e], y_obs - y_centers[e]
+            x = R[0, 0] * dx + R[1, 0] * dy
+            y = R[0, 1] * dx + R[1, 1] * dy
+            on = np.abs(y) <= _ON_ELEMENT * (w + np.abs(x))
+            v = np.array(np.broadcast_arrays(*f(x, np.where(on, _TINY, y), w)))
+            if on.any():  # on the element: two-sided average
+                vm = np.array(np.broadcast_arrays(*f(x, np.where(on, -_TINY, y), w)))
+                v[:, on] = 0.5 * (v[:, on] + vm[:, on])
+            for r in range(2):
+                U[:, 2 * e + r, 0] = v[r] / mu
+                S[:, 2 * e + r, 0] = R[0, 0] * v[2 + r] + R[0, 1] * v[4 + r]
+                S[:, 2 * e + r, 1] = R[1, 0] * v[2 + r] + R[1, 1] * v[4 + r]
     return U, S
 
 
@@ -3083,7 +3248,8 @@ def element_kernels_slip(x_obs, y_obs, els, *, geometry, mu, nu=None, use_numba=
     if geometry == "antiplane":
         driver = _slip_antiplane_numba if use_numba else _slip_antiplane_numpy
         xc, yc, hl, rot, _ = _els_arrays(els)
-        return driver(xo, yo, xc, yc, hl, rot, float(mu))
+        x1, y1, x2, y2 = (np.ascontiguousarray(getattr(els, k), dtype=float) for k in ("x1", "y1", "x2", "y2"))
+        return driver(xo, yo, xc, yc, x1, y1, x2, y2, hl, rot, float(mu))
     driver = _slip_planestrain_numba if use_numba else _slip_planestrain_numpy
     xc, yc, hl, rot, _ = _els_arrays(els)
     x1, y1, x2, y2 = (np.ascontiguousarray(getattr(els, k), dtype=float) for k in ("x1", "y1", "x2", "y2"))
@@ -3099,13 +3265,9 @@ def element_kernels_force(x_obs, y_obs, els, *, geometry, mu, nu=None, use_numba
     xo, yo = _obs(x_obs, y_obs)
     n_obs = len(xo)
     if geometry == "antiplane":
-        f = _backend(get_displacement_stress_kernel_force_antiplane, use_numba)
-        sxz, syz, u = f(xo, yo, *_els_arrays(els), float(mu))  # (n_obs, ramp, n_els)
-
-        def r(K):
-            return K.transpose(0, 2, 1).reshape(n_obs, -1)
-
-        return r(u)[:, :, None], np.stack((r(sxz), r(syz)), axis=2)
+        driver = _force_antiplane_numba if use_numba else _force_antiplane_numpy
+        xc, yc, hl, rot, _ = _els_arrays(els)
+        return driver(xo, yo, xc, yc, hl, rot, float(mu))
     driver = _force_planestrain_numba if use_numba else _force_planestrain_numpy
     xc, yc, hl, rot, _ = _els_arrays(els)
     return driver(xo, yo, xc, yc, hl, rot, float(mu), float(nu))
@@ -3291,7 +3453,8 @@ def continuity_rows(els, *, kind, geometry):
     An element with an open node is a taper (tip) element and should get no
     boundary-condition row (see `tip_elements`). kind="force" (linear): open nodes:
     force = 0; overlapping nodes: force continuity; triple junctions are an
-    error. Rows act on global-frame quantities. Returns (A, info) where info
+    error. Force is solved with trapezoids only; the force rows serve to check
+    that trapezoids are continuous (A T = 0). Rows act on global-frame quantities. Returns (A, info) where info
     holds per-row arrays: node_type, quantity, node (label_nodes index), x, y.
     """
     index_open, index_overlap, index_triple = _core.label_nodes(els, verbose=False)
@@ -3726,11 +3889,12 @@ class Mesh:
     def continuity_operator(self, *, geometry):
         """Continuity rows A (A x = 0, or = prescribed values at open nodes) for the mesh.
 
-        Rows are produced for source types with an element basis ("quadratic" slip,
-        "linear" force); patch bases satisfy continuity by construction and the
-        constant bases have none. Each type is labelled on its own elements, so a
-        node shared by a slip and a force element is an open node of both
-        (tasks.md 7.4). Returns (A, info), A of shape (n_rows, n_columns); info
+        Rows are produced for quadratic slip (the general element-DOF form). Patch
+        bases (hat, trapezoid) satisfy continuity by construction and the constant
+        bases have none, so they get no rows. Force sources use the trapezoid basis
+        (decided 2026-11-16): a mesh with "linear" force raises ValueError here.
+        Each type is labelled on its own elements, so a node shared by a slip and a
+        force element is an open node of both (tasks.md 7.4). Returns (A, info), A of shape (n_rows, n_columns); info
         holds per-row arrays: kind, node_type ("open"/"overlap"/"triple"),
         quantity ("slip"/"gradient"/"force"), element, x, y.
         """
@@ -3738,6 +3902,11 @@ class Mesh:
             raise ValueError(f"geometry must be one of {_GEOMETRIES}, got {geometry!r}")
         blocks, info = [], {k: [] for k in ("kind", "node_type", "quantity", "element", "x", "y")}
         n_cols = self.n_columns(geometry=geometry)
+        if "force" in self.kinds and self.basis["force"] == "linear":
+            raise ValueError(
+                "force sources use the trapezoid basis; the general element-DOF form "
+                "(basis 'linear' with continuity rows) is not supported for force"
+            )
         for k in self.kinds:
             if self.basis[k] != _ELEMENT_BASIS[k]:
                 continue

@@ -162,18 +162,23 @@ def test_hats_and_trapezoids_satisfy_continuity(els_curved, geometry):
 @pytest.mark.parametrize("geometry", ["antiplane", "planestrain"])
 def test_mesh_continuity_operator_blocks(els_curved, geometry):
     pe = 1 if geometry == "antiplane" else 2
-    mesh = bemcs.Mesh(els_curved, ["s", "s", "f", "f"])
+    mesh = bemcs.Mesh(els_curved, ["s", "s", "f", "f"], basis={"force": "constant"})
     A, info = mesh.continuity_operator(geometry=geometry)
-    assert A.shape[1] == mesh.n_columns(geometry=geometry) == pe * (6 + 4)
-    slip_rows = info["kind"] == "s"
-    # slip rows act only on slip columns, force rows only on force columns
-    assert not A[slip_rows][:, mesh.columns("force", geometry=geometry)].any()
-    assert not A[~slip_rows][:, mesh.columns("slip", geometry=geometry)].any()
-    # the node shared by slip element 1 and force element 2 is open for both
-    shared = (np.isclose(info["x"], els_curved.x2[1])) & (np.isclose(info["y"], els_curved.y2[1]))
+    assert A.shape[1] == mesh.n_columns(geometry=geometry) == pe * (6 + 2)
+    assert set(info["kind"]) == {"s"}  # constant force: no continuity rows
+    assert not A[:, mesh.columns("force", geometry=geometry)].any()
+    # the node shared by slip element 1 and force element 2 is open (clamped) for slip
+    shared = np.isclose(info["x"], els_curved.x2[1]) & np.isclose(info["y"], els_curved.y2[1])
     assert set(info["node_type"][shared]) == {"open"}
-    assert set(info["element"][shared & slip_rows]) == {1}
-    assert set(info["element"][shared & ~slip_rows]) == {2}
+    assert set(info["quantity"][shared]) == {"slip", "gradient"}
+    assert set(info["element"][shared]) == {1}
+
+
+def test_mesh_continuity_operator_rejects_linear_force(els_curved):
+    """Force sources are solved with trapezoids only (decided 2026-11-16)."""
+    mesh = bemcs.Mesh(els_curved, ["s", "s", "f", "f"])  # default force basis: linear
+    with pytest.raises(ValueError, match="trapezoid"):
+        mesh.continuity_operator(geometry="planestrain")
 
 
 def test_mesh_continuity_operator_skips_patch_and_constant_bases(els_curved):
