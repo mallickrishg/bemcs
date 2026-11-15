@@ -9,6 +9,24 @@ Solutions to various boundary value problems in linear elasticity using quadrati
 
 >  *Developed for geophysical and tectonics modeling, with a focus on earthquake cycle deformation.*
 
+### Where singularities cancel, and where they don't
+
+Each element's stress kernel is singular at the element's end points. When slip and slip gradient are continuous
+across a node, the singular parts of neighbouring elements cancel. The effect depends on the geometry at the node:
+
+* **Co-planar elements (straight fault segments): full cancellation.** Stresses stay bounded up to and at the shared
+  node.
+* **Non-planar elements (kinks, triple junctions): a singularity remains.** The mesh is made of straight elements, so the
+  fault geometry is only C⁰: its direction jumps at every kink. Smooth slip removes the singularity due to the slip
+  field, but not the one due to the geometry. A weak (logarithmic) stress singularity remains at the node, and its
+  strength grows with the angle between neighbouring elements (the discrete curvature). Refining the mesh reduces
+  the angles and therefore the singularity, but does not remove it.
+
+The kernels are evaluated so that this cancellation also holds in floating point. Relative to the stress magnitude,
+the rounding error at a distance d from a node is about 1e-16·L/d (for element length L), so ~1e-8 even at d = 1e-8 L.
+On a kinked fault, a stress that grows as you approach a node is the geometric singularity described above, not
+numerical noise.
+
 ---
 # Getting started
 

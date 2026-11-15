@@ -2064,209 +2064,422 @@ def get_kernels_quadratichatslip_planestrain(
 # _quadratic_slip_f and _linear_force_g were generated with sympy from the
 # original closed forms (bemcs.quadratic_kernel_farfield and the inner closures
 # of get_displacement_stress_kernel_force_planestrain) by common-subexpression
-# elimination only. In addition, every (a -/+ x)^2 + y^2 is evaluated in that
-# factored form (R, inside logs and denominators) instead of the expanded
-# polynomial, which removes most of the precision loss near element endpoints
-# (tasks.md issue 16). They work on scalars (numba drivers) and on numpy arrays
-# (numpy drivers, through .py_func).
+# elimination, with every (a -/+ x)^2 + y^2 evaluated in that factored form
+# (inside logs and denominators) rather than as the expanded polynomial.
+# _quadratic_slip_f is in addition expanded about the element endpoint nearest
+# the observation point (x = s a + xi), so the small quantities near a node
+# (xi, y) are never formed as differences of large numbers: it is accurate to
+# ~1e-15 relative down to at least 1e-8 a from a node (tasks.md issue 16).
+# The force formulas were already well conditioned near endpoints and are kept
+# in their original variables. Both work on scalars (numba drivers) and on
+# numpy arrays (numpy drivers, through .py_func).
 # =============================================================================
 
 @njit(cache=True, error_model="numpy")
-def _quadratic_slip_f(x, y, a, nu, f):
-    """Fill f (7, 3) with f0..f6 for the 3 quadratic shape functions at local (x, y).
-        Generated from bemcs.quadratic_kernel_farfield (common subexpressions only)."""
-    Am = np.pi / 2 * np.sign(y / (a - x)) - np.arctan(y / (a - x))
-    Ap = np.pi / 2 * np.sign(y / (a + x)) - np.arctan(y / (a + x))
-    Rp = (a + x) ** 2 + y**2
-    Rm = (a - x) ** 2 + y**2
-    Lp = np.log(Rp)
+def _quadratic_slip_f(xi, y, a, nu, s, f):
+    """Fill f (7, 3) with f0..f6 for the 3 quadratic shape functions.
+
+        The observation point is given relative to the element endpoint x = s a (s = +1 or -1):
+        local x = s a + xi. Every polynomial is expanded about that endpoint, so evaluate with the
+        endpoint nearest the point. Generated with sympy from bemcs.quadratic_kernel_farfield."""
+    am = (1 - s) * a - xi  # a - x, exact near the endpoint x = s a
+    ap = (1 + s) * a + xi  # a + x
+    Am = np.pi / 2 * np.sign(y / am) - np.arctan(y / am)
+    Ap = np.pi / 2 * np.sign(y / ap) - np.arctan(y / ap)
+    Rm = am**2 + y**2
+    Rp = ap**2 + y**2
     Lm = np.log(Rm)
-    x0 = x**3
-    x1 = y**2
-    x2 = 3*x
-    x3 = -x2
-    x4 = a + x3
-    x5 = x**2
-    x6 = a*x5
-    x7 = 0.046875*x0 + 0.046875*x1*x4 - 0.046875*x6
-    x8 = a**3
-    x9 = Lp*x8
-    x10 = a**2
-    x11 = x*x10
-    x12 = 0.1875*x11
-    x13 = Am + Ap
-    x14 = x13*y
-    x15 = 2*a
-    x16 = 0.09375*x
-    x17 = x16*(x15 + x3)
-    x18 = a*x1
-    x19 = 0.1875*x18
-    x20 = y**3
-    x21 = x13*x20
-    x22 = x19 - 0.09375*x21 - 0.1875*x6 + 0.125*x8
-    x23 = 1/(np.pi*x10*(nu - 1))
-    x24 = Lm*x8
-    x25 = 0.375*x18
-    x26 = Lp*x
-    x27 = 3*x5
-    x28 = -x27
-    x29 = 4*x10
-    x30 = 9*x1
-    x31 = 0.03125*x28 + 0.03125*x29 + 0.03125*x30
-    x32 = 9*x5
-    x33 = x29 - x32
-    x34 = 0.0625*x33
-    x35 = Lm*x
-    x36 = a + x2
-    x37 = 0.046875*x0 - 0.046875*x1*x36 + 0.046875*x6
-    x38 = x16*(x15 + x2)
-    x39 = x1*x13
-    x40 = 0.28125*x39
-    x41 = a*y
-    x42 = 0.5625*x41
-    x43 = 0.09375*y
-    x44 = x4*x43
-    x45 = 0.5625*y
-    x46 = x36*x43
-    x47 = 0.375*x10
-    x48 = 3*x1
-    x49 = x*x15
-    x50 = 0.046875*x28 + 0.046875*x48 + 0.046875*x49
-    x51 = a*x
-    x52 = 0.5625*x51
-    x53 = 0.1875*x14
-    x54 = 0.03125*x30 + 0.03125*x33
-    x55 = 1.125*x51
-    x56 = 1.125*x
-    x57 = 0.046875*x27 - 0.046875*x48 + 0.046875*x49
-    x58 = x**5
-    x59 = 3*x58
-    x60 = a**4
-    x61 = x2*x60
-    x62 = 6*x0*x10
-    x63 = a**5
-    x64 = x**4
-    x65 = a*x64
-    x66 = 2*x8
-    x67 = -x5*x66 + x63 + x65
-    x68 = -x59 - x61 + x62 + x67
-    x69 = 0.1875*x68
-    x70 = -x20*x47
-    x71 = y**4
-    x72 = x4*x71
-    x73 = 0.1875*x13
-    x74 = 3*x0
-    x75 = x10*x2
-    x76 = x6 + x8
-    x77 = -x74 - x75 + x76
-    x78 = 0.375*x39
-    x79 = x10 + x5
-    x80 = 2*x1
-    x81 = 2*x10*x5
-    x82 = x60 + x64 - x81
-    x83 = x71 + x79*x80 + x82
-    x84 = Lp*x83
-    x85 = 0.28125*y
-    x86 = x84*x85
-    x87 = a*x2
-    x88 = x47*y
-    x89 = Lm*x83
-    x90 = x85*x89
-    x91 = x23/(Rm*Rp)
-    x92 = x56*x82
-    x93 = x59 + x61 - x62 + x67
-    x94 = 0.1875*x93
-    x95 = x36*x71
-    x96 = x74 + x75 + x76
-    x97 = 0.5625*x63
-    x98 = 0.09375*x68 + 0.09375*x72 + 0.09375*x77*x80
-    x99 = y**5
-    x100 = x13*x99
-    x101 = 0.5625*x100
-    x102 = x5*x8
-    x103 = 1.6875*x102
-    x104 = 1.125*x65
-    x105 = a*x71
-    x106 = 1.125*x105
-    x107 = x14*x82
-    x108 = 0.5625*x107
-    x109 = x21*x79
-    x110 = 1.125*x109
-    x111 = 12*x5
-    x112 = 9*x10 + x111
-    x113 = -0.375*x*x60 + x0*x47
-    x114 = 0.5625*x83
-    x115 = 0.09375*x80*x96 + 0.09375*x93 + 0.09375*x95
-    x116 = a**8
-    x117 = x60*x64
-    x118 = a**6
-    x119 = x118*x5
-    x120 = 1.5*x119
-    x121 = 4*x63
-    x122 = x111*x8
-    x123 = 9*x58 + x61
-    x124 = 9*x0 + 12*x11
-    x125 = 0.375*x105
-    x126 = y**8
-    x127 = x71*(3*x60 + 3*x64 + x81)
-    x128 = x**6
-    x129 = x10*x64
-    x130 = x5*x60
-    x131 = x118 + x128 - x129 - x130
-    x132 = y**6
-    x133 = x132*x79
-    x134 = x**8 + x116 + 6*x117 - 4*x119 - x128*x29
-    x135 = 4*x1*x131 + x126 + 2*x127 + 4*x133 + x134
-    x136 = 0.28125*x135
-    x137 = a*x**7
-    x138 = x0*x63
-    x139 = a**7*x
-    x140 = x58*x8
-    x141 = Lm*x136 - Lp*x136 + x132*x55 + 1.125*x137 + 5.625*x138 - 2.25*x139 - 4.5*x140
-    x142 = x23/(Rm**2*Rp**2)
-    x143 = 0.5625*x135
-    x144 = 27*x64
-    x145 = 8*x10
-    x146 = x145*x5
-    x147 = 8*x
-    x148 = x147*x63
-    x149 = 8*x0*x8
-    x150 = 6*x118 + 3*x128 - 12*x129 + x27*x60
-    x151 = 0.375*x41
-    x152 = x147*x8
-    x153 = 15*x60 + 9*x64
-    x154 = a*x20
-    x155 = 0.375*x154
-    x156 = 0.5625*x134
-    x157 = x126*x13
-    x158 = a*y**7
-    x159 = x127*x13
-    x160 = x131*x39
-    x161 = x13*x133
-    x162 = a*x99
-    x163 = Am*x156 + Ap*x156 + 0.5625*x157 - 1.125*x158 + 1.125*x159 + 2.25*x160 + 2.25*x161 - 1.125*x162*(x27 + x29)
-    x164 = 1.125*x134
-    f[0, 0] = x23*(-Lm*x7 + Lp*x7 + x12 - x14*x17 + x22 + 0.09375*x9)
-    f[0, 1] = x23*(x14*x34 + 0.1875*x21 + 0.03125*x24 - x25 + x26*x31 - x31*x35 + 0.375*x6 - 0.25*x8 + 0.03125*x9)
-    f[0, 2] = x23*(-Lm*x37 + Lp*x37 - x12 + x14*x38 + x22 + 0.09375*x24)
-    f[1, 0] = -x23*(Am*x17 + Ap*x17 + Lm*x44 - Lp*x44 + x40 - x42)
-    f[1, 1] = x23*(Am*x34 + Ap*x34 + x26*x45 - x35*x45 + 0.5625*x39 - 1.125*x41)
-    f[1, 2] = x23*(Am*x38 + Ap*x38 + Lm*x46 - Lp*x46 - x40 + x42)
-    f[2, 0] = -x23*(-Lm*x50 + Lp*x50 + x4*x53 - x47 + x52)
-    f[2, 1] = -x23*(Lm*x54 - Lp*x54 + x14*x56 - x55)
-    f[2, 2] = -x23*(Lm*x57 - Lp*x57 - x36*x53 + x47 + x52)
-    f[3, 0] = -x91*(Am*x69 + Ap*x69 + x70 + x72*x73 + x77*x78 + x86 - x88*(x79 - x87) - x90)
-    f[3, 1] = -x91*(Am*x92 + Ap*x92 + 2.25*x*x39*x79 - 1.25*x*x8*y + x13*x56*x71 - x45*x84 + x45*x89)
-    f[3, 2] = x91*(Am*x94 + Ap*x94 + x70 + x73*x95 + x78*x96 - x86 - x88*(x79 + x87) + x90)
-    f[4, 0] = x91*(Lm*x98 - Lp*x98 + x101 + x103 - x104 - x106 + x108 + x110 + x113 - x19*(x112 - x49) - x97)
-    f[4, 1] = x91*(-1.125*x100 - 3.875*x102 + 2.25*x105 - 1.125*x107 - 2.25*x109 - x114*x26 + x114*x35 + 0.125*x18*(31*x10 + 36*x5) + 1.625*x63 + 2.25*x65)
-    f[4, 2] = -x91*(Lm*x115 - Lp*x115 - x101 - x103 + x104 + x106 - x108 - x110 + x113 + x19*(x112 + x49) + x97)
-    f[5, 0] = x142*(0.75*x116 + 0.75*x117 - x120 + x125*(x124 + x66) + x141 + x25*(x121 - x122 + x123))
-    f[5, 1] = -x142*(Lm*x143 - Lp*x143 + 0.25*x*x18*(x144 - x146 + x60) + 2.25*x132*x51 + 2.25*x137 + 9.25*x138 - 3.5*x139 - 8.0*x140 + 0.75*x51*x71*(x145 + x32))
-    f[5, 2] = -x142*(0.75*x116 - x120 - x125*(x124 - x66) - x141 - x25*(-x121 + x122 + x123) + 0.75*x60*x64)
-    f[6, 0] = -x142*(-x151*(-x148 + x149 + x150) - x155*(-x152 + x153) + x163)
-    f[6, 1] = x142*(Am*x164 + Ap*x164 - 0.25*x154*(x144 + x146 + 37*x60) + 1.125*x157 - 2.25*x158 + 2.25*x159 + 4.5*x160 + 4.5*x161 - 0.25*x162*(32*x10 + 27*x5) - 0.25*x41*(14*x118 + 9*x128 - 24*x129 + x130))
-    f[6, 2] = -x142*(-x151*(x148 - x149 + x150) - x155*(x152 + x153) + x163)
+    Lp = np.log(Rp)
+    x0 = 0.1875*xi
+    x1 = 0.1875*s
+    x2 = a*x1
+    x3 = 1/a
+    x4 = 0.046875*x3
+    x5 = xi**2
+    x6 = Lm*x5
+    x7 = x4*x6
+    x8 = y**2
+    x9 = x4*x8
+    x10 = Lp*x9
+    x11 = s*xi
+    x12 = 0.09375*x11
+    x13 = Lm*x12
+    x14 = Lm*x9
+    x15 = Lp*x5
+    x16 = x15*x4
+    x17 = Lp*x12
+    x18 = Am*x1
+    x19 = x18*y
+    x20 = Ap*x1
+    x21 = x20*y
+    x22 = x3*y
+    x23 = x0*x22
+    x24 = Am*x23
+    x25 = Ap*x23
+    x26 = 0.046875*a
+    x27 = Lm*x26
+    x28 = Lp*x26
+    x29 = 0.1875*x3
+    x30 = x29*x8
+    x31 = 0.140625*Lp
+    x32 = x31*xi
+    x33 = 0.28125*Am
+    x34 = x33*y
+    x35 = 0.28125*Ap
+    x36 = x35*y
+    x37 = 0.375*x11
+    x38 = 0.140625*Lm
+    x39 = x38*xi
+    x40 = xi**3
+    x41 = a**2
+    x42 = 1/x41
+    x43 = x40*x42
+    x44 = 0.046875*x43
+    x45 = y**3
+    x46 = x42*x45
+    x47 = 0.09375*x46
+    x48 = s*x8
+    x49 = x3*x38
+    x50 = x42*x8
+    x51 = s*x5
+    x52 = x3*x31
+    x53 = x42*x5
+    x54 = 0.5625*s
+    x55 = x22*x54
+    x56 = Am*x55
+    x57 = Ap*x55
+    x58 = -Am*x47 - Ap*x47 - Lm*x44 + Lp*x44 - 0.0625*a - s*x27 + s*x28 + x27 + x28 - x29*x5 + x30 - x32*x50 + x32 + x34*x53 + x34 + x36*x53 + x36 - x37 + x39*x50 - x39 + x48*x49 - x48*x52 - x49*x51 + x51*x52 + x56*xi + x57*xi
+    x59 = 1/(np.pi*(nu - 1))
+    x60 = 0.375*x3
+    x61 = 0.15625*Lp
+    x62 = 0.3125*Am
+    x63 = 0.3125*Ap
+    x64 = 0.28125*x3
+    x65 = x8*xi
+    x66 = 0.28125*x42
+    x67 = Lm*x66
+    x68 = x5*y
+    x69 = 0.5625*x42
+    x70 = Am*x69
+    x71 = Ap*x69
+    x72 = 1.125*s
+    x73 = x22*x72
+    x74 = Am*x73
+    x75 = Ap*x73
+    x76 = 0.09375*x22
+    x77 = Lp*x76
+    x78 = Lm*x76
+    x79 = x0*x3
+    x80 = Am*x79
+    x81 = Ap*x79
+    x82 = Lm*x22
+    x83 = 0.28125*s
+    x84 = xi*y
+    x85 = x3*xi
+    x86 = x54*x85
+    x87 = Lp*x22
+    x88 = Lp*x66
+    x89 = Am*x86 + Ap*x86 + 0.5625*x22 - x33*x50 + x33*x53 + x33 - x35*x50 + x35*x53 + x35 + x67*x84 + x82*x83 - x83*x87 - x84*x88
+    x90 = 0.5625*x53
+    x91 = Lm*x69
+    x92 = x72*x85
+    x93 = 0.09375*s
+    x94 = Lm*x93
+    x95 = Lp*x93
+    x96 = 0.09375*x85
+    x97 = Lm*x96
+    x98 = Lp*x96
+    x99 = x29*y
+    x100 = Am*x99
+    x101 = Ap*x99
+    x102 = x11*x64
+    x103 = -Lm*x102 + Lp*x102 - x31*x50 + x31*x53 + x31 + x38*x50 - x38*x53 - x38 - x54 + x56 + x57 + x70*x84 + x71*x84 - 0.5625*x85
+    x104 = 1.125*y
+    x105 = x104*x42
+    x106 = x105*xi
+    x107 = 0.375*x45
+    x108 = 0.375*x68
+    x109 = 0.75*x41
+    x110 = x109*y
+    x111 = xi**4
+    x112 = Am*x29
+    x113 = x111*x112
+    x114 = y**4
+    x115 = x112*x114
+    x116 = Ap*x29
+    x117 = x111*x116
+    x118 = x114*x116
+    x119 = a*x5
+    x120 = 0.75*Am
+    x121 = x119*x120
+    x122 = a*x8
+    x123 = x120*x122
+    x124 = s*x40
+    x125 = x120*x124
+    x126 = 0.75*Ap
+    x127 = x119*x126
+    x128 = x122*x126
+    x129 = x124*x126
+    x130 = 0.75*x11
+    x131 = a*y
+    x132 = x130*x131
+    x133 = x5*x60
+    x134 = Am*x8
+    x135 = x133*x134
+    x136 = Ap*x8
+    x137 = x133*x136
+    x138 = x130*x134
+    x139 = x130*x136
+    x140 = 1.125*x45
+    x141 = Lm*x140
+    x142 = 4.5*x40
+    x143 = Am*x142
+    x144 = Ap*x142
+    x145 = y**5
+    x146 = x145*x66
+    x147 = xi**5
+    x148 = Am*x147
+    x149 = Ap*x147
+    x150 = 1.125*x68
+    x151 = 4.5*x65
+    x152 = a*xi
+    x153 = x41*y
+    x154 = Lm*x111
+    x155 = x66*y
+    x156 = Am*x114
+    x157 = x3*x54
+    x158 = x114*xi
+    x159 = Ap*x114
+    x160 = 0.5625*x46
+    x161 = 1.125*x43
+    x162 = 2.25*s
+    x163 = Am*x162
+    x164 = Ap*x162
+    x165 = Am*x111
+    x166 = s*x3
+    x167 = 2.8125*x166
+    x168 = Ap*x111
+    x169 = Lp*x111
+    x170 = x45*x92
+    x171 = x40*x72
+    x172 = 3.375*x3
+    x173 = x5*x8
+    x174 = s*x173
+    x175 = x172*x174
+    x176 = Am*x151 + Am*x175 + Ap*x151 + Ap*x175 + Lm*x146 + Lm*x150 + Lm*x170 - Lp*x140 - Lp*x146 - Lp*x150 - Lp*x170 - x104*x152 + x119*x163 + x119*x164 + x122*x163 + x122*x164 + x134*x161 + x136*x161 + x141 + x143 + x144 + x148*x69 + x149*x69 - x15*x160 - x153*x72 + x154*x155 - x155*x169 + x156*x157 + x157*x159 + x158*x70 + x158*x71 + x160*x6 + x165*x167 + x167*x168 + x171*x82 - x171*x87
+    x177 = x59/(Rm*Rp)
+    x178 = 2.25*x45
+    x179 = Lm*x178
+    x180 = 9.0*x40
+    x181 = x145*x69
+    x182 = 1.125*x42
+    x183 = 2.25*x68
+    x184 = 9.0*x65
+    x185 = x3*x72
+    x186 = Am*x182
+    x187 = Ap*x182
+    x188 = 2.25*x40
+    x189 = x188*x50
+    x190 = 4.5*s
+    x191 = Am*x190
+    x192 = Ap*x190
+    x193 = 5.625*x166
+    x194 = x11*x3
+    x195 = Lm*x188
+    x196 = s*x22
+    x197 = 6.75*x3
+    x198 = x174*x197
+    x199 = 0.375*x40
+    x200 = 0.375*x65
+    x201 = x109*xi
+    x202 = 0.09375*x3
+    x203 = x154*x202
+    x204 = x114*x202
+    x205 = Lm*x204
+    x206 = 0.375*Lm
+    x207 = x119*x206
+    x208 = x122*x206
+    x209 = s*x199
+    x210 = Lm*x209
+    x211 = 0.375*x122
+    x212 = s*x211
+    x213 = x119*x72
+    x214 = x169*x202
+    x215 = Lp*x204
+    x216 = Lp*x119
+    x217 = 0.375*x216
+    x218 = Lp*x211
+    x219 = Lp*x209
+    x220 = x30*x6
+    x221 = x37*x8
+    x222 = Lm*x221
+    x223 = x15*x30
+    x224 = Lp*x221
+    x225 = Am*x178
+    x226 = Ap*x178
+    x227 = 1.125*x3
+    x228 = x147*x66
+    x229 = 2.25*x65
+    x230 = x41*xi
+    x231 = 2.25*x3
+    x232 = x11*x8
+    x233 = s*x114
+    x234 = x233*x64
+    x235 = x111*y
+    x236 = Lp*x8
+    x237 = 0.5625*x43
+    x238 = x140*x53
+    x239 = x122*x72
+    x240 = 1.40625*x166
+    x241 = x188*x196
+    x242 = x15*x48
+    x243 = 1.6875*x3
+    x244 = Am*x181 + Am*x183 + Am*x238 + Am*x241 + Ap*x181 + Ap*x183 + Ap*x238 + Ap*x241 - Lm*x213 - Lm*x228 - Lm*x229 - Lm*x234 - Lm*x237*x8 - Lm*x239 + Lp*x188 + Lp*x213 + Lp*x228 + Lp*x229 + Lp*x234 + Lp*x239 - s*x142 - x111*x227 - x114*x227 - 5.0625*x119 - 3.9375*x122 - x154*x240 - x158*x67 + x158*x88 + x169*x240 - x173*x231 + x194*x225 + x194*x226 - x195 + x225 + x226 - x230*x72 - 4.5*x232 + x235*x70 + x235*x71 + x236*x237 + x242*x243 - x243*x48*x6
+    x245 = 4.5*x45
+    x246 = Am*x245
+    x247 = Ap*x245
+    x248 = x145*x182
+    x249 = 4.5*x68
+    x250 = Lp*x122
+    x251 = x109*x111
+    x252 = x109*x114
+    x253 = a**4
+    x254 = 3.0*x253
+    x255 = x254*x5
+    x256 = x254*x8
+    x257 = a**3
+    x258 = x257*x40
+    x259 = 3.0*s
+    x260 = x258*x259
+    x261 = 4.5*x173*x41
+    x262 = 9.0*x232*x257
+    x263 = y**6
+    x264 = xi**7
+    x265 = 2.25*x263
+    x266 = Lm*x265
+    x267 = xi**6
+    x268 = 6.75*x267
+    x269 = s*x267
+    x270 = a*x147
+    x271 = xi**8
+    x272 = y**8
+    x273 = 4.5*x41
+    x274 = x114*x273
+    x275 = 4.5*x253
+    x276 = x257*x65
+    x277 = x114*x40
+    x278 = x147*x8
+    x279 = 11.25*x114
+    x280 = x233*x41
+    x281 = 15.75*x8
+    x282 = x233*x5
+    x283 = x114*x152
+    x284 = 16.875*x111
+    x285 = s*x41
+    x286 = x122*x40
+    x287 = x182*x263
+    x288 = Lm*x50
+    x289 = 1.125*x267
+    x290 = x231*x264
+    x291 = Lm*s
+    x292 = 9.0*x270
+    x293 = 9.0*x41
+    x294 = x293*x8
+    x295 = x114*x42
+    x296 = 1.6875*x295
+    x297 = x173*x285
+    x298 = Lp*s
+    x299 = Lm*x11
+    x300 = x231*x263
+    x301 = Lm*x114
+    x302 = 9.0*x11
+    x303 = a*x302
+    x304 = 18.0*x124
+    x305 = Lm*x122
+    x306 = x124*x197
+    x307 = x147*x48
+    x308 = x197*x307
+    x309 = Lp*x114
+    x310 = Lm*x268 + Lm*x274 + Lm*x308 - Lp*x11*x300 - Lp*x265 - Lp*x268 - Lp*x274 - Lp*x289*x50 - Lp*x308 - x15*x279 - x15*x287 - x15*x294 + x154*x273 + x154*x281 + x154*x296 - x169*x273 - x169*x281 - x169*x296 + x172*x277 + x172*x278 + x227*x264 - x250*x304 + x263*x72 + 1.125*x263*x85 + x266 + 7.875*x269 + 19.125*x270 + x271*x67 - x271*x88 + x272*x67 - x272*x88 + x275*x48 - x275*x51 + 18.0*x276 + x279*x6 + 7.875*x280 + 10.125*x282 + 14.625*x283 + x284*x285 + x284*x48 + 33.75*x286 + x287*x6 + x288*x289 + x290*x291 - x290*x298 + x291*x292 - x292*x298 + x294*x6 + 33.75*x297 + x299*x300 + x301*x303 + x301*x306 - x303*x309 + x304*x305 - x306*x309
+    x311 = x59/(Rm**2*Rp**2)
+    x312 = 4.5*x263
+    x313 = Lm*x312
+    x314 = 13.5*x267
+    x315 = x114*x293
+    x316 = 22.5*x114
+    x317 = 31.5*x8
+    x318 = 2.25*x267
+    x319 = x166*x264
+    x320 = 4.5*x319
+    x321 = 18.0*x270
+    x322 = 18.0*x41
+    x323 = 3.375*x295
+    x324 = 18.0*a
+    x325 = 13.5*x3
+    x326 = x124*x325
+    x327 = x257*x45
+    x328 = x259*x327
+    x329 = 3.0*x230*x45
+    x330 = 3.0*x153*x40
+    x331 = 6.0*x253*x84
+    x332 = x257*x68
+    x333 = 9.0*x332
+    x334 = s*x333
+    x335 = Am*x312
+    x336 = Ap*x312
+    x337 = y**7
+    x338 = x111*x293
+    x339 = x316*x5
+    x340 = x111*x317
+    x341 = x265*x53
+    x342 = x318*x50
+    x343 = x253*y
+    x344 = s*x321
+    x345 = x173*x322
+    x346 = x11*x324
+    x347 = 36.0*Am
+    x348 = x122*x124
+    x349 = 36.0*Ap
+    x350 = x325*x48
+    x351 = Am*x314 + Am*x315 + Am*x320 + Am*x338 + Am*x339 + Am*x340 + Am*x341 + Am*x342 + Am*x344 + Am*x345 + Ap*x314 + Ap*x315 + Ap*x320 + Ap*x338 + Ap*x339 + Ap*x340 + Ap*x341 + Ap*x342 + Ap*x344 + Ap*x345 - 12.375*a*x111*y - 7.875*a*x145 - 20.25*a*x45*x5 - 6.75*s*x145*xi - 6.75*s*x147*y - 4.5*s*x40*x41*y - 13.5*s*x40*x45 - 13.5*s*x41*x45*xi - 3.375*x111*x3*x45 - 3.375*x145*x3*x5 + x148*x350 + x149*x350 + x156*x326 + x156*x346 + x159*x326 + x159*x346 + x165*x323 + x168*x323 + x194*x335 + x194*x336 - 9.0*x257*x45 - 1.125*x267*x3*y + x271*x70 + x271*x71 + x272*x70 + x272*x71 - 1.125*x3*x337 + x302*x343 + x333 + x335 + x336 + x347*x348 + x348*x349
+    x352 = 9.0*x263
+    x353 = Am*x352
+    x354 = Ap*x352
+    x355 = 27.0*x267
+    x356 = x114*x322
+    x357 = 45.0*x5
+    x358 = 63.0*x8
+    x359 = 4.5*x267*x50
+    x360 = 9.0*x319
+    x361 = s*x270
+    x362 = x173*x41
+    x363 = 6.75*x295
+    x364 = 36.0*a*x11
+    x365 = 72.0*x348
+    x366 = 27.0*x3
+    x367 = x124*x366
+    x368 = x366*x48
+    f[0, 0] = x59*(x0 + x10 + x13 - x14 - x16 - x17 - x19 + x2 - x21 - x24 - x25 + x58 + x7)
+    f[0, 1] = x59*(0.1875*Am*x42*x45 + 0.1875*Ap*x42*x45 - 0.03125*Lm*a*s + 0.03125*Lm*a + 0.28125*Lm*s*x3*x5 + 0.09375*Lm*x40*x42 - Lm*x48*x64 + 0.15625*Lm*xi + 0.03125*Lp*a*s + 0.03125*Lp*a + 0.28125*Lp*s*x3*x8 + 0.28125*Lp*x42*x8*xi - 0.09375*Lp*x43 + 0.125*a - s*x15*x64 + 0.75*s*xi + 0.375*x3*x5 - x60*x8 - x61*xi - x62*y - x63*y - x65*x67 - x68*x70 - x68*x71 - x74*xi - x75*xi)
+    f[0, 2] = x59*(-x0 - x10 - x13 + x14 + x16 + x17 + x19 - x2 + x21 + x24 + x25 + x58 - x7)
+    f[1, 0] = x59*(-x18 - x20 + x77 - x78 - x80 - x81 + x89)
+    f[1, 1] = x59*(0.5625*Am*x42*x8 - Am*x90 - Am*x92 + 0.5625*Ap*x42*x8 - Ap*x90 - Ap*x92 + 0.5625*Lp*s*x3*y + 0.5625*Lp*x42*xi*y - 1.125*x22 - x54*x82 - x62 - x63 - x84*x91)
+    f[1, 2] = x59*(x18 + x20 - x77 + x78 + x80 + x81 + x89)
+    f[2, 0] = x59*(-x100 - x101 + x103 + x94 - x95 + x97 - x98 + 0.375)
+    f[2, 1] = x59*(-Am*x106 - Ap*x106 + 0.5625*Lm*s*x3*xi + 0.28125*Lm*x42*x5 - 0.28125*Lm*x50 + 0.15625*Lm + 0.28125*Lp*x42*x8 - Lp*x86 + 1.125*s - x15*x66 + 1.125*x3*xi - x61 - x74 - x75)
+    f[2, 2] = x59*(x100 + x101 + x103 - x94 + x95 - x97 + x98 - 0.375)
+    f[3, 0] = x177*(x107 + x108 + x110 - x113 - x115 - x117 - x118 - x121 - x123 - x125 - x127 - x128 - x129 + x132 - x135 - x137 - x138 - x139 + x176)
+    f[3, 1] = x177*(-Am*x180 - Am*x184 - Am*x189 - Am*x198 - Ap*x180 - Ap*x184 - Ap*x189 - Ap*x198 - Lm*x181 - Lm*x183 + 2.25*Lp*s*x3*x40*y + 2.25*Lp*s*x3*x45*xi + 0.5625*Lp*x111*x42*y + 0.5625*Lp*x145*x42 + 1.125*Lp*x42*x45*x5 + 2.25*Lp*x45 + 2.25*Lp*x5*y + 1.25*a*xi*y + 1.25*s*x41*y - x119*x191 - x119*x192 - x122*x191 - x122*x192 - x141*x53 - x148*x182 - x149*x182 - x154*x69*y - x156*x185 - x158*x186 - x158*x187 - x159*x185 - x165*x193 - x168*x193 - x179*x194 - x179 - x195*x196)
+    f[3, 2] = x177*(-x107 - x108 - x110 + x113 + x115 + x117 + x118 + x121 + x123 + x125 + x127 + x128 + x129 - x132 + x135 + x137 + x138 + x139 + x176)
+    f[4, 0] = x177*(x199 + x200 + x201 + x203 + x205 + x207 + x208 + x210 + x212 + x213 - x214 - x215 - x217 - x218 - x219 + x220 + x222 - x223 - x224 + x244)
+    f[4, 1] = x177*(-Am*x248 - Am*x249 - Ap*x248 - Ap*x249 + 2.25*Lm*a*s*x5 + 2.25*Lm*a*s*x8 + 2.8125*Lm*s*x111*x3 + 0.5625*Lm*s*x114*x3 + 3.375*Lm*s*x3*x5*x8 + 0.5625*Lm*x114*x42*xi + 0.5625*Lm*x147*x42 + 1.125*Lm*x40*x42*x8 + 4.5*Lm*x40 + 4.5*Lm*x8*xi - Lp*x114*x157 - Lp*x142 - Lp*x147*x69 - Lp*x151 - Lp*x158*x69 + 9.625*a*x5 + 8.375*a*x8 + 9.0*s*x40 + 1.25*s*x41*xi + 9.0*s*x8*xi - x105*x165 - x105*x168 + 2.25*x111*x3 + 2.25*x114*x3 - x143*x196 - x144*x196 - x161*x236 - x162*x216 - x162*x250 - x167*x169 - x172*x242 - x194*x246 - x194*x247 - x225*x53 - x226*x53 - x246 - x247 + 4.5*x3*x5*x8)
+    f[4, 2] = x177*(-x199 - x200 - x201 - x203 - x205 - x207 - x208 - x210 - x212 - x213 + x214 + x215 + x217 + x218 + x219 - x220 - x222 + x223 + x224 + x244)
+    f[5, 0] = x311*(x251 + x252 + x255 - x256 + x260 - x261 - x262 + x310)
+    f[5, 1] = x311*(-Lm*x307*x325 - Lm*x314 - Lm*x315 - Lm*x320 + 18.0*Lp*a*s*x114*xi + 18.0*Lp*a*s*x147 + 36.0*Lp*a*s*x40*x8 + 13.5*Lp*s*x114*x3*x40 + 13.5*Lp*s*x147*x3*x8 + 4.5*Lp*s*x263*x3*xi + 4.5*Lp*s*x264*x3 + 3.375*Lp*x111*x114*x42 + 9.0*Lp*x111*x41 + 31.5*Lp*x111*x8 + 9.0*Lp*x114*x41 + 22.5*Lp*x114*x5 + 2.25*Lp*x263*x42*x5 + 4.5*Lp*x263 + 2.25*Lp*x267*x42*x8 + 13.5*Lp*x267 + 0.5625*Lp*x271*x42 + 0.5625*Lp*x272*x42 + 18.0*Lp*x41*x5*x8 + 5.0*s*x253*x5 - s*x265 - 38.75*x111*x285 - 33.75*x111*x48 - x114*x299*x324 - 36.0*x124*x305 - x154*x293 - x154*x317 - x154*x323 - x194*x313 - x197*x277 - x197*x278 - 5.0*x253*x48 - 8.0*x258 - x265*x85 - x266*x53 - 15.75*x269 - 39.25*x270 - x271*x91 - x272*x91 - 28.0*x276 - 12.75*x280 - 20.25*x282 - 26.25*x283 - 65.5*x286 - x288*x318 - x290 - x291*x321 - 61.5*x297 - x301*x326 - x313 - x316*x6 - x322*x6*x8)
+    f[5, 2] = x311*(-x251 - x252 - x255 + x256 - x260 + x261 + x262 + x310)
+    f[6, 0] = x311*(-x328 - x329 + x330 + x331 + x334 - x351)
+    f[6, 1] = x311*(Am*x355 + Am*x356 + Am*x359 + Am*x360 + Am*x365 + Ap*x355 + Ap*x356 + Ap*x359 + Ap*x360 + Ap*x365 - 14.75*a*x145 - 13.5*s*x147*y - 13.5*x11*x145 + 10.0*x11*x343 - 31.0*x11*x41*x45 - 27.75*x111*x131 - x111*x197*x45 - 42.5*x119*x45 - 21.0*x124*x153 - 27.0*x124*x45 - x145*x197*x5 + x148*x368 + x149*x368 + x156*x357 + x156*x364 + x156*x367 + x159*x357 + x159*x364 + x159*x367 + x165*x322 + x165*x358 + x165*x363 + x168*x322 + x168*x358 + x168*x363 + x186*x271 + x186*x272 + x187*x271 + x187*x272 + x194*x353 + x194*x354 - x22*x318 - x231*x337 - 18.0*x327 + 2.0*x332 + x335*x53 + x336*x53 + x347*x361 + x347*x362 + x349*x361 + x349*x362 + x353 + x354)
+    f[6, 2] = x311*(x328 + x329 - x330 - x331 - x334 - x351)
 
 
 @njit(cache=True, error_model="numpy")
@@ -2424,7 +2637,9 @@ def _to_global(R, ux, uy, sxx, syy, sxy):
 
 
 @njit(parallel=True, cache=True, error_model="numpy")
-def _slip_planestrain_numba(x_obs, y_obs, x_centers, y_centers, half_lengths, rot_mats, mu, nu):
+def _slip_planestrain_numba(
+    x_obs, y_obs, x_centers, y_centers, x1, y1, x2, y2, half_lengths, rot_mats, mu, nu
+):
     """Quadratic slip, plane strain: U (n_obs, 3 n_els, 2, 2), S (n_obs, 3 n_els, 3, 2)."""
     n_obs = x_obs.shape[0]
     n_els = x_centers.shape[0]
@@ -2434,11 +2649,14 @@ def _slip_planestrain_numba(x_obs, y_obs, x_centers, y_centers, half_lengths, ro
         f = np.empty((7, 3))
         for e in range(n_els):
             R = rot_mats[e]
-            dx = x_obs[i] - x_centers[e]
-            dy = y_obs[i] - y_centers[e]
-            xl = R[0, 0] * dx + R[1, 0] * dy  # local = R^T (global - centre)
+            # pick the nearest endpoint (x = s a) and work relative to it
+            xc = R[0, 0] * (x_obs[i] - x_centers[e]) + R[1, 0] * (y_obs[i] - y_centers[e])
+            s = 1.0 if xc >= 0 else -1.0
+            dx = x_obs[i] - (x2[e] if s > 0 else x1[e])
+            dy = y_obs[i] - (y2[e] if s > 0 else y1[e])
+            xi = R[0, 0] * dx + R[1, 0] * dy  # local = R^T (global - endpoint)
             yl = R[0, 1] * dx + R[1, 1] * dy
-            _quadratic_slip_f(xl, yl, half_lengths[e], nu, f)
+            _quadratic_slip_f(xi, yl, half_lengths[e], nu, s, f)
             for node in range(3):
                 for l in range(2):
                     loc = _slip_local(f, node, yl, mu, nu, 1.0 - l, float(l))
@@ -2452,7 +2670,9 @@ def _slip_planestrain_numba(x_obs, y_obs, x_centers, y_centers, half_lengths, ro
     return U, S
 
 
-def _slip_planestrain_numpy(x_obs, y_obs, x_centers, y_centers, half_lengths, rot_mats, mu, nu):
+def _slip_planestrain_numpy(
+    x_obs, y_obs, x_centers, y_centers, x1, y1, x2, y2, half_lengths, rot_mats, mu, nu
+):
     """Same as _slip_planestrain_numba, vectorized over observation points."""
     n_obs, n_els = x_obs.shape[0], x_centers.shape[0]
     U = np.zeros((n_obs, 3 * n_els, 2, 2))
@@ -2461,10 +2681,13 @@ def _slip_planestrain_numpy(x_obs, y_obs, x_centers, y_centers, half_lengths, ro
     with np.errstate(divide="ignore", invalid="ignore"):
         for e in range(n_els):
             R = rot_mats[e]
-            dx, dy = x_obs - x_centers[e], y_obs - y_centers[e]
-            xl = R[0, 0] * dx + R[1, 0] * dy
+            xc = R[0, 0] * (x_obs - x_centers[e]) + R[1, 0] * (y_obs - y_centers[e])
+            s = np.where(xc >= 0, 1.0, -1.0)
+            dx = x_obs - np.where(s > 0, x2[e], x1[e])
+            dy = y_obs - np.where(s > 0, y2[e], y1[e])
+            xi = R[0, 0] * dx + R[1, 0] * dy
             yl = R[0, 1] * dx + R[1, 1] * dy
-            _quadratic_slip_f.py_func(xl, yl, half_lengths[e], nu, f)
+            _quadratic_slip_f.py_func(xi, yl, half_lengths[e], nu, s, f)
             for node in range(3):
                 for l in range(2):
                     loc = _slip_local.py_func(f, node, yl, mu, nu, 1.0 - l, float(l))
@@ -2686,7 +2909,12 @@ def _subset_els(els, idx):
 
 
 def element_kernels_slip(x_obs, y_obs, els, *, geometry, mu, nu=None, use_numba=False):
-    """Quadratic-slip kernels, 3 nodes per element: U, S in the get_kernels layout."""
+    """Quadratic-slip kernels, 3 nodes per element: U, S in the get_kernels layout.
+
+    Stresses are singular at element end points; the singular parts cancel
+    between neighbouring elements only for co-planar elements with continuous
+    slip and slip gradient (see `get_kernels`, Notes).
+    """
     _check_material(geometry, mu, nu)
     xo, yo = _obs(x_obs, y_obs)
     if geometry == "antiplane":
@@ -2695,7 +2923,8 @@ def element_kernels_slip(x_obs, y_obs, els, *, geometry, mu, nu=None, use_numba=
         return u[:, :, None], np.stack((sxz, syz), axis=2)
     driver = _slip_planestrain_numba if use_numba else _slip_planestrain_numpy
     xc, yc, hl, rot, _ = _els_arrays(els)
-    return driver(xo, yo, xc, yc, hl, rot, float(mu), float(nu))
+    x1, y1, x2, y2 = (np.ascontiguousarray(getattr(els, k), dtype=float) for k in ("x1", "y1", "x2", "y2"))
+    return driver(xo, yo, xc, yc, x1, y1, x2, y2, hl, rot, float(mu), float(nu))
 
 
 def element_kernels_force(x_obs, y_obs, els, *, geometry, mu, nu=None, use_numba=False):
@@ -2902,6 +3131,18 @@ def get_slip_kernels(
     Returns
     -------
     U, S, info : see `get_kernels`.
+
+    Notes
+    -----
+    Singularity cancellation. Each element's stress is singular at its end
+    points; with slip and slip gradient continuous across a node, the singular
+    parts of neighbouring elements cancel exactly only if the elements are
+    co-planar. At a kink or triple junction the mesh geometry is only C0, so a
+    weak (logarithmic) stress singularity remains, with a strength set by the
+    angle between the neighbouring elements (the discrete curvature). The
+    kernels are evaluated relative to the nearest element end point, so in
+    float64 the cancellation holds to about 1e-16 L/d at a distance d from a
+    node (L = element length).
     """
     return _source_kernels(
         "slip", x_obs, y_obs, els, geometry, mu, nu, basis, connectivity, use_numba
@@ -3053,6 +3294,18 @@ def get_kernels(x_obs, y_obs, mesh, *, geometry, mu, nu=None, use_numba=False):
     info : KernelInfo
         Meaning of every axis and source coefficient; `print(info)` summarizes.
         All slip coefficients come first, then all force coefficients.
+
+    Notes
+    -----
+    Singularity cancellation. Each element's stress is singular at its end
+    points; with slip and slip gradient continuous across a node, the singular
+    parts of neighbouring elements cancel exactly only if the elements are
+    co-planar. At a kink or triple junction the mesh geometry is only C0, so a
+    weak (logarithmic) stress singularity remains, with a strength set by the
+    angle between the neighbouring elements (the discrete curvature). The
+    kernels are evaluated relative to the nearest element end point, so in
+    float64 the cancellation holds to about 1e-16 L/d at a distance d from a
+    node (L = element length).
     """
     if not isinstance(mesh, Mesh):
         raise TypeError(

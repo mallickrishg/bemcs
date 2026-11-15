@@ -150,6 +150,33 @@ Square system of `2(N_s + N_f)` equations.
     through; the old function is compared at `mu = 1` only.
 15. **Debug prints in library code:** `label_nodes` prints node counts, and the hat/trapezoid coefficient builders print
     `patch number:` / `trapezoid number:` for every patch. `bemAssembly` prints the numba version on import.
+16. **Quadratic slip kernel loses float64 precision near every element endpoint (confirmed, section 8.2).**
+    `quadratic_kernel_farfield` (via `displacements_stresses_quadratic_no_rotation`) vs the same formula at 50 digits:
+    relative error 1e-11 at d = 1e-2 L, 1e-7 at 1e-3 L, 2e-4 at 1e-4 L, O(1) at d <= 1e-5 L, and NaN directly above
+    an endpoint (probably `np.sign(y / (a - x))` with `a - x` rounding to 0; not confirmed). Cause: large
+    polynomial x log/arctan terms nearly cancel. Element-centre collocation is safe. Points within ~1e-3 L of a node
+    are not, e.g. force collocation next to a fault that ends on an interface. No basis (hats, `null_space`, full 6N)
+    avoids this, since they all combine the same element kernels.
+    **Mostly fixed (2026-11-16).** The main loss came from evaluating `log` and the denominators from the *expanded*
+    polynomial `a^2 -+ 2ax + x^2 + y^2` (and its square). The new generated formulas (`_quadratic_slip_f`,
+    `_linear_force_g` in `bemAssembly`) compute `R = (a -+ x)^2 + y^2` directly. Error vs 50 digits: 4e-12 at 1e-2 L,
+    1.5e-10 at 1e-3 L, 4e-8 at 1e-4 L, 3e-7 to 2e-5 at 1e-5 L, with no NaN directly above the endpoint
+    (`tests/test_kernel_precision.py`). Below ~1e-6 L the remaining polynomial x log cancellation dominates again.
+    **Fixed for slip (2026-11-16, endpoint rewrite).** `_quadratic_slip_f` is now expanded about the element endpoint
+    nearest the observation point (`x = s a + xi`, `s = +-1`). The drivers compute `(xi, y)` by rotating
+    `obs - endpoint`, so near-node quantities are never differences of large numbers. Per element: ~4e-16 relative
+    down to 1e-8 a, and unchanged mid-element and in the far field (1e-10 at 100 a, 2e-7 at 1000 a; far-field
+    cancellation remains). The force formulas were already well conditioned near endpoints (2e-10 at 1e-8 a) and
+    expanding them made them worse, so they were kept.
+    **Sum over elements** (hat basis approaching a shared node, float64 vs 50 digits): the error now follows the float64
+    floor ~1e-16 L/d, i.e. 8e-13 at 1e-4, 8e-11 at 1e-6, 9e-9 at 1e-8. Before: 1e-5 to 1e-7 on a straight fault, and
+    24 / 3e4 / 7e6 on a 30-degree kink. Only analytic cancellation at the node (curvature form) could go below
+    ~1e-16 L/d.
+    **Kinks: physics, not numerics (decided).** The exact stress near a kinked node grows ~0.9 per decade (log
+    singularity) and is now resolved accurately. The mesh is C0, so geometry-induced singularities remain at kinks and
+    triple junctions, with strength set by the angle between neighbouring elements (discrete curvature). True
+    cancellation holds only for co-planar elements. This is documented in the README and in the `get_kernels`,
+    `get_slip_kernels` and `element_kernels_slip` docstrings.
 
 ---
 
@@ -160,7 +187,11 @@ Square system of `2(N_s + N_f)` equations.
 
 ### TA. Code audit and API consolidation (do before T1)
 - [x] Add a `pytest` suite skeleton (`tests/`, `pytest.ini`); run with
-  `conda run -n bemcs python -m pytest`. Current status: 120 passed, 2 expected xfail; ~1 s with a warm numba cache (~2.5 min on the first run, which compiles).
+  `/Users/mallickrishg/miniconda3/envs/bemcs/bin/python -m pytest`. Current status: 193 passed, 30 skipped, 2 expected
+  xfail, ~1 s.
+  **Numba tests are opt-in.** They are marked `@pytest.mark.numba` and run only with `pytest --numba`. While developing,
+  never trigger JIT; test through the numpy path. Pay the compile once, when the code is functional. (The numba cache
+  is invalidated by any edit to `bemAssembly.py`; we keep the kernels in that module anyway.)
 - [x] Static API checks (`tests/test_api.py`): `__init__` exports resolve, no function defined twice in a module,
   no undefined global names, list of duplicates across modules, list of unexported functions.
 - [x] Numerical equivalence of duplicated pairs (`tests/test_duplicates_consistent.py`).
@@ -169,15 +200,48 @@ Square system of `2(N_s + N_f)` equations.
 - [x] Agree on the package layout and the unified kernel API (see section 7).
 - [x] Stage 1: `bemcs.get_kernels` + `KernelInfo` in `bemAssembly.py`, tested in `tests/test_get_kernels.py`
   (argument errors, shapes/info, mixed labels, numpy vs numba, old vs new) and against the Kelvin reference.
-- [ ] Stage 1b: restructure into the three levels of section 7.2 (mesh / source type / basis), with derived constant
-  bases, required `mu`/`nu`, `Mesh`, and reference kernels moved to `tests/`. Test each level (section 7.5).
+- [x] Stage 1b: three levels in `bemAssembly.py`:
+  - level 1: `Mesh`, `get_kernels(x, y, mesh, geometry=, mu=, nu=)`;
+  - level 2: `get_slip_kernels`, `get_force_kernels`;
+  - level 3: `element_kernels_slip/force`, `basis_transform`, `hat_coefficients`, `trapezoid_coefficients`.
+
+  Details:
+  - Constant bases are derived. Derived constant slip matches Crouch & Starfield to 1e-15.
+  - Every basis works in both geometries; antiplane hat is new.
+  - `get_displacement_stress_kernel_constant` moved to `tests/reference_kernels.py`.
+
+  Tests (`tests/test_get_kernels.py`, `tests/test_force_kernels_reference.py`):
+  - Lagrange-node jumps of quadratic slip;
+  - continuity of force kernels;
+  - smoothness of the hat and trapezoid transforms;
+  - mu scaling;
+  - linear and constant force vs point-force quadrature, in both geometries and both backends;
+  - mesh validation, ordering and global connectivity.
+
+  Note: `hat` still takes a user-supplied 3-element `connectivity`; the one-ring hats of section 7.4 replace it in T2.
 - [ ] Stage 2: `mesh.continuity_operator()` (section 7.4) in interleaved columns, replacing `construct_smoothoperator*`;
   switch `get_matrices_slip_slip_gradient` and the hat-coefficient builder to interleaved columns; migrate callers.
 - [ ] Stage 3: delete the old kernel functions and the old-vs-new comparison tests.
 - [ ] Fix issue 9 (numpy plane-strain force kernel), or replace it with the unified implementation.
 - [x] Add `cache=True` to every `@njit` (issue 10, first half).
 - [ ] Make numba an optional, lazily imported dependency (issue 10, second half).
-- [ ] Rewrite the plane-strain force numba kernel so it compiles fast. Measured first-call compile (no cache):
+- [x] Rewrite the plane-strain force kernel and add a plane-strain slip numba kernel (2026-11-16):
+  - **Formulas:** `_quadratic_slip_f` and `_linear_force_g` are scalar formulas generated with sympy from the old closed
+    forms (common subexpressions only, plus factored `R`; see issue 16). They are shared by numba drivers
+    (`_slip_planestrain_numba`, `_force_planestrain_numba`: `prange` over observation points, scalar maths,
+    `error_model="numpy"`) and numpy drivers (vectorized over points, via `.py_func`).
+  - **Results:** compile 1.9 s (slip) and 1.1 s (force), down from 142 s for the old force kernel. Runtime for
+    5000 observation points x 200 elements:
+
+    | | old numpy | new numpy | new numba |
+    | --- | --- | --- | --- |
+    | slip | 39 s | 0.89 s | 0.04 s |
+    | force | – | 0.39 s | 0.02 s |
+
+  - **Agreement:** numba vs numpy 3e-15; also matches the old kernels, the Kelvin quadrature and the analytic constant slip.
+  - **Generator:** a scratchpad script (not in the repo) reads the *old* formulas. Once those are deleted in stage 3,
+    the generated functions are the source of truth.
+  - Original analysis, kept for reference. Measured first-call compile (no cache):
   plane-strain force 90 s serial / 142 s `parallel=True`; antiplane kernels 2-3 s. Cause: 10 inner closures with
   long symbolic expressions (62 log/arctan calls) are inlined into one function, and they operate on whole arrays,
   so numba builds a separate loop and temporary for every sub-expression (and `parallel=True` then analyses each
@@ -187,6 +251,12 @@ Square system of `2(N_s + N_f)` equations.
   Apply the same pattern to the antiplane kernels if it helps.
 - [ ] Add reference tests for the remaining kernels: slip (plane strain and antiplane, constant and quadratic),
   antiplane force, triangle forces, hat-slip and trapezoid-force patches.
+- [x] Fix near-endpoint precision of the quadratic slip kernel (issue 16): endpoint rewrite, see issue 16. Remaining,
+  optional: the curvature form (section 8.4) to go below the ~1e-16 L/d float64 floor, and a check of the slip formula
+  itself against quadrature of the point-dislocation solution. Previous status: mostly done: factored `R` gives
+  ~1e-7 to 1e-5 relative error at 1e-5 L, and `tests/test_kernel_precision.py` sweeps 1e-1 ... 1e-5 L against 50-digit mpmath.
+  Remaining: below ~1e-6 L (section 8.4, curvature form), and checking the formula itself against quadrature of the
+  point-dislocation solution.
 - [ ] Resolve `KNOWN_UNEXPORTED` and `KNOWN_DUPLICATES` until both are empty. Then the strict xfail
   `test_no_redundancy_between_modules` will start passing; remove its marker.
 - [x] Remove `examples/antiplane/GF.py` (issue 12). It was removed with the antiplane examples that used it.
@@ -205,7 +275,8 @@ Square system of `2(N_s + N_f)` equations.
 - [ ] Move `solve_planestrain_heterogeneous` into `bemcs/bemAssembly.py` (mirroring `solveAntiplaneBEM`).
 - [ ] Build the mesh/connectivity interface (CSV: `x1,z1,x2,z2,BC_type,value`, `'h'` rows carry `alpha` or `(mu1, mu2)`).
 - [ ] Support multiple patches, and patches that share nodes (junctions between slip and interface elements).
-- [ ] Add smoothness/continuity rows for hat patches that overlap neighbours (currently one patch = one hat).
+- [ ] Replace the 3-element hat builder with one-ring hats (section 7.4): one hat per element, built from mesh
+  topology, covering tips and triple junctions. No extra continuity rows are needed, since each hat satisfies them.
 - [ ] Remove the duplicated functions (issue 4.7) and decide on the public API in `__init__.py`.
 
 ### T3. Tests and docs
@@ -285,7 +356,7 @@ strain):
 | --- | --- | --- | --- |
 | slip | `quadratic` | 3 per element | identity |
 | slip | `constant` | 1 per element | weights `[1, 1, 1]` on the element's nodes |
-| slip | `hat` | 1 per 3-element patch | hat coefficients from `connectivity` |
+| slip | `hat` | 1 per element (one-ring patch, section 7.4) | one-ring hat coefficients from mesh topology |
 | force | `linear` | 2 per element | identity |
 | force | `constant` | 1 per element | weights `[1, 1]` on the element's ramps |
 | force | `trapezoid` | 1 per 3-element patch | trapezoid coefficients from `connectivity` |
@@ -355,7 +426,7 @@ The same element kernels support both. They differ only in where the continuity 
 | --- | --- | --- |
 | unknowns | element coefficients `c`: plane strain 6N (slip), 4N (force) | patch amplitudes `a`: 2N |
 | continuity | explicit rows `A c = 0` stacked under the BC rows | built in: `c = T a` with `A T = 0` |
-| triple junctions | handled by `A` | not available (no hat shape) |
+| triple junctions | handled by `A` | one-ring hats (below) |
 
 Continuity rules (`mesh.continuity_operator()`, built on `label_nodes`):
 - **Slip** (as in today's `construct_smoothoperator`):
@@ -368,7 +439,17 @@ Continuity rules (`mesh.continuity_operator()`, built on `label_nodes`):
   - force elements never form triple junctions (raise if found).
 - **Slip-force contact.** A node where a slip element meets a force element is treated as **open for both**: each tapers to
   0, and no continuity is enforced between the two element types.
-- **Later (T4):** mix both forms in one mesh (hats away from junctions, element DOFs near triple junctions).
+- **One-ring hats** (reduced form for slip; verified in section 8.3). One hat per element and slip component:
+  - support: the element plus every element sharing one of its end nodes (2 neighbours at a triple junction);
+  - inside the support: the slip continuity rules above (overlap 4 rows, triple junction 6 rows);
+  - patch-boundary nodes: slip = 0 and gradient = 0, except a real fault tip of the central element itself, which gets
+    slip = 0 only;
+  - normalisation: unit shear or normal slip, local frame, at the element centre.
+
+  Every patch system is square (including at junctions and tips). The hats span exactly the null space of `A`, so the
+  reduced form gives the same solution as the general form with 2N unknowns. On a straight run of elements they
+  equal today's 3-element hats. Unlike today's hats, they also cover tip elements, so a fault with tips no longer
+  loses 2 DOF per component.
 
 ### 7.5 Implementation notes and stages
 
@@ -393,3 +474,54 @@ Continuity rules (`mesh.continuity_operator()`, built on `label_nodes`):
      - `mesh.continuity_operator()` in interleaved columns, replacing `construct_smoothoperator*`;
      - migrate the solvers and `examples/*.py`.
   5. **Stage 3:** delete the old functions and the old-vs-new comparison tests; empty `KNOWN_DUPLICATES`.
+
+---
+
+## 8. Findings: basis choice, triple junctions, near-node kernel precision (2026-11-16)
+
+Scratch experiment (not in the repo): straight, 30-degree kinked, and triple-junction meshes. Compared the full 6N
+system with constraint rows, `scipy.linalg.null_space` of the constraints (raw and row-scaled), the cardinal basis
+`Z (C Z)^-1`, and "one-ring" hats (below).
+
+### 8.1 Basis choice does not affect singularity cancellation
+- All bases give the same centre slip, to ~1e-14 relative, for a crack under uniform shear traction. Constraint
+  residuals are 1e-15 (hats) and 1e-14 (`null_space`), too small to leave a visible 1/r term.
+- Off-fault stress approaching a node is also identical across bases, to 5-9 digits, *including where it is wrong*.
+  Straight crack: sxy goes 0.96, 0.997, 1.0004, 1.0008 for d = 1e-1 ... 1e-4 L, then every basis gives 15.7 at
+  1e-4 L and NaN or about +/-1e6 closer in.
+- The `null_space` reduction is therefore not worse than hats. The error is in the per-element kernel columns, which
+  every basis shares.
+
+### 8.2 Root cause: float64 cancellation inside the closed-form quadratic slip kernel
+- One element's kernel (`quadratic_kernel_farfield` via `displacements_stresses_quadratic_no_rotation`) compared
+  against the *same formula* evaluated with 50-digit mpmath. Relative error vs distance from an endpoint, element
+  length 1: 1e-13 at 1e-1, 1e-11 at 1e-2, 1e-7 at 1e-3, 2e-4 at 1e-4, O(1) at <= 1e-5.
+- The formula looks correct (high-precision values show the expected log and 1/d behaviour). The problem is rounding:
+  polynomial x log/arctan terms far larger than their sum nearly cancel. This holds at *every* element endpoint, not
+  only fault tips.
+- Separately, the result is NaN directly above an endpoint for d <= 1e-5. Probably `np.sign(y / (a - x))` when
+  `a - x` rounds to 0; not confirmed.
+- Safe: collocation at element centres (L/2 from the endpoints), so homogeneous solves are unaffected.
+  At risk: anything within ~1e-3 L of a node, e.g. force collocation points next to a fault that ends on a material
+  interface, `dr`-shifted points at nodes, and fine plotting grids.
+- Not done: an independent check of the formula itself against quadrature of the point-dislocation solution.
+
+### 8.3 One-ring hats at triple junctions and fault tips (rule in section 7.4)
+- Every patch system is square, condition number 33-48, including at the junction.
+- Junction mesh: rank[Z, hats] = 2N, so the hats span exactly the constrained space.
+- cond(C · hats) ~ 2, and the end-to-end slip matches the full 6N solve.
+- Interior hats match `compute_coefs_quadratichatslip_planestrain` to 1e-16.
+
+Where these findings now live: issue 16 (kernel precision); TA task "Fix near-endpoint precision"; section 7.2 hat row
+and section 7.4 (one-ring hats replace "not available" for triple junctions, and the earlier T4 idea of mixing both
+forms is dropped); T2 task "Replace the 3-element hat builder".
+
+### 8.4 Fix options for near-node accuracy (fix the kernel, not the basis)
+1. **Curvature form for C1 bases** (preferred). Integrate by parts twice. For a basis with zero slip and slope at its
+   support ends, the 1/r and log end terms cancel analytically. The stress becomes a sum over elements of
+   piecewise-constant curvature times a bounded log-type kernel, with no cancellation. Needs a new derivation.
+2. **Near-field fallback:** adaptive Gauss quadrature or an endpoint series when d < ~1e-2 L.
+3. **Keep evaluation points >= ~1e-2 L from nodes.** Fine for collocation, not for plotting or forces near fault ends.
+
+Also seen: on the kinked fault, stress keeps falling slowly toward the kink (0.68, 0.48, 0.22 for d = 1e-1 ... 1e-3).
+This is probably a real log singularity at kinks that C1 continuity in the global frame does not remove; unverified.
