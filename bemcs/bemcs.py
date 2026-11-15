@@ -3211,7 +3211,7 @@ def get_slipvector_on_fault_antiplane(els, coeffs, n_eval):
 
 
 # Function to label open nodes, overlapping interior nodes and triple junctions automatically
-def label_nodes(els):
+def label_nodes(els, verbose=True):
     """provide a dictionary of line segments using bemcs.standardize_els_geometry(els),
     to return labelled indices for open nodes, overlapping nodes and triple junctions.
 
@@ -3286,12 +3286,13 @@ def label_nodes(els):
             print(id_combo)
             raise ValueError("Cannot deal with more than 3 lines at a node")
 
-    print("Number of open nodes =", len(index_matrix1))
-    print(":", index_matrix1)
-    print("Number of 2-overlap nodes =", len(index_matrix2))
-    print(":", index_matrix2)
-    print("Number of triple junctions =", len(index_matrix3))
-    print(":", index_matrix3)
+    if verbose:
+        print("Number of open nodes =", len(index_matrix1))
+        print(":", index_matrix1)
+        print("Number of 2-overlap nodes =", len(index_matrix2))
+        print(":", index_matrix2)
+        print("Number of triple junctions =", len(index_matrix3))
+        print(":", index_matrix3)
 
     return index_matrix1, index_matrix2, index_matrix3
 

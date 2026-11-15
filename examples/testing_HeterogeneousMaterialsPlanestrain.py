@@ -62,23 +62,21 @@ x_obs, y_obs = np.meshgrid(x_vec, y_vec)
 xo = x_obs.flatten()
 yo = y_obs.flatten()
 
-import bemcs.bemAssembly as GF
-
-# Slip kernels for plotting
-K_ux_s, K_uy_s, K_sxx_s, K_syy_s, K_sxy_s = GF.get_kernels_quadratichatslip_planestrain(
-    xo, yo, els, connect_slip, mu, nu
+# Mesh: hat slip on elements 0-2, trapezoidal force on elements 3-5
+mesh = bemcs.Mesh(
+    els,
+    ["s", "s", "s", "f", "f", "f"],
+    basis={"slip": "hat", "force": "trapezoid"},
+    connectivity={"slip": connect_slip, "force": connect_force},
 )
-# Force kernels for plotting
-K_ux_f, K_uy_f, K_sxx_f, K_syy_f, K_sxy_f = GF.get_kernels_trapezoidalforce_planestrain(
-    xo, yo, els, connect_force, mu, nu
-)
+U, S, info = bemcs.get_kernels(xo, yo, mesh, geometry="planestrain", mu=mu, nu=nu)
+print(info)
 
-# Total fields
-ux = K_ux_s @ coefs_slip + K_ux_f @ coefs_force
-uy = K_uy_s @ coefs_slip + K_uy_f @ coefs_force
-sxx = K_sxx_s @ coefs_slip + K_sxx_f @ coefs_force
-syy = K_syy_s @ coefs_slip + K_syy_f @ coefs_force
-sxy = K_sxy_s @ coefs_slip + K_sxy_f @ coefs_force
+# Total fields: the solution vector is [slip coefficients; force coefficients]
+x_sol = np.concatenate((coefs_slip, coefs_force))
+n = len(xo)
+ux, uy = (U[:, :, k, :].reshape(n, -1) @ x_sol for k in range(2))
+sxx, syy, sxy = (S[:, :, k, :].reshape(n, -1) @ x_sol for k in range(3))
 
 # Plot
 xlimits = [-3, 3]

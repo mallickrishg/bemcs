@@ -38,34 +38,22 @@ y_obs = np.linspace(-6, -1e-3, ny_obs)
 x_obs, y_obs = np.meshgrid(x_obs, y_obs)
 xo = x_obs.flatten().reshape(-1, 1)
 yo = y_obs.flatten().reshape(-1, 1)
-# compute kernels at observation points
-# Kslip_x, Kslip_y, Kslip_u = bemcs.get_displacement_stress_kernel_slip_antiplane(
-#     xo, yo, els_s, mu=1
-# )
-# compute using numba-sped up kernels
-Kslip_x, Kslip_y, Kslip_u = GF.get_displacement_stress_kernel_slip_antiplane(
-    xo.flatten(),
-    yo.flatten(),
-    els_s.x_centers,
-    els_s.y_centers,
-    els_s.half_lengths,
-    els_s.rot_mats,
-    els_s.rot_mats_inv,
-    mu=1.0,
-)
+# compute kernels at observation points: quadratic slip on the slip elements
+U_s, S_s, _ = bemcs.get_slip_kernels(xo, yo, els_s, geometry="antiplane", mu=1.0)
 
 # compute displacement and stress components
+u = U_s[:, :, 0] @ quadcoefs
+sx = S_s[:, :, 0] @ quadcoefs
+sy = S_s[:, :, 1] @ quadcoefs
 if "connmatrix" in locals():
-    Kforce_x, Kforce_y, Kforce_u = GF.get_kernels_trapezoidalforce_antiplane(
-        xo, yo, els, connmatrix
+    # trapezoidal force basis on the interface ('h') elements
+    U_f, S_f, _ = bemcs.get_force_kernels(
+        xo, yo, els, geometry="antiplane", mu=1.0,
+        basis="trapezoid", connectivity=connmatrix.astype(int),
     )
-    u = Kslip_u @ quadcoefs + Kforce_u @ forcecoefs
-    sx = Kslip_x @ quadcoefs + Kforce_x @ forcecoefs
-    sy = Kslip_y @ quadcoefs + Kforce_y @ forcecoefs
-else:
-    u = Kslip_u @ quadcoefs
-    sx = Kslip_x @ quadcoefs
-    sy = Kslip_y @ quadcoefs
+    u += U_f[:, :, 0] @ forcecoefs
+    sx += S_f[:, :, 0] @ forcecoefs
+    sy += S_f[:, :, 1] @ forcecoefs
 
 
 # %% plot fields inside the domain
@@ -118,8 +106,8 @@ plt.show()
 
 # %% plot slip on 's' mesh elements
 
-xf, yf, slipnodes = bemcs.get_slipvector_on_fault_antiplane(
-    els_s, quadcoefs.flatten(), 10
+xf, yf, slipnodes = GF.values_on_elements(
+    els_s, quadcoefs, kind="slip", geometry="antiplane", n_eval=10
 )
 plt.figure(figsize=(4, 4))
 # plt.subplot2grid((1, 3), (0, 0), colspan=2)

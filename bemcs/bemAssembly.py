@@ -154,7 +154,9 @@ def construct_linearoperator_slip_antiplane(els, BCtype, BCval, mu=1):
     Returns
     -------
     matrix_system_c : ndarray, shape (N_c, Nunknowns)
-        Central-node linear operator block. N_c = n_els (one central equation per element),
+        Central-node linear operator block. N_c = n_els (one central equation per element;
+        callers drop the rows of tip elements, see `tip_elements`, since open nodes are
+        clamped by the rows in matrix_nodes),
         Nunknowns = 3 * n_els (antiplane stride = 3 DOFs per element). Each row is either
         a slip-basis row (if BCtype == 's') or a displacement/traction-kernel row (if BCtype == 't' or 'u').
     matrix_nodes : ndarray, shape (N_o + N_i + N_t, Nunknowns)
@@ -169,45 +171,23 @@ def construct_linearoperator_slip_antiplane(els, BCtype, BCval, mu=1):
 
     stride = 3  # antiplane
     n_els = len(els.x1)
+    geometry = "antiplane"
+    mesh = Mesh(els, "slip")
 
-    index_open, index_overlap, index_triple = bemcs.label_nodes(els)
-    N_c = n_els  # central node equations
-    N_o = len(index_open)  # open node equations
-    N_i = 2 * len(index_overlap)  # overlapping node equations
-    N_t = 3 * len(index_triple)  # triple junction equations
+    # continuity rows at open, overlapping and triple-junction nodes (RHS = 0)
+    matrix_nodes, _ = mesh.continuity_operator(geometry=geometry)
+    BC_c = np.asarray(BCval, dtype=float).reshape(-1, 1)  # the only non-zero entries
+    BCnodes = np.zeros((len(matrix_nodes), 1))
 
-    Nequations = N_c + N_o + N_i + N_t
-    Nunknowns = stride * n_els
-    # We will stack this with
-    # equations for the element centers
-    # equations at open nodes (RHS = 0)
-    # equations at overlapping nodes (RHS = 0)
-    # equations at triple junctions (RHS = 0)
-    BC_c = BCval.reshape(-1, 1)  # these are the only non-zero entries
-    BC_o = np.zeros((N_o, 1))
-    BC_i = np.zeros((N_i, 1))
-    BC_t = np.zeros((N_t, 1))
-
-    # stack all the BCs into 1 big vector
-    BCnodes = np.vstack((BC_o, BC_i, BC_t))
-    matrix_system_o, matrix_system_i, matrix_system_t = (
-        bemcs.construct_smoothoperator_antiplane(
-            els, index_open, index_overlap, index_triple
-        )
+    slip_mat, _ = slip_node_matrices(els, geometry=geometry)
+    U, S, _ = get_slip_kernels(
+        els.x_centers, els.y_centers, els, geometry=geometry, mu=mu
     )
-    slip_mat, slip_gradient_mat = bemcs.get_matrices_slip_slip_gradient_antiplane(
-        els, flag="node"
-    )
-    kernels = bemcs.get_displacement_stress_kernel_slip_antiplane(
-        els.x_centers, els.y_centers, els, mu
-    )
-    t_kernels = bemcs.get_traction_kernels_antiplane(els, kernels)
-    # displacement kernels
-    u_kernels = kernels[2]
-    # Linear Operators for the appropriate boundary conditions
-    matrix_system_c = np.zeros((N_c, Nunknowns))
+    t_kernels = traction_kernels(S, els.x_normals, els.y_normals)[:, :, 0]
+    u_kernels = U[:, :, 0]
 
-    # populate matrix_system for central nodes (check for bc_label)
+    # Linear operators for the boundary conditions at the element centres
+    matrix_system_c = np.zeros((n_els, stride * n_els))
     for i in range(n_els):
         if BCtype[i] == "s":
             matrix_system_c[i, :] = slip_mat[stride * i + 1, :]
@@ -216,10 +196,7 @@ def construct_linearoperator_slip_antiplane(els, BCtype, BCval, mu=1):
         elif BCtype[i] == "u":
             matrix_system_c[i, :] = u_kernels[i, :]
         else:
-            ValueError("boundary condition label not recognized")
-
-    # stack the matrices and create only the smoothness linear operator
-    matrix_nodes = np.vstack((matrix_system_o, matrix_system_i, matrix_system_t))
+            raise ValueError(f"boundary condition label {BCtype[i]!r} not recognized")
 
     return matrix_system_c, matrix_nodes, BC_c, BCnodes
 
@@ -313,7 +290,11 @@ def solveAntiplaneBEM(fileinput, connectivityfile=None, mu=1):
         ).flatten()
 
         # --- Construct kernels ---
-        K_x, K_y, _ = get_kernels_trapezoidalforce_antiplane(xo, yo, els, connmatrix)
+        conn = connmatrix.astype(int)
+        _, S_f, _ = get_force_kernels(
+            xo, yo, els, geometry="antiplane", mu=mu, basis="trapezoid", connectivity=conn
+        )
+        K_x, K_y = S_f[:, :, 0], S_f[:, :, 1]
         nxvec = np.hstack(
             (els_s.x_normals, els.x_normals[connmatrix[:, 1].astype(int)])
         )
@@ -323,9 +304,8 @@ def solveAntiplaneBEM(fileinput, connectivityfile=None, mu=1):
         Kforce_n = K_x * nxvec[:, None] + K_y * nyvec[:, None]
 
         # Stress kernels for slip elements
-        K_x, K_y, _ = bemcs.get_displacement_stress_kernel_slip_antiplane(
-            xo, yo, els_s, mu
-        )
+        _, S_s, _ = get_slip_kernels(xo, yo, els_s, geometry="antiplane", mu=mu)
+        K_x, K_y = S_s[:, :, 0], S_s[:, :, 1]
         Kslip_n = K_x * nxvec[:, None] + K_y * nyvec[:, None]
     else:
         xo = els_s.x_centers
@@ -335,7 +315,9 @@ def solveAntiplaneBEM(fileinput, connectivityfile=None, mu=1):
 
     # Slip operator
     matrix_slip_c, matrix_slip_nodes, BC_slip_c, BC_slip_nodes = (
-        construct_linearoperator_slip_antiplane(els_s, BCtype[bc_mask], BCval[bc_mask])
+        construct_linearoperator_slip_antiplane(
+            els_s, BCtype[bc_mask], BCval[bc_mask], mu=mu
+        )
     )
 
     # --- Assemble and solve system ---
@@ -381,6 +363,11 @@ def solveAntiplaneBEM(fileinput, connectivityfile=None, mu=1):
             (BC_slip_c, np.zeros((len(connmatrix[:, 0]), 1)), BC_slip_nodes)
         )
 
+        # tip slip elements (open end node) are clamped tapers: drop their BC rows
+        tips = tip_elements(els_s)
+        matrix_system = np.delete(matrix_system, tips, axis=0)
+        BC_vector = np.delete(BC_vector, tips, axis=0)
+
         # Solve linear system
         solution_vector = np.linalg.solve(matrix_system, BC_vector)
         quadcoefs = solution_vector[: stride * len(els_s.x1)]
@@ -388,8 +375,10 @@ def solveAntiplaneBEM(fileinput, connectivityfile=None, mu=1):
 
     else:
         # Only slip elements → simpler system
-        BC_vector = np.vstack((BC_slip_c, BC_slip_nodes))
-        matrix_system = np.vstack((matrix_slip_c, matrix_slip_nodes))
+        # tip elements (open end node) are clamped tapers: drop their BC rows
+        tips = tip_elements(els_s)
+        BC_vector = np.vstack((np.delete(BC_slip_c, tips, axis=0), BC_slip_nodes))
+        matrix_system = np.vstack((np.delete(matrix_slip_c, tips, axis=0), matrix_slip_nodes))
         quadcoefs = np.linalg.solve(matrix_system, BC_vector)
         forcecoefs = np.zeros((0, 0))  # empty placeholder
 
@@ -1601,7 +1590,6 @@ def compute_coefs_trapezoidalforce_planestrain(els, connect_matrix):
     fcoefs_n = np.zeros((n_els, 2, 2, n_trapz))
 
     for i in range(n_trapz):
-        print("trapezoid number: ", i)
         x1 = els.x1[connect_matrix[i, :]]
         y1 = els.y1[connect_matrix[i, :]]
         x2 = els.x2[connect_matrix[i, :]]
@@ -1612,7 +1600,7 @@ def compute_coefs_trapezoidalforce_planestrain(els, connect_matrix):
         bemcs.standardize_els_geometry(els_subset, reorder=False)
 
         # find open and overlapping nodes
-        index_open, index_overlap, _ = bemcs.label_nodes(els_subset)
+        index_open, index_overlap, _ = bemcs.label_nodes(els_subset, verbose=False)
 
         # compute force coefficients at mesh end-points
         mat_force_local, _ = get_matrices_slip_slip_gradient(
@@ -2636,6 +2624,14 @@ def _to_global(R, ux, uy, sxx, syy, sxy):
     return gx, gy, gxx, gyy, gxy
 
 
+# Points with |y_local| <= _ON_ELEMENT * (half_length + |xi|) are on the element (to
+# rounding): the kernels return the average of the two sides there. The slip
+# formula does this for y == 0 exactly; the force formula is evaluated at
+# y = +-_TINY and averaged.
+_ON_ELEMENT = 1e-12
+_TINY = 1e-300
+
+
 @njit(parallel=True, cache=True, error_model="numpy")
 def _slip_planestrain_numba(
     x_obs, y_obs, x_centers, y_centers, x1, y1, x2, y2, half_lengths, rot_mats, mu, nu
@@ -2656,6 +2652,8 @@ def _slip_planestrain_numba(
             dy = y_obs[i] - (y2[e] if s > 0 else y1[e])
             xi = R[0, 0] * dx + R[1, 0] * dy  # local = R^T (global - endpoint)
             yl = R[0, 1] * dx + R[1, 1] * dy
+            if abs(yl) <= _ON_ELEMENT * (half_lengths[e] + abs(xi)):
+                yl = 0.0  # on the element: two-sided average
             _quadratic_slip_f(xi, yl, half_lengths[e], nu, s, f)
             for node in range(3):
                 for l in range(2):
@@ -2687,6 +2685,7 @@ def _slip_planestrain_numpy(
             dy = y_obs - np.where(s > 0, y2[e], y1[e])
             xi = R[0, 0] * dx + R[1, 0] * dy
             yl = R[0, 1] * dx + R[1, 1] * dy
+            yl = np.where(np.abs(yl) <= _ON_ELEMENT * (half_lengths[e] + np.abs(xi)), 0.0, yl)
             _quadratic_slip_f.py_func(xi, yl, half_lengths[e], nu, s, f)
             for node in range(3):
                 for l in range(2):
@@ -2707,13 +2706,23 @@ def _force_planestrain_numba(x_obs, y_obs, x_centers, y_centers, half_lengths, r
     S = np.zeros((n_obs, 2 * n_els, 3, 2))
     for i in prange(n_obs):
         g = np.empty((2, 2, 5))
+        g2 = np.empty((2, 2, 5))
         for e in range(n_els):
             R = rot_mats[e]
             dx = x_obs[i] - x_centers[e]
             dy = y_obs[i] - y_centers[e]
             xl = R[0, 0] * dx + R[1, 0] * dy
             yl = R[0, 1] * dx + R[1, 1] * dy
-            _linear_force_g(xl, yl, half_lengths[e], mu, nu, g)
+            if abs(yl) <= _ON_ELEMENT * (half_lengths[e] + abs(xl)):
+                # on the element: average of the two sides
+                _linear_force_g(xl, _TINY, half_lengths[e], mu, nu, g)
+                _linear_force_g(xl, -_TINY, half_lengths[e], mu, nu, g2)
+                for r in range(2):
+                    for l in range(2):
+                        for c in range(5):
+                            g[r, l, c] = 0.5 * (g[r, l, c] + g2[r, l, c])
+            else:
+                _linear_force_g(xl, yl, half_lengths[e], mu, nu, g)
             for r in range(2):
                 for l in range(2):
                     o = _to_global(R, g[r, l, 0], g[r, l, 1], g[r, l, 2], g[r, l, 3], g[r, l, 4])
@@ -2738,13 +2747,167 @@ def _force_planestrain_numpy(x_obs, y_obs, x_centers, y_centers, half_lengths, r
             dx, dy = x_obs - x_centers[e], y_obs - y_centers[e]
             xl = R[0, 0] * dx + R[1, 0] * dy
             yl = R[0, 1] * dx + R[1, 1] * dy
-            _linear_force_g.py_func(xl, yl, half_lengths[e], mu, nu, g)
+            on = np.abs(yl) <= _ON_ELEMENT * (half_lengths[e] + np.abs(xl))
+            _linear_force_g.py_func(xl, np.where(on, _TINY, yl), half_lengths[e], mu, nu, g)
+            if on.any():  # on the element: average of the two sides
+                g2 = np.empty_like(g)
+                _linear_force_g.py_func(xl, np.where(on, -_TINY, yl), half_lengths[e], mu, nu, g2)
+                g[..., on] = 0.5 * (g[..., on] + g2[..., on])
             for r in range(2):
                 for l in range(2):
                     o = _to_global.py_func(R, *g[r, l])
                     j = 2 * e + r
                     U[:, j, 0, l], U[:, j, 1, l] = o[0], o[1]
                     S[:, j, 0, l], S[:, j, 1, l], S[:, j, 2, l] = o[2], o[3], o[4]
+    return U, S
+
+
+@njit(cache=True, error_model="numpy")
+def _antiplane_slip_point(x, y, w):
+    """Quadratic antiplane slip at local (x, y) of an element with half-length w:
+    displacement (u1, u2, u3) and displacement gradients (ux1..3, uy1..3) of the
+    3 nodal shape functions (stress = mu * gradient). Scalars or arrays."""
+    pi = np.pi
+    # local Green’s function computations
+    log1 = np.log((w - x) ** 2 + y**2)
+    log2 = np.log((w + x) ** 2 + y**2)
+    atan1 = np.arctan((w - x) / y)
+    atan2 = np.arctan((w + x) / y)
+
+    w2 = w**2
+    w3 = w**3
+    u1 = (3 / (16 * w2 * pi)) * (
+        6 * w * y
+        + ((-2) * w * x + 3 * (x - y) * (x + y)) * (atan1 + atan2)
+        + (w - 3 * x) * y * (-log1 + log2)
+    )
+
+    u2 = (1 / (8 * w2 * pi)) * (
+        (-18) * w * y
+        + (4 * w2 + 9 * y**2) * atan1
+        + 9 * x**2 * np.arctan((-w + x) / y)
+        + (4 * w2 - 9 * x**2 + 9 * y**2) * atan2
+        + 9 * x * y * (-log1 + log2)
+    )
+
+    u3 = (3 / (16 * w2 * pi)) * (
+        6 * w * y
+        + (2 * w * x + 3 * (x - y) * (x + y)) * (atan1 + atan2)
+        + (w + 3 * x) * y * (log1 - log2)
+    )
+
+    # --- stress kernels (sxz, syz) ---
+    # Following your ux1, uy1... formulae but vectorized
+    ux1 = (3 / (16 * w2 * pi)) * (
+        (-2) * (w - 3 * x) * (atan1 + atan2)
+        + y
+        * (
+            w2 * ((-1) / ((w - x) ** 2 + y**2) + 5 / ((w + x) ** 2 + y**2))
+            + 3 * log1
+            - 3 * log2
+        )
+    )
+
+    uy1 = (3 / (16 * w2 * pi)) * (
+        w
+        * (
+            12
+            + w * (-w + x) / ((w - x) ** 2 + y**2)
+            - 5 * w * (w + x) / ((w + x) ** 2 + y**2)
+        )
+        - 6 * y * (atan1 + atan2)
+        - (w - 3 * x) * (log1 - log2)
+    )
+
+    ux2 = (1 / (8 * w2 * pi)) * (
+        (-18) * x * (atan1 + atan2)
+        + y
+        * (
+            20
+            * w3
+            * x
+            / ((w**4 + 2 * w2 * ((-1) * x**2 + y**2) + (x**2 + y**2) ** 2))
+            - 9 * log1
+            + 9 * log2
+        )
+    )
+
+    uy2 = (-1 / (8 * w2 * pi)) * (
+        w
+        * (
+            36
+            + 5 * w * (-w + x) / ((w - x) ** 2 + y**2)
+            - 5 * w * (w + x) / ((w + x) ** 2 + y**2)
+        )
+        - 18 * y * (atan1 + atan2)
+        + 9 * x * (log1 - log2)
+    )
+
+    ux3 = (3 / (16 * w2 * pi)) * (
+        2 * (w + 3 * x) * (atan1 + atan2)
+        + y
+        * (
+            w2 * ((-5) / ((w - x) ** 2 + y**2) + 1 / ((w + x) ** 2 + y**2))
+            + 3 * log1
+            - 3 * log2
+        )
+    )
+
+    uy3 = (3 / (16 * w2 * pi)) * (
+        w
+        * (
+            12
+            + 5 * w * (-w + x) / ((w - x) ** 2 + y**2)
+            - w * (w + x) / ((w + x) ** 2 + y**2)
+        )
+        - 6 * y * (atan1 + atan2)
+        + (w + 3 * x) * (log1 - log2)
+    )
+
+    return u1, u2, u3, ux1, ux2, ux3, uy1, uy2, uy3
+
+
+@njit(parallel=True, cache=True, error_model="numpy")
+def _slip_antiplane_numba(x_obs, y_obs, x_centers, y_centers, half_lengths, rot_mats, mu):
+    """Quadratic slip, antiplane: U (n_obs, 3 n_els, 1), S (n_obs, 3 n_els, 2)."""
+    n_obs = x_obs.shape[0]
+    n_els = x_centers.shape[0]
+    U = np.zeros((n_obs, 3 * n_els, 1))
+    S = np.zeros((n_obs, 3 * n_els, 2))
+    for i in prange(n_obs):
+        for e in range(n_els):
+            R = rot_mats[e]
+            dx = x_obs[i] - x_centers[e]
+            dy = y_obs[i] - y_centers[e]
+            x = R[0, 0] * dx + R[1, 0] * dy
+            y = R[0, 1] * dx + R[1, 1] * dy
+            v = _antiplane_slip_point(x, y, half_lengths[e])
+            for k in range(3):
+                gx = mu * v[3 + k]
+                gy = mu * v[6 + k]
+                U[i, 3 * e + k, 0] = v[k]
+                S[i, 3 * e + k, 0] = R[0, 0] * gx + R[0, 1] * gy
+                S[i, 3 * e + k, 1] = R[1, 0] * gx + R[1, 1] * gy
+    return U, S
+
+
+def _slip_antiplane_numpy(x_obs, y_obs, x_centers, y_centers, half_lengths, rot_mats, mu):
+    """Same as _slip_antiplane_numba, vectorized over observation points."""
+    n_obs, n_els = x_obs.shape[0], x_centers.shape[0]
+    U = np.zeros((n_obs, 3 * n_els, 1))
+    S = np.zeros((n_obs, 3 * n_els, 2))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        for e in range(n_els):
+            R = rot_mats[e]
+            dx, dy = x_obs - x_centers[e], y_obs - y_centers[e]
+            x = R[0, 0] * dx + R[1, 0] * dy
+            y = R[0, 1] * dx + R[1, 1] * dy
+            v = _antiplane_slip_point.py_func(x, y, half_lengths[e])
+            for k in range(3):
+                gx, gy = mu * v[3 + k], mu * v[6 + k]
+                U[:, 3 * e + k, 0] = v[k]
+                S[:, 3 * e + k, 0] = R[0, 0] * gx + R[0, 1] * gy
+                S[:, 3 * e + k, 1] = R[1, 0] * gx + R[1, 1] * gy
     return U, S
 
 
@@ -2918,9 +3081,9 @@ def element_kernels_slip(x_obs, y_obs, els, *, geometry, mu, nu=None, use_numba=
     _check_material(geometry, mu, nu)
     xo, yo = _obs(x_obs, y_obs)
     if geometry == "antiplane":
-        f = _backend(get_displacement_stress_kernel_slip_antiplane, use_numba)
-        sxz, syz, u = f(xo, yo, *_els_arrays(els), float(mu))
-        return u[:, :, None], np.stack((sxz, syz), axis=2)
+        driver = _slip_antiplane_numba if use_numba else _slip_antiplane_numpy
+        xc, yc, hl, rot, _ = _els_arrays(els)
+        return driver(xo, yo, xc, yc, hl, rot, float(mu))
     driver = _slip_planestrain_numba if use_numba else _slip_planestrain_numpy
     xc, yc, hl, rot, _ = _els_arrays(els)
     x1, y1, x2, y2 = (np.ascontiguousarray(getattr(els, k), dtype=float) for k in ("x1", "y1", "x2", "y2"))
@@ -2960,28 +3123,28 @@ def _per_element_transform(n_els, n_nodes, weights, geometry):
 def hat_coefficients(els, connectivity, *, geometry):
     """Transform from quadratic-slip element DOFs to hat patches (one per row of connectivity).
 
-    Each hat has unit slip at the central node of its middle element, zero slip and
-    slip gradient at the open ends, and continuous slip and slip gradient at the two
+    Each hat has unit slip (t or n in plane strain, element-local frame) at the
+    central node of its middle element, zero slip and slip gradient at the open
+    ends, and continuous slip and slip gradient (global frame) at the two
     internal nodes. Returns (3 n_els, n_patches) in antiplane and
     (3 n_els, 2, n_patches, 2) [dof, direction_in, patch, direction_out] in plane strain.
     """
+    if geometry not in _GEOMETRIES:
+        raise ValueError(f"geometry must be one of {_GEOMETRIES}, got {geometry!r}")
     conn = _check_connectivity(connectivity, len(els.x_centers))
     n_els, n_p = len(els.x_centers), len(conn)
-    if geometry == "planestrain":
-        cs, cn = compute_coefs_quadratichatslip_planestrain(els, conn)  # (n_els, 6, n_p)
-        c = np.stack((cs, cn), axis=-1).reshape(n_els, 2, 3, n_p, 2)
-        return c.transpose(0, 2, 1, 3, 4).reshape(n_els * 3, 2, n_p, 2)
-    if geometry != "antiplane":
-        raise ValueError(f"geometry must be one of {_GEOMETRIES}, got {geometry!r}")
-    T = np.zeros((n_els * 3, n_p))
+    pe = 1 if geometry == "antiplane" else 2
+    n_unknowns = 9 * pe
+    T = np.zeros((n_els * 3, pe, n_p, pe))
     for p in range(n_p):
         sub = _subset_els(els, conn[p])
-        index_open, index_overlap, _ = _core.label_nodes(sub)
-        m_slip, m_grad = _core.get_matrices_slip_slip_gradient_antiplane(sub)
-        rows = [m_slip[4]]  # central node of the middle element
+        index_open, index_overlap, _ = _core.label_nodes(sub, verbose=False)
+        m_slip, m_grad = slip_node_matrices(sub, geometry=geometry, reference="global")
+        m_local, _ = slip_node_matrices(sub, geometry=geometry, reference="local")
+        rows = [m_local[pe * 4 + c] for c in range(pe)]  # centre of the middle element
         for node in index_open:
             n = int(np.abs(node).item())
-            rows += [m_slip[n], m_grad[n]]
+            rows += [M[pe * n + c] for M in (m_slip, m_grad) for c in range(pe)]
         for a, b in index_overlap:
             if a != 0 and b != 0:
                 sa, sb = np.sign(a), np.sign(b)
@@ -2990,20 +3153,21 @@ def hat_coefficients(els, connectivity, *, geometry):
             else:
                 sa, sb = -1, 1
             rows += [
-                sa * m_slip[abs(a)] + sb * m_slip[abs(b)],
-                sa * m_grad[abs(a)] + sb * m_grad[abs(b)],
+                sa * M[pe * abs(a) + c] + sb * M[pe * abs(b) + c]
+                for M in (m_slip, m_grad)
+                for c in range(pe)
             ]
         A = np.array(rows)
-        if A.shape != (9, 9):
+        if A.shape != (n_unknowns, n_unknowns):
             raise ValueError(
                 f"patch {p} ({conn[p].tolist()}) is not a chain of 3 connected elements"
             )
-        rhs = np.zeros(9)
-        rhs[0] = 1.0
-        coefs = np.linalg.solve(A, rhs)
+        rhs = np.zeros((n_unknowns, pe))
+        rhs[:pe, :] = np.eye(pe)  # unit slip along each local direction
+        coefs = np.linalg.solve(A, rhs).reshape(3, 3, pe, pe)  # (element, node, l_in, m_out)
         for local, e in enumerate(conn[p]):
-            T[3 * e : 3 * e + 3, p] = coefs[3 * local : 3 * local + 3]
-    return T
+            T[3 * e : 3 * e + 3, :, p, :] = coefs[local]
+    return T[:, 0, :, 0] if geometry == "antiplane" else T
 
 
 def trapezoid_coefficients(els, connectivity, *, geometry):
@@ -3044,6 +3208,259 @@ def _apply_transform(U, S, T, geometry):
     if geometry == "antiplane":
         return np.einsum("osc,sb->obc", U, T), np.einsum("osc,sb->obc", S, T)
     return np.einsum("oscl,slbm->obcm", U, T), np.einsum("oscl,slbm->obcm", S, T)
+
+
+# ----------------------------------------------------------------------------
+# level 3: node operators, continuity rows, tractions, values along elements
+#
+# Column convention (same as the kernels): element-basis coefficient j =
+# n_nodes * element + node; in plane strain each j has a direction l in (t, n)
+# and the flattened column is 2 j + l (interleaved [t0, n0, t1, n1, ...]).
+# ----------------------------------------------------------------------------
+
+_FORCE_AT_NODES = np.array([[0.0, 1.0], [1.0, 0.0]])  # rows: start, end node; cols: ramp 0, 1
+
+
+def _unit_vectors(els, e):
+    """[[x_shear, x_normal], [y_shear, y_normal]]: local (t, n) -> global (x, y)."""
+    return np.array(
+        [[els.x_shears[e], els.x_normals[e]], [els.y_shears[e], els.y_normals[e]]]
+    )
+
+
+def _node_matrix(els, per_element, geometry, reference):
+    """Assemble block-diagonal node matrices from per-element (rows=nodes, cols=basis) blocks."""
+    n_els = len(els.x_centers)
+    blocks = [per_element(e) for e in range(n_els)]
+    n_rows, n_cols = blocks[0].shape
+    if geometry == "antiplane":
+        M = np.zeros((n_els * n_rows, n_els * n_cols))
+        for e, B in enumerate(blocks):
+            M[e * n_rows : (e + 1) * n_rows, e * n_cols : (e + 1) * n_cols] = B
+        return M
+    if reference not in ("global", "local"):
+        raise ValueError(f"reference must be 'global' or 'local', got {reference!r}")
+    M = np.zeros((2 * n_els * n_rows, 2 * n_els * n_cols))
+    for e, B in enumerate(blocks):
+        Uv = _unit_vectors(els, e) if reference == "global" else np.eye(2)
+        M[2 * e * n_rows : 2 * (e + 1) * n_rows, 2 * e * n_cols : 2 * (e + 1) * n_cols] = np.kron(B, Uv)
+    return M
+
+
+def slip_node_matrices(els, *, geometry, reference="global"):
+    """Slip and slip gradient (d/ds along each element) at the 3 nodes of every element.
+
+    Rows: node 3 e + k (k = 0, 1, 2 at s = -w, 0, w); in plane strain each row has a
+    component c (x, y if reference="global"; t, n if "local") at row 2 (3 e + k) + c.
+    Columns: quadratic-slip coefficients in the kernel convention (interleaved in
+    plane strain).
+    """
+    def nodes(e):
+        w = els.half_lengths[e]
+        return np.array([-w, 0.0, w]), w
+
+    def slip(e):
+        x, w = nodes(e)
+        return _core.slip_functions(x, w)
+
+    def grad(e):
+        x, w = nodes(e)
+        return _core.slipgradient_functions(x, w)
+
+    return (
+        _node_matrix(els, slip, geometry, reference),
+        _node_matrix(els, grad, geometry, reference),
+    )
+
+
+def force_node_matrix(els, *, geometry, reference="global"):
+    """Force at the 2 end nodes of every element (row 2 e + k, k = 0 start, 1 end).
+
+    Columns: linear-force coefficients (ramp 0 = (w+s)/2w, ramp 1 = (w-s)/2w),
+    interleaved in plane strain; rows as in `slip_node_matrices`.
+    """
+    return _node_matrix(els, lambda e: _FORCE_AT_NODES, geometry, reference)
+
+
+def continuity_rows(els, *, kind, geometry):
+    """Continuity rows A (A c = 0) for element-basis coefficients of one source type.
+
+    kind="slip" (quadratic): open nodes (fault tips) are clamped: slip = 0 and
+    slip gradient = 0; overlapping nodes: slip and slip-gradient continuity;
+    triple junctions: slip kinematics and slip-gradient (Jacobian) conditions.
+    An element with an open node is a taper (tip) element and should get no
+    boundary-condition row (see `tip_elements`). kind="force" (linear): open nodes:
+    force = 0; overlapping nodes: force continuity; triple junctions are an
+    error. Rows act on global-frame quantities. Returns (A, info) where info
+    holds per-row arrays: node_type, quantity, node (label_nodes index), x, y.
+    """
+    index_open, index_overlap, index_triple = _core.label_nodes(els, verbose=False)
+    pe = 1 if geometry == "antiplane" else 2  # components per node
+    if kind == "slip":
+        M_val, M_grad = slip_node_matrices(els, geometry=geometry)
+
+        def row(M, node3, c):  # node3 = 3 e + k in label_nodes numbering
+            return M[pe * node3 + c]
+
+        quantities = (("slip", M_val), ("gradient", M_grad))
+    elif kind == "force":
+        if index_triple:
+            raise ValueError("force elements cannot form triple junctions")
+        M_val = force_node_matrix(els, geometry=geometry)
+
+        def row(M, node3, c):  # label_nodes uses 3 e (start) and 3 e + 2 (end)
+            e, k = divmod(int(node3), 3)
+            return M[pe * (2 * e + (k // 2)) + c]
+
+        quantities = (("force", M_val),)
+    else:
+        raise ValueError(f"kind must be 'slip' or 'force', got {kind!r}")
+
+    rows, node_type, quantity, node_id = [], [], [], []
+
+    def add(r, t, q, n):
+        rows.append(r)
+        node_type.append(t)
+        quantity.append(q)
+        node_id.append(int(n))
+
+    for node in index_open:  # slip: clamped (value and gradient); force: value
+        n = int(np.abs(node).item())
+        for q, M in quantities:
+            for c in range(pe):
+                add(row(M, n, c), "open", q, n)
+
+    for a, b in index_overlap:
+        if a != 0 and b != 0:
+            sa, sb = np.sign(a), np.sign(b)
+        elif a == 0:
+            sa, sb = 1, -1
+        else:
+            sa, sb = -1, 1
+        for q, M in quantities:
+            for c in range(pe):
+                add(sa * row(M, abs(a), c) + sb * row(M, abs(b), c), "overlap", q, abs(a))
+
+    for ids in index_triple:  # slip only
+        ids = np.asarray(ids)
+        signs = np.where(ids < 0, -1.0, 1.0)
+        nodes = np.abs(ids)
+        for c in range(pe):
+            add(sum(sg * row(M_val, n, c) for sg, n in zip(signs, nodes)), "triple", "slip", nodes[0])
+        # slip gradient along each element, projected on the x and y axes (Jacobian form)
+        shear = np.array([[els.x_shears[n // 3], els.y_shears[n // 3]] for n in nodes])
+        for c in range(pe):
+            for axis in range(2):
+                add(
+                    sum(sg * row(M_grad, n, c) * shear[i, axis] for i, (sg, n) in enumerate(zip(signs, nodes))),
+                    "triple", "gradient", nodes[0],
+                )
+
+    n_cols = M_val.shape[1]
+    A = np.array(rows) if rows else np.zeros((0, n_cols))
+    node_id = np.array(node_id, dtype=int)
+    e, k = node_id // 3, node_id % 3
+    s_node = np.where(k == 0, -1.0, np.where(k == 2, 1.0, 0.0))
+    R = np.asarray(els.rot_mats)
+    hl = np.asarray(els.half_lengths)
+    x = np.asarray(els.x_centers)[e] + R[e, 0, 0] * s_node * hl[e] if len(e) else np.zeros(0)
+    y = np.asarray(els.y_centers)[e] + R[e, 1, 0] * s_node * hl[e] if len(e) else np.zeros(0)
+    info = {
+        "node_type": np.array(node_type, dtype=object),
+        "quantity": np.array(quantity, dtype=object),
+        "node": node_id,
+        "x": x,
+        "y": y,
+    }
+    return A, info
+
+
+def tip_elements(els):
+    """Indices of elements with an open end node (fault tips).
+
+    With clamped tips (slip and slip gradient = 0 at open nodes, tasks.md 7.4) a
+    tip element is a taper element: it gets no boundary-condition row. An element
+    with both end nodes open cannot be represented and raises ValueError.
+    """
+    index_open, _, _ = _core.label_nodes(els, verbose=False)
+    elements = np.array([int(np.abs(n).item()) // 3 for n in index_open], dtype=int)
+    tips, counts = np.unique(elements, return_counts=True)
+    both = tips[counts > 1]
+    if both.size:
+        raise ValueError(
+            f"element(s) {both.tolist()} have both end nodes open; a clamped-tip slip "
+            "element needs at least one connected neighbour"
+        )
+    return tips
+
+
+def traction_kernels(S, nx, ny, sx=None, sy=None):
+    """Traction kernels t = sigma . n from stress kernels S (get_kernels layout).
+
+    nx, ny: unit normal at each observation point (length n_obs). Returns
+    planestrain (n_obs, n_src, 2, 2) = [tx, ty] x [t, n] and antiplane
+    (n_obs, n_src, 1). If the unit tangent (sx, sy) is given (plane strain),
+    the traction is returned in that local frame: [t . s, t . n].
+    """
+    nx = np.asarray(nx, dtype=float).ravel()[:, None]
+    ny = np.asarray(ny, dtype=float).ravel()[:, None]
+    if S.ndim == 3:  # antiplane: [sxz, syz]
+        return (S[:, :, 0] * nx + S[:, :, 1] * ny)[:, :, None]
+    nx, ny = nx[..., None], ny[..., None]
+    tx = S[:, :, 0] * nx + S[:, :, 2] * ny
+    ty = S[:, :, 2] * nx + S[:, :, 1] * ny
+    if sx is None:
+        return np.stack((tx, ty), axis=2)
+    sx = np.asarray(sx, dtype=float).ravel()[:, None, None]
+    sy = np.asarray(sy, dtype=float).ravel()[:, None, None]
+    return np.stack((tx * sx + ty * sy, tx * nx + ty * ny), axis=2)
+
+
+def kernel_matrix(K):
+    """Flatten a kernel array into a system-matrix block.
+
+    planestrain (n_obs, n_src, n_comp, 2) -> (n_obs * n_comp, 2 * n_src): rows are
+    observation-major then component; columns interleaved [t0, n0, t1, n1, ...].
+    antiplane (n_obs, n_src, n_comp) -> (n_obs * n_comp, n_src).
+    """
+    K = np.asarray(K)
+    if K.ndim == 3:
+        return K.transpose(0, 2, 1).reshape(K.shape[0] * K.shape[2], K.shape[1])
+    if K.ndim == 4:
+        n_obs, n_src, n_comp, n_dir = K.shape
+        return K.transpose(0, 2, 1, 3).reshape(n_obs * n_comp, n_src * n_dir)
+    raise ValueError(f"expected a 3-D or 4-D kernel array, got shape {K.shape}")
+
+
+def values_on_elements(els, coefs, *, kind, geometry, n_eval=10, frame="global"):
+    """Slip or force along every element from element-basis coefficients.
+
+    coefs: flattened coefficient vector in the kernel convention (quadratic
+    slip or linear force). Evaluates at n_eval points per element (midpoints of
+    n_eval equal sub-intervals). Returns x, y (n_els * n_eval,) and values:
+    antiplane (n,) ; plane strain (n, 2) in global (x, y) or local (t, n) frame.
+    """
+    n_els = len(els.x_centers)
+    n_nodes = _NODES[kind]
+    pe = 1 if geometry == "antiplane" else 2
+    c = np.asarray(coefs, dtype=float).ravel().reshape(n_els, n_nodes, pe)
+    t = (np.arange(n_eval) + 0.5) / n_eval * 2 - 1  # in (-1, 1), as s / w
+    if kind == "slip":
+        P = _core.slip_functions(t, 1.0)  # (n_eval, 3)
+    else:
+        P = np.stack(((1 + t) / 2, (1 - t) / 2), axis=1)  # ramps 0, 1
+    vals = np.einsum("pk,ekc->epc", P, c)  # (n_els, n_eval, pe)
+    R = np.asarray(els.rot_mats)
+    x = (np.asarray(els.x_centers)[:, None] + R[:, 0, 0][:, None] * t * np.asarray(els.half_lengths)[:, None]).ravel()
+    y = (np.asarray(els.y_centers)[:, None] + R[:, 1, 0][:, None] * t * np.asarray(els.half_lengths)[:, None]).ravel()
+    if geometry == "antiplane":
+        return x, y, vals.reshape(-1)
+    if frame == "global":
+        Uv = np.stack([_unit_vectors(els, e) for e in range(n_els)])  # (e, 2, 2)
+        vals = np.einsum("ecl,epl->epc", Uv, vals)
+    elif frame != "local":
+        raise ValueError(f"frame must be 'global' or 'local', got {frame!r}")
+    return x, y, vals.reshape(-1, 2)
 
 
 # ----------------------------------------------------------------------------
@@ -3143,6 +3560,12 @@ def get_slip_kernels(
     kernels are evaluated relative to the nearest element end point, so in
     float64 the cancellation holds to about 1e-16 L/d at a distance d from a
     node (L = element length).
+
+    Points on an element. Stresses (and, for slip, displacements) jump across
+    an element. For an observation point on an element (local |y| within
+    rounding, <= 1e-12 of the element scale) the plane-strain kernels return the
+    average of the two sides. To evaluate one side, offset the point along the
+    element normal explicitly.
     """
     return _source_kernels(
         "slip", x_obs, y_obs, els, geometry, mu, nu, basis, connectivity, use_numba
@@ -3262,6 +3685,100 @@ class Mesh:
         parts = [f"{k}: {len(self.elements(k))} elements, {self.basis[k]} basis" for k in self.kinds]
         return f"Mesh({self.n_els} elements; " + "; ".join(parts) + ")"
 
+    # --- layout of the flattened coefficient vector x = [slip; force] -------------
+
+    def n_src(self, kind):
+        """Number of source coefficients of one type (axis 1 of the kernels)."""
+        b = self.basis[kind]
+        n = len(self.elements(kind))
+        if b in _PATCH_BASES:
+            return len(self.connectivity[kind])
+        return n if b == "constant" else n * _NODES[kind]
+
+    def columns(self, kind, *, geometry):
+        """Slice of one source type in the flattened coefficient vector."""
+        pe = 1 if geometry == "antiplane" else 2
+        start = 0
+        for k in self.kinds:
+            n = pe * self.n_src(k)
+            if k == kind:
+                return slice(start, start + n)
+            start += n
+        raise ValueError(f"no element is labelled {kind[0]!r}")
+
+    def n_columns(self, *, geometry):
+        pe = 1 if geometry == "antiplane" else 2
+        return pe * sum(self.n_src(k) for k in self.kinds)
+
+    # --- continuity (general, element-DOF formulation) ------------------------------
+
+    def tip_elements(self, kind="slip"):
+        """Global indices of the tip (taper) elements of one source type: elements
+        with an open end node. They get no boundary-condition row (tasks.md 7.4)."""
+        sub, idx, _ = self.subset(kind)
+        return idx[tip_elements(sub)]
+
+    def bc_elements(self, kind="slip"):
+        """Global indices of the elements of one source type that carry a
+        boundary-condition row: all except the tip elements."""
+        return np.setdiff1d(self.elements(kind), self.tip_elements(kind))
+
+    def continuity_operator(self, *, geometry):
+        """Continuity rows A (A x = 0, or = prescribed values at open nodes) for the mesh.
+
+        Rows are produced for source types with an element basis ("quadratic" slip,
+        "linear" force); patch bases satisfy continuity by construction and the
+        constant bases have none. Each type is labelled on its own elements, so a
+        node shared by a slip and a force element is an open node of both
+        (tasks.md 7.4). Returns (A, info), A of shape (n_rows, n_columns); info
+        holds per-row arrays: kind, node_type ("open"/"overlap"/"triple"),
+        quantity ("slip"/"gradient"/"force"), element, x, y.
+        """
+        if geometry not in _GEOMETRIES:
+            raise ValueError(f"geometry must be one of {_GEOMETRIES}, got {geometry!r}")
+        blocks, info = [], {k: [] for k in ("kind", "node_type", "quantity", "element", "x", "y")}
+        n_cols = self.n_columns(geometry=geometry)
+        for k in self.kinds:
+            if self.basis[k] != _ELEMENT_BASIS[k]:
+                continue
+            sub, idx, _ = self.subset(k)
+            A_k, inf = continuity_rows(sub, kind=k, geometry=geometry)
+            A = np.zeros((len(A_k), n_cols))
+            A[:, self.columns(k, geometry=geometry)] = A_k
+            blocks.append(A)
+            info["kind"].append(np.full(len(A_k), k[0]))
+            info["node_type"].append(inf["node_type"])
+            info["quantity"].append(inf["quantity"])
+            info["element"].append(idx[inf["node"] // 3])
+            info["x"].append(inf["x"])
+            info["y"].append(inf["y"])
+        if not blocks:
+            return np.zeros((0, n_cols)), {k: np.zeros(0) for k in info}
+        return np.vstack(blocks), {k: np.concatenate(v) for k, v in info.items()}
+
+    # --- from solution coefficients to element-basis coefficients and values -----
+
+    def element_coefficients(self, x, kind, *, geometry):
+        """Element-basis (quadratic slip / linear force) coefficients of one source type,
+        flattened in the kernel convention, from the mesh solution vector x."""
+        x = np.asarray(x, dtype=float).ravel()
+        if x.size != self.n_columns(geometry=geometry):
+            raise ValueError(f"x has {x.size} entries, the mesh has {self.n_columns(geometry=geometry)}")
+        a = x[self.columns(kind, geometry=geometry)]
+        if self.basis[kind] == _ELEMENT_BASIS[kind]:
+            return a
+        sub, _, conn = self.subset(kind)
+        T = basis_transform(sub, kind=kind, basis=self.basis[kind], geometry=geometry, connectivity=conn)
+        if geometry == "antiplane":
+            return T @ a
+        return np.einsum("slbm,bm->sl", T, a.reshape(-1, 2)).ravel()
+
+    def values_on_elements(self, x, kind, *, geometry, n_eval=10, frame="global"):
+        """Slip or force along the elements of one source type (see `values_on_elements`)."""
+        sub, _, _ = self.subset(kind)
+        c = self.element_coefficients(x, kind, geometry=geometry)
+        return values_on_elements(sub, c, kind=kind, geometry=geometry, n_eval=n_eval, frame=frame)
+
 
 def get_kernels(x_obs, y_obs, mesh, *, geometry, mu, nu=None, use_numba=False):
     """Displacement and stress kernels of every source in a mesh.
@@ -3306,6 +3823,12 @@ def get_kernels(x_obs, y_obs, mesh, *, geometry, mu, nu=None, use_numba=False):
     kernels are evaluated relative to the nearest element end point, so in
     float64 the cancellation holds to about 1e-16 L/d at a distance d from a
     node (L = element length).
+
+    Points on an element. Stresses (and, for slip, displacements) jump across
+    an element. For an observation point on an element (local |y| within
+    rounding, <= 1e-12 of the element scale) the plane-strain kernels return the
+    average of the two sides. To evaluate one side, offset the point along the
+    element normal explicitly.
     """
     if not isinstance(mesh, Mesh):
         raise TypeError(

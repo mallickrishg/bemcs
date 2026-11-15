@@ -8,6 +8,16 @@ import warnings
 # Suppress all warnings
 warnings.filterwarnings("ignore")
 
+
+
+def fields(K, coefs):
+    """Components of a kernel array (get_kernels layout) times the coefficients,
+    each as a column (n_obs, 1)."""
+    n = K.shape[0]
+    c = np.asarray(coefs).reshape(-1, 1)
+    return [K[:, :, k, :].reshape(n, -1) @ c for k in range(K.shape[2])]
+
+
 # %% Define mesh and boundary conditions
 # construct mesh
 Lscale = 30
@@ -115,10 +125,6 @@ x_obs, y_obs = np.meshgrid(x_obs, y_obs)
 x_obs = x_obs.flatten()
 y_obs = y_obs.flatten()
 
-# Compute shear and tensile stress kernels (slip basis)
-kernels_s = bemcs.get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, "shear")
-kernels_n = bemcs.get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, "normal")
-
 # create a mask to remove all plotted values above topography (outside the domain)
 index = bemcs.inpolygon(
     x_obs,
@@ -128,25 +134,23 @@ index = bemcs.inpolygon(
 )
 # index = np.ones_like(x_obs, dtype=bool)
 
-# compute kernels [Nobs x 2*N_trapz]
-K_ux, K_uy, K_sxx, K_syy, K_sxy = (
-    bemcs.bemAssembly.get_kernels_trapezoidalforce_planestrain(
-        x_obs, y_obs, els, connect_matrix
-    )
-)
+# force kernels (trapezoidal basis) at the observation points
+geometry = "planestrain"
+force_kw = dict(geometry=geometry, mu=mu, nu=nu, basis="trapezoid", connectivity=connect_matrix)
+U_f, S_f, _ = bemcs.get_force_kernels(x_obs, y_obs, els, **force_kw)
 
 # Solve topographic load problem
 bc_x = BCval * els.x_normals
 bc_y = BCval * els.y_normals
 
-# solve for slip coefficients
-quadratic_coefs_s, quadratic_coefs_n = UF.solve_bem_system_slip(
+# solve for slip coefficients (quadratic slip on every element)
+quadratic_coefs, mesh_slip = UF.solve_bem_system_slip(
     els, bc_x, bc_y, BCtype, BCtype, mu, nu
 )
-# Compute stresses
-ux, uy, sxx, syy, sxy = bemcs.coeffs_to_disp_stress(
-    kernels_s, kernels_n, quadratic_coefs_s, quadratic_coefs_n
-)
+# slip kernels at the observation points and the resulting fields
+U_s, S_s, _ = bemcs.get_kernels(x_obs, y_obs, mesh_slip, geometry=geometry, mu=mu, nu=nu)
+ux, uy = fields(U_s, quadratic_coefs)
+sxx, syy, sxy = fields(S_s, quadratic_coefs)
 # # plot displacements & stresses
 # n_skip_plot = 3
 # bemcs.plot_displacements_stresses_els(
@@ -154,8 +158,8 @@ ux, uy, sxx, syy, sxy = bemcs.coeffs_to_disp_stress(
 # )
 
 
-# solve for force coefficients
-fcoefs_s, fcoefs_n = UF.solve_bem_system_force(
+# solve for force coefficients (interleaved [t0, n0, t1, n1, ...])
+fcoefs = UF.solve_bem_system_force(
     els,
     connect_matrix,
     bc_x[connect_matrix[:, 1]],
@@ -166,11 +170,8 @@ fcoefs_s, fcoefs_n = UF.solve_bem_system_force(
     nu,
 )
 # compute displacements & stresses from force coefficients
-ux_f = K_ux[:, 0::2] @ fcoefs_s + K_ux[:, 1::2] @ fcoefs_n
-uy_f = K_uy[:, 0::2] @ fcoefs_s + K_uy[:, 1::2] @ fcoefs_n
-sxx_f = K_sxx[:, 0::2] @ fcoefs_s + K_sxx[:, 1::2] @ fcoefs_n
-syy_f = K_syy[:, 0::2] @ fcoefs_s + K_syy[:, 1::2] @ fcoefs_n
-sxy_f = K_sxy[:, 0::2] @ fcoefs_s + K_sxy[:, 1::2] @ fcoefs_n
+ux_f, uy_f = fields(U_f, fcoefs)
+sxx_f, syy_f, sxy_f = fields(S_f, fcoefs)
 # # plot displacements & stresses
 # bemcs.plot_displacements_stresses_els(
 #     els, n_obs, ux_f, uy_f, sxx_f, syy_f, sxy_f, x_obs, y_obs, n_skip_plot
@@ -261,9 +262,7 @@ plt.ylabel("z", fontsize=12)
 plt.show()
 
 # now plot stress components using slip coefficients
-_, _, sxx_f, syy_f, sxy_f = bemcs.coeffs_to_disp_stress(
-    kernels_s, kernels_n, quadratic_coefs_s, quadratic_coefs_n
-)
+sxx_f, syy_f, sxy_f = fields(S_s, quadratic_coefs)
 # plotting parameters
 maxval = 2.0
 plt.figure(figsize=(15, 5))
@@ -294,9 +293,7 @@ for count in range(3):
     plt.title(labelname + " (slip)")
 
 # now plot stress components using force coefficients
-sxx_f = K_sxx[:, 0::2] @ fcoefs_s + K_sxx[:, 1::2] @ fcoefs_n
-syy_f = K_syy[:, 0::2] @ fcoefs_s + K_syy[:, 1::2] @ fcoefs_n
-sxy_f = K_sxy[:, 0::2] @ fcoefs_s + K_sxy[:, 1::2] @ fcoefs_n
+sxx_f, syy_f, sxy_f = fields(S_f, fcoefs)
 
 for count in range(3):
     plt.subplot(2, 3, 3 + count + 1)
@@ -348,22 +345,13 @@ for i in range(len(els.x1[BCtype == "t_global"])):
         ypts + els.y_normals[BCtype == "t_global"][i] * dr
     )
 
-# Compute shear and tensile stress kernels
-kernels_s = bemcs.get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, "shear")
-kernels_n = bemcs.get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, "normal")
-# Compute stresses
-_, _, sxx, syy, sxy = bemcs.coeffs_to_disp_stress(
-    kernels_s, kernels_n, quadratic_coefs_s, quadratic_coefs_n
-)
-# compute kernels [Nobs x 2*N_trapz]
-_, _, K_sxx, K_syy, K_sxy = bemcs.bemAssembly.get_kernels_trapezoidalforce_planestrain(
-    x_obs, y_obs, els, connect_matrix
-)
+# Compute stresses (slip and force)
+_, S_s, _ = bemcs.get_kernels(x_obs, y_obs, mesh_slip, geometry=geometry, mu=mu, nu=nu)
+sxx, syy, sxy = fields(S_s, quadratic_coefs)
+_, S_f, _ = bemcs.get_force_kernels(x_obs, y_obs, els, **force_kw)
 
 # compute stresses from force coefficients
-sxx_f = K_sxx[:, 0::2] @ fcoefs_s + K_sxx[:, 1::2] @ fcoefs_n
-syy_f = K_syy[:, 0::2] @ fcoefs_s + K_syy[:, 1::2] @ fcoefs_n
-sxy_f = K_sxy[:, 0::2] @ fcoefs_s + K_sxy[:, 1::2] @ fcoefs_n
+sxx_f, syy_f, sxy_f = fields(S_f, fcoefs)
 
 plt.figure(figsize=(15, 5))
 plt.subplot(1, 3, 1)
@@ -393,22 +381,13 @@ plt.show()
 # evaluate stresses & tractions at element centers
 x_obs = (els.x_centers + els.x_normals * dr)[BCtype == "t_global"]
 y_obs = (els.y_centers + els.y_normals * dr)[BCtype == "t_global"]
-# Compute shear and tensile stress kernels
-kernels_s = bemcs.get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, "shear")
-kernels_n = bemcs.get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, "normal")
-# Compute stresses
-ux, uy, sxx, syy, sxy = bemcs.coeffs_to_disp_stress(
-    kernels_s, kernels_n, quadratic_coefs_s, quadratic_coefs_n
-)
-
-# compute kernels [Nobs x 2*N_trapz]
-_, _, K_sxx, K_syy, K_sxy = bemcs.bemAssembly.get_kernels_trapezoidalforce_planestrain(
-    x_obs, y_obs, els, connect_matrix
-)
+# Compute stresses (slip and force)
+U_s, S_s, _ = bemcs.get_kernels(x_obs, y_obs, mesh_slip, geometry=geometry, mu=mu, nu=nu)
+ux, uy = fields(U_s, quadratic_coefs)
+sxx, syy, sxy = fields(S_s, quadratic_coefs)
+_, S_f, _ = bemcs.get_force_kernels(x_obs, y_obs, els, **force_kw)
 # compute stresses from force coefficients
-sxx_f = K_sxx[:, 0::2] @ fcoefs_s + K_sxx[:, 1::2] @ fcoefs_n
-syy_f = K_syy[:, 0::2] @ fcoefs_s + K_syy[:, 1::2] @ fcoefs_n
-sxy_f = K_sxy[:, 0::2] @ fcoefs_s + K_sxy[:, 1::2] @ fcoefs_n
+sxx_f, syy_f, sxy_f = fields(S_f, fcoefs)
 # plot traction components
 plt.figure(figsize=(10, 2))
 plt.subplot(1, 2, 1)

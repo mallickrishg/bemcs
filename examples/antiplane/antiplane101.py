@@ -52,73 +52,53 @@ bemcs.plot_els_geometry(els)
 # %% [markdown]
 # Everything below this point is handled by various functions within `bemcs` and this notebook provides a template for applying it in antiplane geometry. It is unlikely that anything needs to be changed by the user until they get to the display and visualization section.
 #
-# ## Boundary Conditions
-# Here we implement the various boundary conditions as a big vector that goes in the right hand side of the Integral equations. The convention we follow is:
-# - BCs at node centers: `BC_c`
-# - BCs at open nodes: `BC_o`
-# - BCs at interior 2-overlap nodes: `BC_i`
-# - BCs at triple junctions: `BC_t`
+# ## Mesh and boundary conditions
+# The right-hand side holds the boundary conditions at the element centres, followed by zeros
+# for the continuity rows at open nodes, interior 2-overlap nodes and triple junctions.
 
 # %%
-index_open, index_overlap, index_triple = bemcs.label_nodes(els)
-N_c = n_els  # central node equations
-N_o = len(index_open)  # open node equations
-N_i = 2 * len(index_overlap)  # overlapping node equations
-N_t = 3 * len(index_triple)  # triple junction equations
-
-Nequations = N_c + N_o + N_i + N_t
-Nunknowns = stride * n_els
-# We will stack this with
-# equations for the element centers
-# equations at open nodes (RHS = 0)
-# equations at overlapping nodes (RHS = 0)
-# equations at triple junctions (RHS = 0)
-BC_c = BCval.reshape(-1, 1)  # these are the only non-zero entries
-BC_o = np.zeros((N_o, 1))
-BC_i = np.zeros((N_i, 1))
-BC_t = np.zeros((N_t, 1))
-
-# stack all the BCs into 1 big vector
-BCvector = np.vstack((BC_c, BC_o, BC_i, BC_t))
+# every element carries quadratic slip (3 coefficients per element)
+mesh = bemcs.Mesh(els, "slip")
+geometry = "antiplane"
 
 # %% [markdown]
 # ## Construct linear operator $L\cdot x = b$
 # Here we construct a discretized version of the linear operator $L$ for the BEM solve. $L$ contains equations that solve:
 # - Mechanical equilibrium with appropriate BC at the center of each element
 # - Imposed slip $s = 0$ at open nodes
-# - Slip continuity and differentiability and overlapping nodes
-# - Sllip continuity and differentiability at triple junctions
+# - Slip continuity and differentiability at overlapping nodes
+# - Slip continuity and differentiability at triple junctions
 
 # %%
-matrix_system_o, matrix_system_i, matrix_system_t = (
-    bemcs.construct_smoothoperator_antiplane(
-        els, index_open, index_overlap, index_triple
-    )
-)
-slip_mat, slip_gradient_mat = bemcs.get_matrices_slip_slip_gradient_antiplane(
-    els, flag="node"
-)
-kernels = bemcs.get_displacement_stress_kernel_slip_antiplane(
-    els.x_centers, els.y_centers, els, mu
-)
-t_kernels = bemcs.get_traction_kernels_antiplane(els, kernels)
+# continuity rows at open, overlapping and triple-junction nodes (RHS = 0)
+matrix_continuity, continuity_info = mesh.continuity_operator(geometry=geometry)
 
-# Linear Operators for the appropriate boundary conditions
-matrix_system_c = np.zeros((N_c, Nunknowns))
+# slip and slip gradient at the 3 nodes of every element
+slip_mat, slip_gradient_mat = bemcs.bemAssembly.slip_node_matrices(els, geometry=geometry)
 
-# populate matrix_system for central nodes (check for bc_label)
+# stress kernels at the element centres -> traction kernels (n_els, 3 n_els)
+_, S, info = bemcs.get_kernels(els.x_centers, els.y_centers, mesh, geometry=geometry, mu=mu)
+t_kernels = bemcs.traction_kernels(S, els.x_normals, els.y_normals)[:, :, 0]
+
+# Linear Operators for the appropriate boundary conditions at element centres
+matrix_system_c = np.zeros((n_els, mesh.n_columns(geometry=geometry)))
 for i in range(n_els):
     if BCtype[i] == "s":
-        matrix_system_c[i, :] = slip_mat[stride * i + 1, :]
+        matrix_system_c[i, :] = slip_mat[stride * i + 1, :]  # slip at the centre node
     elif BCtype[i] == "t":
         matrix_system_c[i, :] = t_kernels[i, :]
     else:
-        ValueError("boundary condition label not recognized")
+        raise ValueError("boundary condition label not recognized")
 
-# stack the matrices and create the full linear operator
-matrix_system = np.vstack(
-    (matrix_system_c, matrix_system_o, matrix_system_i, matrix_system_t)
-)
+# tip elements (with an open end node) are clamped tapers: they get no BC row
+BCval_c = BCval.reshape(-1, 1)
+keep = mesh.bc_elements("slip")
+matrix_system_c = matrix_system_c.reshape(n_els, 1, -1)[keep].reshape(1 * len(keep), -1)
+BCval_c = BCval_c.reshape(n_els, 1, -1)[keep].reshape(-1, 1)
+
+# stack the matrices and the boundary conditions
+matrix_system = np.vstack((matrix_system_c, matrix_continuity))
+BCvector = np.vstack((BCval_c, np.zeros((len(matrix_continuity), 1))))
 
 # %% [markdown]
 # # Solve linear system of equations and get solution coeffcients (on the boundary)
@@ -177,12 +157,12 @@ yo = y_obs.flatten().reshape(-1, 1)
 # Once we have the observation points `xo,yo`, we need to construct the relevant kernels that will give us the relationship between unit slip on every element in `els` and its response at `(xo,yo)`.
 
 # %%
-K_sx, K_sy, K_u = bemcs.get_displacement_stress_kernel_slip_antiplane(xo, yo, els, mu)
+U, S, _ = bemcs.get_kernels(xo, yo, mesh, geometry=geometry, mu=mu)
 
 # compute displacement and stress components
-u = K_u @ quadcoefs
-sx = K_sx @ quadcoefs
-sy = K_sy @ quadcoefs
+u = U[:, :, 0] @ quadcoefs
+sx = S[:, :, 0] @ quadcoefs
+sy = S[:, :, 1] @ quadcoefs
 
 # %% [markdown]
 # ## Plot displacements and stress components
@@ -233,7 +213,7 @@ plt.contourf(
 )
 for i in range(n_els):
     plt.plot([els.x1[i], els.x2[i]], [els.y1[i], els.y2[i]], "k-")
-plt.colorbar(label="$\sigma_x$ (MPa)")
+plt.colorbar(label=r"$\sigma_x$ (MPa)")
 plt.contour(
     xo.reshape(ny_obs, nx_obs),
     yo.reshape(ny_obs, nx_obs),
@@ -256,7 +236,7 @@ plt.contourf(
     vmax=maxval,
     levels=levels,
 )
-plt.colorbar(label="$\sigma_y$ (MPa)")
+plt.colorbar(label=r"$\sigma_y$ (MPa)")
 plt.contour(
     xo.reshape(ny_obs, nx_obs),
     yo.reshape(ny_obs, nx_obs),

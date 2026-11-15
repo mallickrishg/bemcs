@@ -7,56 +7,28 @@ import bemcs
 warnings.filterwarnings("ignore")
 
 
-# function to automatically create linear operator for central nodes
-def kernel_constructor(
-    els,
-    bctype_x,
-    bctype_y,
-    kernels_s,
-    kernels_n,
-    traction_kernels_s,
-    traction_kernels_n,
-):
-
+# Linear operator for the element-centre boundary conditions. For each element and
+# component (x or y), the BC is one of
+#   "u_global": displacement,  "t_global": traction (global x, y),
+#   "s_local":  slip at the element centre (local t, n).
+def central_bc_rows(els, bctype_x, bctype_y, U, T):
+    """Rows [x0, y0, x1, y1, ...] acting on the interleaved slip coefficients."""
     n_els = len(els.x1)
-    Nunknowns = 6 * n_els
-
-    matrix_slip, _ = bemcs.get_matrices_slip_slip_gradient(els, reference="local")
-
-    # Linear operator for central node BCs
-    kerneleval_x = np.zeros((n_els, Nunknowns))
-    kerneleval_y = np.zeros((n_els, Nunknowns))
-
-    # x,y-kernels
-
-    for j in range(0, n_els):
-        if bctype_x[j] == "u_global":
-            for k in range(0, 3):
-                kerneleval_x[j, k::6] = kernels_s[3][j, k::3]
-                kerneleval_x[j, k + 3 :: 6] = kernels_n[3][j, k::3]
-        elif bctype_x[j] == "t_global":
-            for k in range(0, 3):
-                kerneleval_x[j, k::6] = traction_kernels_s[0][j, k::3]
-                kerneleval_x[j, k + 3 :: 6] = traction_kernels_n[0][j, k::3]
-        elif bctype_x[j] == "s_local":
-            kerneleval_x[j, :] = matrix_slip[2::6, :][j, :]
-        else:
-            raise ValueError("unrecognized boundary condition type")
-
-        if bctype_y[j] == "u_global":
-            for k in range(0, 3):
-                kerneleval_y[j, k::6] = kernels_s[4][j, k::3]
-                kerneleval_y[j, k + 3 :: 6] = kernels_n[4][j, k::3]
-        elif bctype_y[j] == "t_global":
-            for k in range(0, 3):
-                kerneleval_y[j, k::6] = traction_kernels_s[1][j, k::3]
-                kerneleval_y[j, k + 3 :: 6] = traction_kernels_n[1][j, k::3]
-        elif bctype_y[j] == "s_local":
-            kerneleval_y[j, :] = matrix_slip[3::6, :][j, :]
-        else:
-            raise ValueError("unrecognized boundary condition type")
-
-    return kerneleval_x, kerneleval_y
+    matrix_slip_local, _ = bemcs.bemAssembly.slip_node_matrices(
+        els, geometry="planestrain", reference="local"
+    )
+    rows = np.zeros((2 * n_els, matrix_slip_local.shape[1]))
+    for j in range(n_els):
+        for c, bctype in enumerate((bctype_x[j], bctype_y[j])):
+            if bctype == "u_global":
+                rows[2 * j + c] = U[j, :, c, :].ravel()
+            elif bctype == "t_global":
+                rows[2 * j + c] = T[j, :, c, :].ravel()
+            elif bctype == "s_local":  # centre node (node 1) of element j
+                rows[2 * j + c] = matrix_slip_local[2 * (3 * j + 1) + c]
+            else:
+                raise ValueError("unrecognized boundary condition type")
+    return rows
 
 # %% [markdown]
 # ## Create line mesh (free surface/topography and fault geometry)
@@ -117,28 +89,13 @@ bctype_y = np.concatenate(
 )
 
 # %% [markdown]
-# ## Identifying open nodes, overlapping interior nodes and triple junctions automatically
+# ## Mesh: quadratic slip on every element (general, element-DOF formulation)
+# Open nodes, overlapping interior nodes and triple junctions are identified automatically
+# by the continuity operator.
 
 # %%
-index_open, index_overlap, index_triple = bemcs.label_nodes(els)
-N_c = 2 * n_els  # central node equations
-N_o = 2 * len(index_open)  # open node equations
-N_i = 4 * len(index_overlap)  # overlapping node equations
-N_t = 6 * len(index_triple)  # triple junction equations
-
-# %%
-Nequations = N_c + N_o + N_i + N_t
-Nunknowns = 6 * n_els
-
-# We will stack this with
-# equations for the element centers
-# equations at open nodes (RHS = 0)
-# equations at overlapping nodes (RHS = 0)
-# equations at triple junctions (RHS = 0)
-BC_c = np.zeros((N_c, 1))  # these are the only non-zero entries
-BC_o = np.zeros((N_o, 1))
-BC_i = np.zeros((N_i, 1))
-BC_t = np.zeros((N_t, 1))
+mesh = bemcs.Mesh(els, "slip")
+geometry = "planestrain"
 
 # Boundary conditions are
 # topography - traction-free (tx,ty) = (0,0)
@@ -154,10 +111,7 @@ bc_y[topo_index, 0] = 0.0
 bc_x[~topo_index, 0] = slipvalues_x
 bc_y[~topo_index, 0] = slipvalues_y
 
-BC_c[0::2] = bc_x
-BC_c[1::2] = bc_y
-# stack all the BCs into 1 big vector
-BCvector = np.vstack((BC_c, BC_o, BC_i, BC_t))
+BC_c = np.c_[bc_x, bc_y].reshape(-1, 1)  # [x0, y0, x1, y1, ...]
 
 # %% [markdown]
 # ## Design Matrix System 
@@ -169,53 +123,28 @@ BCvector = np.vstack((BC_c, BC_o, BC_i, BC_t))
 # We first deal with the matrix system for the central nodes
 
 # %%
-# Design matrices (in x,y coordinates) for slip and slip gradients at each 3qn
-matrix_slip, matrix_slip_gradient = bemcs.get_matrices_slip_slip_gradient(els)
-
-# Patch center locations (need to be shifted an infinitesimal amount in -ve unit normal direction)
-obs_xy = np.vstack((els.x_centers, els.y_centers)).T
-x_obs = obs_xy[:, 0].reshape(-1, 1)
-y_obs = obs_xy[:, 1].reshape(-1, 1)
-
-# Compute shear and tensile stress kernels evaluated ONLY at the center of each element
-kernels_s = bemcs.get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, "shear")
-kernels_n = bemcs.get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, "normal")
-
-# Convert to traction kernels [Nobs x Ncoefficients]
-traction_kernels_s = bemcs.get_traction_kernels(els, kernels_s, flag="global")
-traction_kernels_n = bemcs.get_traction_kernels(els, kernels_n, flag="global")
-
-# Linear Operators for the appropriate boundary conditions
-matrix_system_c = np.zeros((N_c, Nunknowns))
-matrix_system_o = np.zeros((N_o, Nunknowns))
-matrix_system_i = np.zeros((N_i, Nunknowns))
-matrix_system_t = np.zeros((N_t, Nunknowns))
-
-kerneleval_x, kerneleval_y = kernel_constructor(
-    els,
-    bctype_x,
-    bctype_y,
-    kernels_s,
-    kernels_n,
-    traction_kernels_s,
-    traction_kernels_n,
+# Kernels evaluated ONLY at the element centres: U (n_els, 3 n_els, 2, 2), S (n_els, 3 n_els, 3, 2)
+U, S, info = bemcs.get_kernels(
+    els.x_centers, els.y_centers, mesh, geometry=geometry, mu=mu, nu=nu
 )
-# populate matrix_system for central nodes
-matrix_system_c[0::2, :] = kerneleval_x
-matrix_system_c[1::2, :] = kerneleval_y
+# traction kernels in global (x, y) coordinates
+T = bemcs.traction_kernels(S, els.x_normals, els.y_normals)
+matrix_system_c = central_bc_rows(els, bctype_x, bctype_y, U, T)
 
 # %% [markdown]
 # ### Open nodes, overlapping nodes & triple junctions
 
 # %%
-matrix_system_o, matrix_system_i, matrix_system_t = bemcs.construct_smoothoperator(
-    els, index_open, index_overlap, index_triple
-)
+matrix_continuity, continuity_info = mesh.continuity_operator(geometry=geometry)
+
+# tip elements (with an open end node) are clamped tapers: they get no BC row
+keep = mesh.bc_elements("slip")
+matrix_system_c = matrix_system_c.reshape(n_els, 2, -1)[keep].reshape(2 * len(keep), -1)
+BC_c = BC_c.reshape(n_els, 2, -1)[keep].reshape(-1, 1)
 
 # stack the matrices and create the full linear operator
-matrix_system = np.vstack(
-    (matrix_system_c, matrix_system_o, matrix_system_i, matrix_system_t)
-)
+matrix_system = np.vstack((matrix_system_c, matrix_continuity))
+BCvector = np.vstack((BC_c, np.zeros((len(matrix_continuity), 1))))
 
 # plot design matrix
 plt.figure(figsize=(10, 6))
@@ -228,22 +157,24 @@ plt.show()
 # # Solve system
 
 # %%
-# compute quadratic node coefficients (in local (s,n) coordinates)
+# compute quadratic node coefficients (slip in local (t, n) coordinates, interleaved)
 quadratic_coefs = np.linalg.inv(matrix_system) @ BCvector
 print("Linear Operator Condition Number:", np.linalg.cond(matrix_system))
 
-# extract (s,n) components and store them in 2 separate vectors
-quadratic_coefs_s = np.zeros((3 * n_els, 1))
-quadratic_coefs_n = np.zeros((3 * n_els, 1))
-for i in range(n_els):
-    quadratic_coefs_s[3 * i : 3 * (i + 1)] = quadratic_coefs[6 * i : 6 * i + 3]
-    quadratic_coefs_n[3 * i : 3 * (i + 1)] = quadratic_coefs[6 * i + 3 : 6 * (i + 1)]
-
 # %%
-# plot slip distribution on fault source
-xnodes, ynodes, sx, sy = bemcs.get_slipvector_on_fault(
-    els, quadratic_coefs.flatten(), 10
+# plot slip distribution on fault source (global x, y components)
+xnodes, ynodes, slip_xy = mesh.values_on_elements(
+    quadratic_coefs, "slip", geometry=geometry, n_eval=10
 )
+sx, sy = slip_xy[:, 0], slip_xy[:, 1]
+
+# Slip at the 3 nodes of every element, global (x, y) and local (t, n) components
+matrix_slip, _ = bemcs.bemAssembly.slip_node_matrices(els, geometry=geometry)
+slip_nodes = matrix_slip @ quadratic_coefs
+slip_nodes_x = slip_nodes[0::2]
+slip_nodes_y = slip_nodes[1::2]
+slip_nodes_s = quadratic_coefs[0::2]  # quadratic coefficients are nodal values (local)
+slip_nodes_n = quadratic_coefs[1::2]
 
 index = (ynodes < 0) | (xnodes == 0)
 
@@ -263,8 +194,7 @@ xnodes[2::3] = els.x2
 index = ynodes < 0  # & (xnodes == 0)
 plt.plot(
     np.sqrt(
-        (matrix_slip @ quadratic_coefs)[0::2][index] ** 2
-        + (matrix_slip @ quadratic_coefs)[1::2][index] ** 2
+        slip_nodes_x[index] ** 2 + slip_nodes_y[index] ** 2
     ),
     ynodes[index],
     "o",
@@ -276,20 +206,6 @@ plt.tick_params(labelsize=13)
 plt.grid()
 plt.show()
 
-# Extract slip at nodes from quadratic coefficients
-slip_nodes = matrix_slip @ quadratic_coefs
-slip_nodes_x = slip_nodes[0::2]
-slip_nodes_y = slip_nodes[1::2]
-slip_vector = np.hstack((slip_nodes_x, slip_nodes_y))
-
-# Rotate from (x,y) to (s,n) for slip vector
-slip_nodes_s = np.zeros((3 * n_els, 1))
-slip_nodes_n = np.zeros((3 * n_els, 1))
-
-for i in range(n_els):
-    dummy = slip_vector[3 * i : 3 * (i + 1), :] @ els.rot_mats[i, :, :]
-    slip_nodes_s[3 * i : 3 * (i + 1), 0] = dummy[:, 0]
-    slip_nodes_n[3 * i : 3 * (i + 1), 0] = dummy[:, 1]
 
 plt.figure(figsize=(10, 4))
 plt.plot(slip_nodes_x, "b.", label="$s_x$")
@@ -315,14 +231,13 @@ x_obs, y_obs = np.meshgrid(x_obs, y_obs)
 x_obs = x_obs.flatten()
 y_obs = y_obs.flatten()
 
-# Compute shear and tensile stress kernels
-kernels_s = bemcs.get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, "shear")
-kernels_n = bemcs.get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, "normal")
+# Displacement and stress kernels at the observation points
+U, S, _ = bemcs.get_kernels(x_obs, y_obs, mesh, geometry=geometry, mu=mu, nu=nu)
 
 # Compute displacement and stresses (we will plot it later)
-ux, uy, sxx, syy, sxy = bemcs.coeffs_to_disp_stress(
-    kernels_s, kernels_n, quadratic_coefs_s, quadratic_coefs_n
-)
+c = quadratic_coefs.ravel()
+ux, uy = (U[:, :, k, :].reshape(len(x_obs), -1) @ c for k in range(2))
+sxx, syy, sxy = (S[:, :, k, :].reshape(len(x_obs), -1) @ c for k in range(3))
 
 bemcs.plot_displacements_stresses_els(
     els, n_obs, ux, uy, sxx, syy, sxy, x_obs, y_obs, n_skip_plot=31
@@ -346,7 +261,7 @@ img = plt.pcolor(
 plt.clim([minval, maxval])
 cb = plt.colorbar(img, shrink=0.9, extend="both")
 cb.ax.tick_params(labelsize=15)
-cb.set_label("$\\frac{\sigma_{xy}}{\mu}$", fontsize=20)
+cb.set_label(r"$\frac{\sigma_{xy}}{\mu}$", fontsize=20)
 plt.contour(
     x_obs.reshape(n_obs, n_obs),
     y_obs.reshape(n_obs, n_obs),

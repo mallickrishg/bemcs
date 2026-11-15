@@ -524,3 +524,22 @@ def test_matches_old_function(els_curved, obs_points, case):
         else:
             new = arr[:, :, sel[1], sel[2]]
         np.testing.assert_allclose(new, old, rtol=1e-10, atol=1e-12, err_msg=str(sel))
+
+
+@pytest.mark.parametrize("kind", ["slip", "force"])
+def test_points_on_an_element_give_the_two_sided_average(els_curved, kind):
+    """On an element (local y at rounding level) stresses and displacements are
+    the mean of the values just above and below the element."""
+    e = 1
+    t = np.array([-0.7, -0.2, 0.0, 0.35, 0.8]) * els_curved.half_lengths[e]
+    R = els_curved.rot_mats[e]
+    x_on = els_curved.x_centers[e] + R[0, 0] * t
+    y_on = els_curved.y_centers[e] + R[1, 0] * t
+    nx, ny = els_curved.x_normals[e], els_curved.y_normals[e]
+    kw = dict(geometry="planestrain", mu=MU, nu=NU)
+    U0, S0, _ = LEVEL2[kind](x_on, y_on, els_curved, **kw)
+    Up, Sp, _ = LEVEL2[kind](x_on + 1e-9 * nx, y_on + 1e-9 * ny, els_curved, **kw)
+    Um, Sm, _ = LEVEL2[kind](x_on - 1e-9 * nx, y_on - 1e-9 * ny, els_curved, **kw)
+    assert np.abs(Sp - Sm).max() > 0.1  # there is a jump to average over
+    np.testing.assert_allclose(S0, 0.5 * (Sp + Sm), atol=1e-6)
+    np.testing.assert_allclose(U0, 0.5 * (Up + Um), atol=1e-6)

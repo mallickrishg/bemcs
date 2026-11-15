@@ -18,337 +18,161 @@ def logistic(x, L=1, k=1, x0=0):
     return L / (1 + np.exp(-k * (x - x0)))
 
 
-def kernel_constructor_slip(els, bctype_x, bctype_y, kernels_s, kernels_n):
+def central_bc_rows(els, bctype_x, bctype_y, U, T, matrix_slip_local=None):
     """
-    Assemble the linear operator for a 2D BEM problem using a quadratic slip basis.
+    Rows of the element-centre boundary conditions, in the kernel column convention.
 
-    Each element has:
-        - 3 shear DOF + 3 normal DOF → 6 DOF per element.
-
-    The function returns the kernel matrices that map the unknown slip coefficients
-    to the x- and y-components of boundary equations, taking into account the
-    specified boundary conditions.
+    For element j and component c (x or y) the BC type is one of
+        "u_global": displacement,  "t_global": traction (global x, y),
+        "s_local":  slip at the element centre (local t, n), slip sources only.
 
     Parameters
     ----------
-    els : object
-        Mesh element object containing coordinates, element centers, and normals.
-    bctype_x, bctype_y : array_like
-        Boundary condition types for each element in the x- and y-directions.
-        Allowed types: "u_global", "t_global", "s_local".
-    kernels_s, kernels_n : list of arrays
-        Precomputed displacement & stress kernels for shear and normal directions.
-        [0]: σ_xx, [1]: σ_yy, [2]: σ_xy, [3]: u_x, [4]: u_y
+    els : element structure
+    bctype_x, bctype_y : array_like of str, length n_els
+    U, T : (n_els, n_src, 2, 2) displacement and global traction kernels at the
+        element centres (from bemcs.get_kernels and bemcs.traction_kernels)
+    matrix_slip_local : slip node matrix in the local frame (needed for "s_local";
+        quadratic slip only)
 
     Returns
     -------
-    kerneleval_x, kerneleval_y : ndarray
-        Linear operators for x- and y-equations of shape (n_elements, 6*n_elements),
-        which can be used to assemble the global BEM system.
+    rows : (2 n_els, 2 n_src) ndarray, rows ordered [x0, y0, x1, y1, ...]
     """
-
     n_els = len(els.x1)
-    Nunknowns = 6 * n_els
-
-    matrix_slip, _ = bemcs.get_matrices_slip_slip_gradient(els, reference="local")
-    traction_kernels_s = bemcs.get_traction_kernels(els, kernels_s, flag="global")
-    traction_kernels_n = bemcs.get_traction_kernels(els, kernels_n, flag="global")
-
-    # Linear operator for central node BCs
-    kerneleval_x = np.zeros((n_els, Nunknowns))
-    kerneleval_y = np.zeros((n_els, Nunknowns))
-
-    # x,y-kernels
-
-    for j in range(0, n_els):
-        if bctype_x[j] == "u_global":
-            for k in range(0, 3):
-                kerneleval_x[j, k::6] = kernels_s[3][j, k::3]
-                kerneleval_x[j, k + 3 :: 6] = kernels_n[3][j, k::3]
-        elif bctype_x[j] == "t_global":
-            for k in range(0, 3):
-                kerneleval_x[j, k::6] = traction_kernels_s[0][j, k::3]
-                kerneleval_x[j, k + 3 :: 6] = traction_kernels_n[0][j, k::3]
-        elif bctype_x[j] == "s_local":
-            kerneleval_x[j, :] = matrix_slip[2::6, :][j, :]
-        else:
-            raise ValueError("unrecognized boundary condition type")
-
-        if bctype_y[j] == "u_global":
-            for k in range(0, 3):
-                kerneleval_y[j, k::6] = kernels_s[4][j, k::3]
-                kerneleval_y[j, k + 3 :: 6] = kernels_n[4][j, k::3]
-        elif bctype_y[j] == "t_global":
-            for k in range(0, 3):
-                kerneleval_y[j, k::6] = traction_kernels_s[1][j, k::3]
-                kerneleval_y[j, k + 3 :: 6] = traction_kernels_n[1][j, k::3]
-        elif bctype_y[j] == "s_local":
-            kerneleval_y[j, :] = matrix_slip[3::6, :][j, :]
-        else:
-            raise ValueError("unrecognized boundary condition type")
-
-    return kerneleval_x, kerneleval_y
-
-
-def kernel_constructor_force(
-    els,
-    bctype_x,
-    bctype_y,
-    K_ux,
-    K_uy,
-    K_sxx,
-    K_syy,
-    K_sxy,
-    connect_matrix,
-):
-    """
-    Assemble the linear operator for a 2D BEM problem using a trapezoidal force basis.
-
-    Each element has:
-        - 1 shear DOF + 1 normal DOF → 2 DOF per element.
-
-    The function computes the kernel matrices that map the unknown force coefficients
-    to the x- and y-components of the boundary equations, including conversion of
-    stress kernels into traction kernels using element normals.
-
-    Parameters
-    ----------
-    els : object
-        Mesh element object containing coordinates, element centers, and normals.
-    bctype_x, bctype_y : array_like
-        Boundary condition types for each element in the x- and y-directions.
-        Allowed types: "u_global", "t_global".
-    K_ux, K_uy : ndarray
-        Displacement kernels in x- and y-directions for shear and normal DOFs.
-    K_sxx, K_syy, K_sxy : ndarray
-        Stress kernels used to compute traction kernels.
-    connect_matrix : ndarray
-        Element connectivity for trapezoidal basis (used for mid-node normals).
-
-    Returns
-    -------
-    ker_x, ker_y : ndarray
-        Linear operators for x- and y-equations of shape (n_elements, 2*n_elements),
-        suitable for assembling the global BEM system.
-    """
-
-    n_els = len(connect_matrix[:, 1])
-    Nunknowns = 2 * n_els
-
-    # --- element normals (use mid-node connectivity) -----------------------
-    nx = els.x_normals[connect_matrix[:, 1]]
-    ny = els.y_normals[connect_matrix[:, 1]]
-
-    # --- convert stresses into traction kernels ----------------------------
-    # K_tx = sxx * nx + sxy * ny
-    # K_ty = sxy * nx + syy * ny
-    K_tx = K_sxx * nx[:, None] + K_sxy * ny[:, None]
-    K_ty = K_sxy * nx[:, None] + K_syy * ny[:, None]
-
-    # allocate
-    ker_x = np.zeros((n_els, Nunknowns))
-    ker_y = np.zeros((n_els, Nunknowns))
-
+    rows = np.zeros((2 * n_els, 2 * U.shape[1]))
     for j in range(n_els):
-
-        # --- X equation ----------------------------------------------------
-        if bctype_x[j] == "u_global":
-            ker_x[j, :] = K_ux[j, :]
-
-        elif bctype_x[j] == "t_global":
-            ker_x[j, :] = K_tx[j, :]
-
-        else:
-            raise ValueError("Unknown BC type for x")
-
-        # --- Y equation ----------------------------------------------------
-        if bctype_y[j] == "u_global":
-            ker_y[j, :] = K_uy[j, :]
-
-        elif bctype_y[j] == "t_global":
-            ker_y[j, :] = K_ty[j, :]
-
-        else:
-            raise ValueError("Unknown BC type for y")
-
-    return ker_x, ker_y
+        for c, bctype in enumerate((bctype_x[j], bctype_y[j])):
+            if bctype == "u_global":
+                rows[2 * j + c] = U[j, :, c, :].ravel()
+            elif bctype == "t_global":
+                rows[2 * j + c] = T[j, :, c, :].ravel()
+            elif bctype == "s_local" and matrix_slip_local is not None:
+                rows[2 * j + c] = matrix_slip_local[2 * (3 * j + 1) + c]
+            else:
+                raise ValueError(f"unrecognized boundary condition type {bctype!r}")
+    return rows
 
 
 def solve_bem_system_slip(els, bc_x, bc_y, BCtype_x, BCtype_y, mu=1, nu=0.25):
     """
-    Solve the boundary element system and return quadratic node coefficients.
+    Solve a plane-strain BEM problem with quadratic slip on every element.
 
     Parameters
     ----------
-    els : bemcs.ElementClass
-        Element structure containing geometry, normals, centers, etc.
-    bc_x, bc_y : array_like
-        Boundary condition values evaluated at element centers (length = n_els)
+    els : element structure
+    bc_x, bc_y : array_like, length n_els
+        Boundary condition values at the element centres.
+    BCtype_x, BCtype_y : array_like of str
+        "u_global", "t_global" or "s_local" for each element and component.
     mu, nu : float
-        Shear modulus and Poisson ratio.
-    BCtype_x, BCtype_y : str
-        Boundary condition types for each element in x- and y-directions.
-        Allowed types: ("s_local", "t_global", "u_global")
+        Shear modulus and Poisson's ratio.
 
     Returns
     -------
-    quadratic_coefs_s : ndarray (3*n_els, 1)
-    quadratic_coefs_n : ndarray (3*n_els, 1)
+    quadratic_coefs : (6 n_els,) ndarray
+        Slip coefficients in the kernel convention: element-major, then node,
+        then direction (t, n): [t0, n0, t1, n1, ...].
+    mesh : bemcs.Mesh
+        The mesh used (all elements quadratic slip), for evaluating fields.
     """
+    geometry = "planestrain"
+    mesh = bemcs.Mesh(els, "slip")
 
-    n_els = len(els.x1)
-
-    # ---------------------------------------------------------
-    # 1. Construct Boundary Condition Vectors
-    # ---------------------------------------------------------
-    index_open, index_overlap, index_triple = bemcs.label_nodes(els)
-
-    N_c = 2 * n_els
-    N_o = 2 * len(index_open)
-    N_i = 4 * len(index_overlap)
-    N_t = 6 * len(index_triple)
-
-    Neq = N_c + N_o + N_i + N_t
-    Nunknowns = 6 * n_els  # 6 dof per mesh element
-
-    # central nodes
-    BC_c = np.zeros((N_c, 1))
-    BC_c[0::2, 0] = bc_x
-    BC_c[1::2, 0] = bc_y
-
-    # homogeneous nodes (open, overlap, triple)
-    BC_o = np.zeros((N_o, 1))
-    BC_i = np.zeros((N_i, 1))
-    BC_t = np.zeros((N_t, 1))
-
-    # Stack entire RHS
-    BCvector = np.vstack((BC_c, BC_o, BC_i, BC_t))
-
-    # ---------------------------------------------------------
-    # 2. Build Kernels
-    # ---------------------------------------------------------
-    dr = -1e-6  # small offset to avoid discontinuity
+    # kernels at the element centres (small offset to the -n side)
+    dr = -1e-6
     x_obs = els.x_centers + dr * els.x_normals
     y_obs = els.y_centers + dr * els.y_normals
-    kernels_s = bemcs.get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, "shear")
-    kernels_n = bemcs.get_displacement_stress_kernel(
-        x_obs, y_obs, els, mu, nu, "normal"
+    U, S, _ = bemcs.get_kernels(x_obs, y_obs, mesh, geometry=geometry, mu=mu, nu=nu)
+    T = bemcs.traction_kernels(S, els.x_normals, els.y_normals)
+    matrix_slip_local, _ = bemcs.bemAssembly.slip_node_matrices(
+        els, geometry=geometry, reference="local"
     )
 
-    # ---------------------------------------------------------
-    # 3. Build Central-node Linear Operator
-    # ---------------------------------------------------------
-    matrix_system_c = np.zeros((N_c, Nunknowns))
+    matrix_system_c = central_bc_rows(els, BCtype_x, BCtype_y, U, T, matrix_slip_local)
+    matrix_continuity, _ = mesh.continuity_operator(geometry=geometry)
 
-    kerneleval_x, kerneleval_y = kernel_constructor_slip(
-        els,
-        BCtype_x,
-        BCtype_y,
-        kernels_s,
-        kernels_n,
-    )
+    # tip elements (with an open end node) are clamped tapers: they get no BC row
+    keep = mesh.bc_elements("slip")
+    n_els = len(els.x1)
+    matrix_system_c = matrix_system_c.reshape(n_els, 2, -1)[keep].reshape(2 * len(keep), -1)
+    matrix_system = np.vstack((matrix_system_c, matrix_continuity))
 
-    matrix_system_c[0::2, :] = kerneleval_x
-    matrix_system_c[1::2, :] = kerneleval_y
+    BC_c = np.c_[np.ravel(bc_x), np.ravel(bc_y)][keep].ravel()
+    BCvector = np.concatenate((BC_c, np.zeros(len(matrix_continuity))))
 
-    # ---------------------------------------------------------
-    # 4. Build Open/Overlap/Triple Node Operators
-    # ---------------------------------------------------------
-    matrix_system_o, matrix_system_i, matrix_system_t = bemcs.construct_smoothoperator(
-        els, index_open, index_overlap, index_triple
-    )
-
-    matrix_system = np.vstack(
-        (matrix_system_c, matrix_system_o, matrix_system_i, matrix_system_t)
-    )
-
-    # ---------------------------------------------------------
-    # 5. Solve the Linear System
-    # ---------------------------------------------------------
     quadratic_coefs = np.linalg.solve(matrix_system, BCvector)
-
     print("Linear Operator Condition Number:", np.linalg.cond(matrix_system))
-
-    # ---------------------------------------------------------
-    # 6. Extract s and n direction coefficients
-    # ---------------------------------------------------------
-    quadratic_coefs_s = np.zeros((3 * n_els, 1))
-    quadratic_coefs_n = np.zeros((3 * n_els, 1))
-
-    for i in range(n_els):
-        quadratic_coefs_s[3 * i : 3 * (i + 1)] = quadratic_coefs[6 * i : 6 * i + 3]
-        quadratic_coefs_n[3 * i : 3 * (i + 1)] = quadratic_coefs[
-            6 * i + 3 : 6 * (i + 1)
-        ]
-
-    return quadratic_coefs_s, quadratic_coefs_n
+    return quadratic_coefs, mesh
 
 
 def solve_bem_system_force(
     els, connect_matrix, bc_x, bc_y, BCtype_x, BCtype_y, mu=1, nu=0.25
 ):
     """
-    Solve a 2D BEM system for a trapezoidal force basis in plane strain.
+    Solve a plane-strain BEM problem with a trapezoidal force basis.
 
-    This function assembles the linear operator from displacement and traction kernels,
-    applies boundary conditions, solves the resulting linear system, and returns the
-    shear and normal force coefficients for each element.
+    Collocation points are the centres of the middle element of each patch.
 
     Parameters
     ----------
-    els : object
-        Mesh element object containing coordinates, element centers, and normals.
-    connect_matrix : ndarray
-        Element connectivity for trapezoidal basis (used for mid-node normals).
-    bc_x, bc_y : ndarray
-        Prescribed boundary values in the x- and y-directions.
-    BCtype_x, BCtype_y : array_like
-        Boundary condition types for each element in x- and y-directions.
-        Allowed types: "u_global", "t_global".
-    mu : float, optional
-        Shear modulus (default: 1).
-    nu : float, optional
-        Poisson's ratio (default: 0.25).
+    els : element structure
+    connect_matrix : (n_patches, 3) int ndarray
+        The 3 elements of each trapezoidal patch.
+    bc_x, bc_y : ndarray, length n_patches
+        Prescribed values at the collocation points.
+    BCtype_x, BCtype_y : array_like of str
+        "u_global" or "t_global" for each patch and component.
+    mu, nu : float
+        Shear modulus and Poisson's ratio.
 
     Returns
     -------
-    fcoefs_s, fcoefs_n : ndarray
-        Shear and normal force coefficients for each element, corresponding to
-        the trapezoidal force basis.
+    fcoefs : (2 n_patches,) ndarray
+        Force coefficients, interleaved [t0, n0, t1, n1, ...] (local frame of the
+        middle element of each patch).
     """
-
+    mid = connect_matrix[:, 1]
     dr = -1e-9  # small offset to avoid discontinuity
-    x_obs = (els.x_centers + els.x_normals * dr)[connect_matrix[:, 1]]
-    y_obs = (els.y_centers + els.y_normals * dr)[connect_matrix[:, 1]]
-
-    K_ux, K_uy, K_sxx, K_syy, K_sxy = (
-        bemcs.bemAssembly.get_kernels_trapezoidalforce_planestrain(
-            x_obs, y_obs, els, connect_matrix, mu, nu
-        )
+    x_obs = (els.x_centers + els.x_normals * dr)[mid]
+    y_obs = (els.y_centers + els.y_normals * dr)[mid]
+    U, S, _ = bemcs.get_force_kernels(
+        x_obs, y_obs, els, geometry="planestrain", mu=mu, nu=nu,
+        basis="trapezoid", connectivity=connect_matrix,
     )
+    T = bemcs.traction_kernels(S, els.x_normals[mid], els.y_normals[mid])
 
-    kernels_x, kernels_y = kernel_constructor_force(
-        els,
-        BCtype_x,
-        BCtype_y,
-        K_ux,  # disp-x due to shear/normal
-        K_uy,  # disp-y due to shear/normal
-        K_sxx,
-        K_syy,
-        K_sxy,
-        connect_matrix,
-    )
-
-    matrix_system = np.vstack((kernels_x, kernels_y))
-    BCvector = np.hstack((bc_x, bc_y)).reshape(-1, 1)
+    # patch-collocation version of central_bc_rows
+    n_p = len(mid)
+    matrix_system = np.zeros((2 * n_p, 2 * n_p))
+    for j in range(n_p):
+        for c, bctype in enumerate((BCtype_x[j], BCtype_y[j])):
+            K = {"u_global": U, "t_global": T}.get(bctype)
+            if K is None:
+                raise ValueError(f"unknown BC type {bctype!r}")
+            matrix_system[2 * j + c] = K[j, :, c, :].ravel()
+    BCvector = np.c_[np.ravel(bc_x), np.ravel(bc_y)].ravel()
     print("Force Linear Operator Condition Number:", np.linalg.cond(matrix_system))
-    fcoefs = np.linalg.solve(matrix_system, BCvector)
-    #  ---------------------------------------------------------
-    # Extract s and n force coefficients
-    fcoefs_s = fcoefs[0::2]
-    fcoefs_n = fcoefs[1::2]
+    return np.linalg.solve(matrix_system, BCvector)
 
-    return fcoefs_s, fcoefs_n
+
+def _patch_kernels(kind, x_obs, y_obs, els, connectivity, mu, nu):
+    """Hat-slip or trapezoid-force kernels as 2-D arrays (n_obs, 2 n_patches),
+    columns interleaved [t0, n0, t1, n1, ...]: ux, uy, sxx, syy, sxy."""
+    fn = bemcs.get_slip_kernels if kind == "slip" else bemcs.get_force_kernels
+    basis = "hat" if kind == "slip" else "trapezoid"
+    U, S, _ = fn(
+        x_obs, y_obs, els, geometry="planestrain", mu=mu, nu=nu,
+        basis=basis, connectivity=connectivity,
+    )
+    n = U.shape[0]
+    return (
+        U[:, :, 0, :].reshape(n, -1),
+        U[:, :, 1, :].reshape(n, -1),
+        S[:, :, 0, :].reshape(n, -1),
+        S[:, :, 1, :].reshape(n, -1),
+        S[:, :, 2, :].reshape(n, -1),
+    )
 
 
 def solve_planestrain_heterogeneous(
@@ -393,8 +217,6 @@ def solve_planestrain_heterogeneous(
     coefs_force : (2*N_f,) float ndarray
         Force coefficients interleaved [fx1, fy1, fx2, fy2, ...]
     """
-    import bemcs.bemAssembly as GF
-
     # Allow empty connectivity arrays
     if connect_slip is not None and len(connect_slip) > 0:
         N_s = len(connect_slip[:, 0])
@@ -430,9 +252,7 @@ def solve_planestrain_heterogeneous(
     if N_s > 0:
         # kernels_slip will have shape (N_obs, 2 * N_s)
         K_ux_s, K_uy_s, K_sxx_s, K_syy_s, K_sxy_s = (
-            GF.get_kernels_quadratichatslip_planestrain(
-                x_obs, y_obs, els, connect_slip, mu, nu
-            )
+            _patch_kernels("slip", x_obs, y_obs, els, connect_slip, mu, nu)
         )
     else:
         K_sxx_s = np.zeros((N_obs, 0))
@@ -442,9 +262,7 @@ def solve_planestrain_heterogeneous(
     if N_f > 0:
         # kernels_force will have shape (N_obs, 2 * N_f)
         K_ux_f, K_uy_f, K_sxx_f, K_syy_f, K_sxy_f = (
-            GF.get_kernels_trapezoidalforce_planestrain(
-                x_obs, y_obs, els, connect_force, mu, nu
-            )
+            _patch_kernels("force", x_obs, y_obs, els, connect_force, mu, nu)
         )
     else:
         K_sxx_f = np.zeros((N_obs, 0))
@@ -456,6 +274,7 @@ def solve_planestrain_heterogeneous(
         if sxx.shape[1] == 0:
             return sxx.copy(), sxx.copy(), sxx.copy(), sxx.copy()
 
+        # TODO(tasks.md issue 1): plane-strain compliance needs nu, not nu/(1+nu)
         nu_prime = nu / (1 + nu)
         exx = (1 / (2 * mu)) * ((1 - nu_prime) * sxx - nu_prime * syy)
         eyy = (1 / (2 * mu)) * (-nu_prime * sxx + (1 - nu_prime) * syy)
@@ -487,29 +306,25 @@ def solve_planestrain_heterogeneous(
         nx_slip = els.x_normals[colloc_slip_idx]
         ny_slip = els.y_normals[colloc_slip_idx]
         
-        K_ux_s_p, K_uy_s_p, _, _, _ = GF.get_kernels_quadratichatslip_planestrain(
-            x_slip + dr_slip * nx_slip,
-            y_slip + dr_slip * ny_slip,
-            els, connect_slip, mu, nu
+        K_ux_s_p, K_uy_s_p, _, _, _ = _patch_kernels(
+            "slip", x_slip + dr_slip * nx_slip, y_slip + dr_slip * ny_slip,
+            els, connect_slip, mu, nu,
         )
-        K_ux_s_m, K_uy_s_m, _, _, _ = GF.get_kernels_quadratichatslip_planestrain(
-            x_slip - dr_slip * nx_slip,
-            y_slip - dr_slip * ny_slip,
-            els, connect_slip, mu, nu
+        K_ux_s_m, K_uy_s_m, _, _, _ = _patch_kernels(
+            "slip", x_slip - dr_slip * nx_slip, y_slip - dr_slip * ny_slip,
+            els, connect_slip, mu, nu,
         )
         K_sx_global_s = K_ux_s_p - K_ux_s_m
         K_sy_global_s = K_uy_s_p - K_uy_s_m
         
         if N_f > 0:
-            K_ux_f_p, K_uy_f_p, _, _, _ = GF.get_kernels_trapezoidalforce_planestrain(
-                x_slip + dr_slip * nx_slip,
-                y_slip + dr_slip * ny_slip,
-                els, connect_force, mu, nu
+            K_ux_f_p, K_uy_f_p, _, _, _ = _patch_kernels(
+                "force", x_slip + dr_slip * nx_slip, y_slip + dr_slip * ny_slip,
+                els, connect_force, mu, nu,
             )
-            K_ux_f_m, K_uy_f_m, _, _, _ = GF.get_kernels_trapezoidalforce_planestrain(
-                x_slip - dr_slip * nx_slip,
-                y_slip - dr_slip * ny_slip,
-                els, connect_force, mu, nu
+            K_ux_f_m, K_uy_f_m, _, _, _ = _patch_kernels(
+                "force", x_slip - dr_slip * nx_slip, y_slip - dr_slip * ny_slip,
+                els, connect_force, mu, nu,
             )
             K_sx_global_f = K_ux_f_p - K_ux_f_m
             K_sy_global_f = K_uy_f_p - K_uy_f_m

@@ -5,7 +5,6 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
-from importlib import reload
 
 import bemcs
 
@@ -58,56 +57,27 @@ n_els = len(els.x1)
 bemcs.plot_els_geometry(els)
 
 # %%
-# Design matrices (in x, y coordinates) for slip and slip gradients at each 3qn
-stride = 6
-slip_mat, slip_gradient_mat = bemcs.get_matrices_slip_slip_gradient(els, flag="node")
-design_mat = np.zeros((n_els * stride, n_els * stride))
+# Quadratic slip on every element; unknowns are interleaved [t0, n0, t1, n1, ...] per node
+mesh = bemcs.Mesh(els, "slip")
+geometry = "planestrain"
 
-# Set boundary conditions
-# Slip -or- slip gradients at the boundaries (we set them to 0 here)
-bc_vec = np.zeros((n_els * stride))
-bc_vec[0] = 0.0
-bc_vec[1] = 0.0
-bc_vec[-1] = 0.0
-bc_vec[-2] = 0.0
-bc_vec[2::stride] = slip_vector_x
-bc_vec[3::stride] = slip_vector_y
+# Slip and slip gradient at the 3 nodes of every element, global (x, y) components
+slip_mat, slip_gradient_mat = bemcs.bemAssembly.slip_node_matrices(els, geometry=geometry)
 
-# Populate design matrix
-# Boundary nodes
-design_mat[0:2, :] = slip_mat[0:2]
-design_mat[-2:, :] = slip_mat[-2:, :]
-
-# Patch center nodes
-design_mat[2::stride, :] = slip_mat[2::stride, :]
-design_mat[3::stride, :] = slip_mat[3::stride, :]
-
-# Overlapping interior nodes (apply slip continuity and smoothness)
-# Slip continuity (x component)
-design_mat[4:-7:stride, :] = slip_mat[4:-7:stride, :] - slip_mat[6:-5:stride, :]
-
-# Slip continuity (y component)
-design_mat[5:-6:stride, :] = slip_mat[5:-6:stride, :] - slip_mat[7:-4:stride, :]
-
-# Smoothness
-# x component
-design_mat[6:-5:stride, :] = (
-    slip_gradient_mat[4:-7:stride, :] - slip_gradient_mat[6:-5:stride, :]
-)
-# y component
-design_mat[7:-4:stride, :] = (
-    slip_gradient_mat[5:-6:stride, :] - slip_gradient_mat[7:-4:stride, :]
+# Boundary conditions:
+# - slip (x, y) imposed at the central node of every element
+# - open nodes: slip = 0 and slip gradient = 0; interior nodes: continuity of slip and slip gradient
+# - the end elements carry an open node (fault tip): clamped tapers with no BC row
+keep = mesh.bc_elements("slip")
+centre_rows = np.vstack([slip_mat[2 * (3 * e + 1) + c] for e in keep for c in range(2)])
+continuity_rows, continuity_info = mesh.continuity_operator(geometry=geometry)
+design_mat = np.vstack((centre_rows, continuity_rows))
+bc_vec = np.concatenate(
+    (np.c_[slip_vector_x, slip_vector_y][keep].ravel(), np.zeros(len(continuity_rows)))
 )
 
-# Solve for quadratic node coefficients (in local (s, n) coordinates)
-coeffs = np.linalg.inv(design_mat) @ bc_vec
-
-# Extract (s, n) components and store them in two separate vectors
-coeffs_s = np.zeros((3 * n_els))
-coeffs_n = np.zeros((3 * n_els))
-for i in range(n_els):
-    coeffs_s[3 * i : 3 * (i + 1)] = coeffs[stride * i : stride * i + 3]
-    coeffs_n[3 * i : 3 * (i + 1)] = coeffs[stride * i + 3 : stride * (i + 1)]
+# Solve for quadratic node coefficients (in local (t, n) coordinates)
+coeffs = np.linalg.solve(design_mat, bc_vec)
 
 # %% [markdown]
 # # Plot Slip along the fault
@@ -125,9 +95,8 @@ fault_slip = slip_mat @ coeffs
 fault_slip_x_nodes = fault_slip[0::2]
 fault_slip_y_nodes = fault_slip[1::2]
 
-x_obs, y_obs, fault_slip_x, fault_slip_y = bemcs.get_slipvector_on_fault(
-    els, coeffs, n_eval
-)
+x_obs, y_obs, fault_slip = mesh.values_on_elements(coeffs, "slip", geometry=geometry, n_eval=n_eval)
+fault_slip_x, fault_slip_y = fault_slip[:, 0], fault_slip[:, 1]
 
 # plot as a line plot
 plt.figure(figsize=(9, 7))
@@ -206,26 +175,14 @@ y_plot = np.hstack(
     )
 ).reshape(-1, 1)
 
-# Compute shear and tensile stress kernels
-kernels_s = bemcs.get_displacement_stress_kernel(
-    x_plot, y_plot, els, mu, nu, flag="shear"
-)
-kernels_n = bemcs.get_displacement_stress_kernel(
-    x_plot, y_plot, els, mu, nu, flag="normal"
-)
+# Stress kernels along the line
+_, S, _ = bemcs.get_kernels(x_plot, y_plot, mesh, geometry=geometry, mu=mu, nu=nu)
+n_plot = len(x_plot)
+sxx, syy, sxy = (S[:, :, k, :].reshape(n_plot, -1) @ coeffs for k in range(3))
 
-# Compute displacement and stresses (we will plot it later)
-_, _, sxx, syy, sxy = bemcs.coeffs_to_disp_stress(
-    kernels_s, kernels_n, coeffs_s, coeffs_n
-)
-
-# compute traction kernels
-tractionkernels_s = bemcs.get_traction_kernels(els_obs, kernels_s, flag="global")
-tractionkernels_n = bemcs.get_traction_kernels(els_obs, kernels_n, flag="global")
-
-# tractions
-tx = tractionkernels_s[0] @ coeffs_s + tractionkernels_n[0] @ coeffs_n
-ty = tractionkernels_s[1] @ coeffs_s + tractionkernels_n[1] @ coeffs_n
+# tractions on the element planes (global x, y components)
+T = bemcs.traction_kernels(S, els_obs.x_normals, els_obs.y_normals)
+tx, ty = (T[:, :, k, :].reshape(n_plot, -1) @ coeffs for k in range(2))
 
 plt.figure(figsize=(8, 5))
 plt.subplot(2, 1, 1)
@@ -278,7 +235,7 @@ plt.ylim([-0.6, 0.6])
 plt.xticks([-1.25, -0.75, 0, 0.75, 1.25])
 plt.yticks([-0.6, -0.3, 0.0, 0.3, 0.6])
 plt.colorbar(q_traction, label="$|\\tau|$", pad=-0.05)
-plt.colorbar(q_slip, label="$|\mathbf{s}|$")
+plt.colorbar(q_slip, label=r"$|\mathbf{s}|$")
 plt.gca().set_aspect("equal", adjustable="box")
 # plt.savefig("spatially_smooth_slip_tractions_quiver.pdf")
 plt.show()

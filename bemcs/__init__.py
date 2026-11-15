@@ -53,6 +53,9 @@ from .bemAssembly import (
     get_kernels,
     get_slip_kernels,
     get_force_kernels,
+    traction_kernels,
+    kernel_matrix,
+    plot_BEM_field,
 )
 
 try:
@@ -67,4 +70,7 @@ __all__ = [
     "get_kernels",
     "get_slip_kernels",
     "get_force_kernels",
+    "traction_kernels",
+    "kernel_matrix",
+    "plot_BEM_field",
 ]

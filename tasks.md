@@ -121,6 +121,7 @@ Square system of `2(N_s + N_f)` equations.
    be replaced by the identity.
 5. **Test script calls `bemcs.plot_BEM_field`**, which is defined in `bemAssembly` and not exported from
    `bemcs/__init__.py`. Confirmed by running the script in the `bemcs` env: it solves fine (cond. number ~1.18) and then fails at the first plot call with `AttributeError`. Use `GF.plot_BEM_field`, or export it.
+   **Fixed (stage 2):** `plot_BEM_field` is exported from `bemcs`; the script runs end to end.
 6. **Trapezoidal force basis was previously flagged as unreliable** (commit `8fd5a0f`: "weird issues"; later
    commits fixed stride and arctan bugs). It still needs a standalone check against the constant-force or
    line-force result.
@@ -150,6 +151,19 @@ Square system of `2(N_s + N_f)` equations.
     through; the old function is compared at `mu = 1` only.
 15. **Debug prints in library code:** `label_nodes` prints node counts, and the hat/trapezoid coefficient builders print
     `patch number:` / `trapezoid number:` for every patch. `bemAssembly` prints the numba version on import.
+    Partly fixed: `label_nodes(els, verbose=True)` gained a `verbose` flag, and the new code calls it quietly.
+    The trapezoid builder no longer prints. The old hat builder (deleted in stage 3) and the numba import message remain.
+18. **Points on an element return the two-sided average (convention, stage 2).** In-plane stress (and slip
+    displacement) jumps across an element. The old kernels returned one side or the other, decided by the sign of a
+    ~1e-17 rounding error in the local y. Plane-strain kernels now treat |y_local| <= 1e-12 (a + |xi|) as on the
+    element and return the mean of the two sides: exactly for slip (y = 0), and by evaluating at y = +-1e-300 for
+    force. To get one side, offset the point explicitly (as the solvers do with `dr`). The antiplane kernels still
+    use the old behaviour; apply the same convention there.
+19. **Force-element collocation count (open question for T1).** Linear force with continuity rows (open ends
+    force = 0, overlaps continuous) plus one collocation row per element and direction over-determines an open chain
+    by 2 rows per direction. A closed loop is square. Options: collocate at interior nodes instead of element centres
+    (square for chains and loops; the nodal "tent" functions are then the force analogue of slip hats), or keep
+    trapezoids (1 DOF per 3-element patch). Decide before building the general-form `'h'` rows.
 16. **Quadratic slip kernel loses float64 precision near every element endpoint (confirmed, section 8.2).**
     `quadratic_kernel_farfield` (via `displacements_stresses_quadratic_no_rotation`) vs the same formula at 50 digits:
     relative error 1e-11 at d = 1e-2 L, 1e-7 at 1e-3 L, 2e-4 at 1e-4 L, O(1) at d <= 1e-5 L, and NaN directly above
@@ -227,8 +241,29 @@ Square system of `2(N_s + N_f)` equations.
   - mesh validation, ordering and global connectivity.
 
   Note: `hat` still takes a user-supplied 3-element `connectivity`; the one-ring hats of section 7.4 replace it in T2.
-- [ ] Stage 2: `mesh.continuity_operator()` (section 7.4) in interleaved columns, replacing `construct_smoothoperator*`;
-  switch `get_matrices_slip_slip_gradient` and the hat-coefficient builder to interleaved columns; migrate callers.
+- [x] Stage 2 (2026-11-16):
+  - **Level-3 operators**, all in interleaved columns:
+    - `slip_node_matrices`, `force_node_matrix`;
+    - `continuity_rows`, with clamped open slip nodes (slip and gradient, section 7.4);
+    - `tip_elements`, `traction_kernels`, `kernel_matrix`, `values_on_elements`.
+  - **Mesh methods:** `continuity_operator`, `tip_elements` / `bc_elements` (tip elements get no BC row),
+    `n_src` / `columns` / `n_columns`, `element_coefficients`, `values_on_elements`.
+  - **`hat_coefficients`** is rebuilt on the interleaved node matrices, one implementation for both geometries.
+  - **Antiplane slip kernel** split into a formula plus numba/numpy drivers. The numpy path had been 30x slower
+    through `.py_func`.
+  - **Callers migrated** to the new API, with no calls left to functions scheduled for deletion:
+    - all 8 `examples/*.py` scripts and `examples/utilfunctions.py`;
+    - `solveAntiplaneBEM` and `construct_linearoperator_slip_antiplane`.
+  - **Checks against pre-migration baselines.** With the old open-node rule, every example reproduced its baseline
+    (slip and fields to 1e-16 to 3e-8 relative, except on-element in-plane stress; issue 18).
+  - **Effect of clamped tips** (by design): 0.7-6% changes in examples whose faults have tips (19% for `sxy` in the
+    free-surface example); the split box has no tips and is unchanged. Short faults change a lot: the
+    3-element faults in `example_non_planar_fault_plotting.py` and `HeterogeneousElasticity_forces.py` lose the
+    BCs of both or one end element. Their meshes should get one extra element per tip (decision for the user).
+  - **Tests:** `tests/test_operators.py` checks against `construct_smoothoperator*` plus gradient rows at open nodes,
+    `A T = 0` for hats and trapezoids, and the equation count `pe (N - N_tip) + rows = 3 pe N`.
+  - **Not done here (T2):** one-ring hats; rejecting all-in/all-out junctions (issue 17). Force collocation count:
+    issue 19.
 - [ ] Stage 3: delete the old kernel functions and the old-vs-new comparison tests.
 - [ ] Fix issue 9 (numpy plane-strain force kernel), or replace it with the unified implementation.
 - [x] Add `cache=True` to every `@njit` (issue 10, first half).
@@ -272,7 +307,7 @@ Square system of `2(N_s + N_f)` equations.
 ### T1. Correctness of plane-strain heterogeneous solver
 - [ ] Fix issue 4.1 (compliance) and re-run `testing_HeterogeneousMaterialsPlanestrain.py`.
 - [ ] Resolve 4.2 and 4.3 (side of evaluation, definition and helper for `alpha`).
-- [ ] Fix 4.5 so the test script runs end to end.
+- [x] Fix 4.5 so the test script runs end to end.
 - [ ] Validate: (a) `alpha = 0` must reproduce the homogeneous hat-slip solution; (b) the antiplane
   limit; (c) a circular/layered inclusion with a known analytic solution, or an independent FEM result;
   (d) symmetry `mu1 <-> mu2` with sign-flipped `alpha`; (e) traction continuity across the interface.

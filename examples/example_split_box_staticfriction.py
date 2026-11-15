@@ -102,39 +102,21 @@ bemcs.plot_els_geometry(els)
 labels = els_labels(els, H, L)
 
 # %% [markdown]
-# ## Identifying open nodes, overlapping interior nodes and triple junctions automatically
+# ## Mesh: quadratic slip on every element (general, element-DOF formulation)
+# Open nodes, overlapping interior nodes and triple junctions are identified automatically by
+# the continuity operator. Unknowns are interleaved [t0, n0, t1, n1, ...] per node.
 
 # %%
-index_open, index_overlap, index_triple = bemcs.label_nodes(els)
-
-N_c = 2 * n_els  # central node equations
-N_o = 2 * len(index_open)  # open node equations
-N_i = 4 * len(index_overlap)  # overlapping node equations
-N_t = 6 * len(index_triple)  # triple junction equations
+mesh = bemcs.Mesh(els, "slip")
+geometry = "planestrain"
 
 # %% [markdown]
 # # Boundary Conditions
 # Here we implement the various boundary conditions as a big vector that goes in the right hand side of the Integral equations. The convention we follow is:
-# - BCs at node centers
-# - BCs at open nodes
-# - BCs at interior 2-overlap nodes
-# - BCs at triple junctions (this is experimental currently)
+# - BCs at element centres (2 per element)
+# - continuity rows at open, 2-overlap and triple-junction nodes (RHS = 0)
 
 # %%
-# Nequations = N_c + N_o + N_i + N_t
-Nequations = N_c + N_o + N_i + N_t
-Nunknowns = 6 * n_els
-
-# We will stack this with
-# equations for the element centers
-# equations at open nodes (RHS = 0)
-# equations at overlapping nodes (RHS = 0)
-# equations at triple junctions (RHS = 0)
-BC_c = np.zeros((N_c, 1))  # these are the only non-zero entries
-BC_o = np.zeros((N_o, 1))
-BC_i = np.zeros((N_i, 1))
-BC_t = np.zeros((N_t, 1))
-
 # Boundary conditions are
 # top: ux = 1, uy = 0
 # right: traction-free
@@ -163,10 +145,7 @@ bc_x[labels.interior] = 0.0  # residual or pre-stress level
 # )  # random residual stress field
 bc_y[labels.interior] = 0.0
 
-BC_c[0::2] = bc_x
-BC_c[1::2] = bc_y
-# stack all the BCs into 1 big vector
-BCvector = np.vstack((BC_c, BC_o, BC_i, BC_t))
+BC_c = np.c_[bc_x, bc_y].reshape(-1, 1)  # [x0, y0, x1, y1, ...]
 
 # %% [markdown]
 # # Design Matrix System 
@@ -177,105 +156,70 @@ BCvector = np.vstack((BC_c, BC_o, BC_i, BC_t))
 # - At triple junctions, we are currently implementing 2 equations for conservation of slip and 4 equations for smoothness (these choices are likely to change in the future)
 
 # %%
-# Design matrices (in x,y coordinates) for slip and slip gradients at each 3qn
-matrix_slip, matrix_slip_gradient = bemcs.get_matrices_slip_slip_gradient(
-    els, reference="local"
-)
-
 # Patch center locations (need to be shifted an infinitesimal amount in -ve unit normal direction)
 obs_xy = (
     np.vstack((els.x_centers, els.y_centers)).T
     - np.vstack((els.x_normals, els.y_normals)).T * 1e-8
 )
-x_obs = obs_xy[:, 0].reshape(-1, 1)
-y_obs = obs_xy[:, 1].reshape(-1, 1)
+x_obs = obs_xy[:, 0]
+y_obs = obs_xy[:, 1]
 
-# Compute shear and tensile stress kernels evaluated ONLY at the center of each element
-kernels_s = bemcs.get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, "shear")
-kernels_n = bemcs.get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, "normal")
+# Kernels evaluated ONLY at the element centres
+U, S, info = bemcs.get_kernels(x_obs, y_obs, mesh, geometry=geometry, mu=mu, nu=nu)
 
-# Convert to traction kernels [Nobs x Ncoefficients]
-traction_kernels_s = bemcs.get_traction_kernels(els, kernels_s, flag="local")
-traction_kernels_n = bemcs.get_traction_kernels(els, kernels_n, flag="local")
+# Traction kernels in local (shear, normal) coordinates of each element: [ts, tn]
+T = bemcs.traction_kernels(S, els.x_normals, els.y_normals, els.x_shears, els.y_shears)
 
-# Linear Operators for the appropriate boundary conditions
-matrix_system_c = np.zeros((N_c, Nunknowns))
-matrix_system_o = np.zeros((N_o, Nunknowns))
-matrix_system_i = np.zeros((N_i, Nunknowns))
-matrix_system_t = np.zeros((N_t, Nunknowns))
+# slip at element nodes in local (t, n) coordinates
+matrix_slip, matrix_slip_gradient = bemcs.bemAssembly.slip_node_matrices(
+    els, geometry=geometry, reference="local"
+)
 
-# Linear operator for central node BCs
-kerneleval_x = np.zeros((n_els, Nunknowns))
-kerneleval_y = np.zeros((n_els, Nunknowns))
+# Linear operator for central node BCs: rows [x0, y0, x1, y1, ...]
+kerneleval_x = np.zeros((n_els, mesh.n_columns(geometry=geometry)))
+kerneleval_y = np.zeros_like(kerneleval_x)
 
-# Linear operator for central node BCs
-kerneleval_x = np.zeros((n_els, Nunknowns))
-kerneleval_y = np.zeros((n_els, Nunknowns))
+
+def rows(K, idx, c):
+    """Rows of kernel component c at the elements idx, interleaved columns."""
+    return K[idx, :, c, :].reshape(int(np.sum(idx)), -1)
+
 
 for i in range(5):
-    if i == 0:
+    if i == 0:  # top: displacement
         idx = labels.top.flatten()
-        kernel_for_x_s = kernels_s[3]
-        kernel_for_x_n = kernels_n[3]
-        kernel_for_y_s = kernels_s[4]
-        kernel_for_y_n = kernels_n[4]
-    elif i == 1:
+        kerneleval_x[idx], kerneleval_y[idx] = rows(U, idx, 0), rows(U, idx, 1)
+    elif i == 1:  # bottom: displacement
         idx = labels.bot.flatten()
-        kernel_for_x_s = kernels_s[3]
-        kernel_for_x_n = kernels_n[3]
-        kernel_for_y_s = kernels_s[4]
-        kernel_for_y_n = kernels_n[4]
-    elif i == 2:
+        kerneleval_x[idx], kerneleval_y[idx] = rows(U, idx, 0), rows(U, idx, 1)
+    elif i == 2:  # left: traction
         idx = labels.left.flatten()
-        kernel_for_x_s = traction_kernels_s[0]
-        kernel_for_x_n = traction_kernels_n[0]
-        kernel_for_y_s = traction_kernels_s[1]
-        kernel_for_y_n = traction_kernels_n[1]
-    elif i == 3:
+        kerneleval_x[idx], kerneleval_y[idx] = rows(T, idx, 0), rows(T, idx, 1)
+    elif i == 3:  # right: traction
         idx = labels.right.flatten()
-        kernel_for_x_s = traction_kernels_s[0]
-        kernel_for_x_n = traction_kernels_n[0]
-        kernel_for_y_s = traction_kernels_s[1]
-        kernel_for_y_n = traction_kernels_n[1]
-    else:
+        kerneleval_x[idx], kerneleval_y[idx] = rows(T, idx, 0), rows(T, idx, 1)
+    else:  # interior fault: t_s - f t_n = 0 and no normal slip at the centre node
         idx = labels.interior.flatten()
-        kernel_for_x_s = traction_kernels_s[0] - friction_coeff * traction_kernels_s[1]
-        kernel_for_x_n = traction_kernels_n[0] - friction_coeff * traction_kernels_n[1]
-        # kernel_for_y_s = traction_kernels_s[1]
-        # kernel_for_y_n = traction_kernels_n[1]
-
-    # x-kernels
-    kerneleval_x[idx, 0::6] = kernel_for_x_s[idx, 0::3]
-    kerneleval_x[idx, 1::6] = kernel_for_x_s[idx, 1::3]
-    kerneleval_x[idx, 2::6] = kernel_for_x_s[idx, 2::3]
-    kerneleval_x[idx, 3::6] = kernel_for_x_n[idx, 0::3]
-    kerneleval_x[idx, 4::6] = kernel_for_x_n[idx, 1::3]
-    kerneleval_x[idx, 5::6] = kernel_for_x_n[idx, 2::3]
-
-    # y-kernels
-    if i != 4:
-        kerneleval_y[idx, 0::6] = kernel_for_y_s[idx, 0::3]
-        kerneleval_y[idx, 1::6] = kernel_for_y_s[idx, 1::3]
-        kerneleval_y[idx, 2::6] = kernel_for_y_s[idx, 2::3]
-        kerneleval_y[idx, 3::6] = kernel_for_y_n[idx, 0::3]
-        kerneleval_y[idx, 4::6] = kernel_for_y_n[idx, 1::3]
-        kerneleval_y[idx, 5::6] = kernel_for_y_n[idx, 2::3]
-    else:
-        kerneleval_y[idx, :] = matrix_slip[3::6, :][idx, :]
+        kerneleval_x[idx] = rows(T, idx, 0) - friction_coeff * rows(T, idx, 1)
+        centre_normal = 2 * (3 * np.flatnonzero(idx) + 1) + 1
+        kerneleval_y[idx] = matrix_slip[centre_normal]
 
 # populate matrix_system for central nodes
+matrix_system_c = np.zeros((2 * n_els, mesh.n_columns(geometry=geometry)))
 matrix_system_c[0::2, :] = kerneleval_x
 matrix_system_c[1::2, :] = kerneleval_y
 
 # %%
-matrix_system_o, matrix_system_i, matrix_system_t = bemcs.construct_smoothoperator(
-    els, index_open, index_overlap, index_triple
-)
+matrix_continuity, continuity_info = mesh.continuity_operator(geometry=geometry)
+
+# tip elements (with an open end node) are clamped tapers: they get no BC row
+keep = mesh.bc_elements("slip")
+matrix_system_c = matrix_system_c.reshape(n_els, 2, -1)[keep].reshape(2 * len(keep), -1)
+BC_c = BC_c.reshape(n_els, 2, -1)[keep].reshape(-1, 1)
 
 # stack the matrices and create the full linear operator
-matrix_system = np.vstack(
-    (matrix_system_c, matrix_system_o, matrix_system_i, matrix_system_t)
-)
+matrix_system = np.vstack((matrix_system_c, matrix_continuity))
+BCvector = np.vstack((BC_c, np.zeros((len(matrix_continuity), 1))))
 
 # plot design matrix
 plt.figure(figsize=(15, 6))
@@ -292,16 +236,11 @@ plt.show()
 quadratic_coefs = np.linalg.inv(matrix_system) @ BCvector
 print("Linear Operator Condition Number:", np.linalg.cond(matrix_system))
 
-# extract (s,n) components and store them in 2 separate vectors
-quadratic_coefs_s = np.zeros((3 * n_els, 1))
-quadratic_coefs_n = np.zeros((3 * n_els, 1))
-for i in range(n_els):
-    quadratic_coefs_s[3 * i : 3 * (i + 1)] = quadratic_coefs[6 * i : 6 * i + 3]
-    quadratic_coefs_n[3 * i : 3 * (i + 1)] = quadratic_coefs[6 * i + 3 : 6 * (i + 1)]
+c = quadratic_coefs.ravel()
 
 # compute stress components exactly on the fault centers
-sxy_f = kernels_s[2] @ quadratic_coefs_s + kernels_n[2] @ quadratic_coefs_n
-syy_f = kernels_s[1] @ quadratic_coefs_s + kernels_n[1] @ quadratic_coefs_n
+sxy_f = S[:, :, 2, :].reshape(n_els, -1) @ c
+syy_f = S[:, :, 1, :].reshape(n_els, -1) @ c
 
 # %% [markdown]
 # # Plot displacement and stress components in the medium
@@ -316,14 +255,12 @@ x_obs, y_obs = np.meshgrid(x_obs, y_obs)
 x_obs = x_obs.flatten()
 y_obs = y_obs.flatten()
 
-# Compute shear and tensile stress kernels
-kernels_s = bemcs.get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, "shear")
-kernels_n = bemcs.get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, "normal")
+# Displacement and stress kernels at the observation points
+U_obs, S_obs, _ = bemcs.get_kernels(x_obs, y_obs, mesh, geometry=geometry, mu=mu, nu=nu)
 
 # Compute displacement and stresses (we will plot it later)
-ux, uy, sxx, syy, sxy = bemcs.coeffs_to_disp_stress(
-    kernels_s, kernels_n, quadratic_coefs_s, quadratic_coefs_n
-)
+ux, uy = (U_obs[:, :, k, :].reshape(len(x_obs), -1) @ c for k in range(2))
+sxx, syy, sxy = (S_obs[:, :, k, :].reshape(len(x_obs), -1) @ c for k in range(3))
 
 bemcs.plot_displacements_stresses_els(
     els, n_obs, ux, uy, sxx, syy, sxy, x_obs, y_obs, n_skip_plot=9
@@ -333,9 +270,6 @@ bemcs.plot_displacements_stresses_els(
 # ## Plot slip on the wavy fault
 
 # %%
-matrix_slip, matrix_slip_gradient = bemcs.get_matrices_slip_slip_gradient(
-    els, reference="local"
-)
 # Extract slip at nodes from quadratic coefficients in the required coordinate system (global - x,y or local - s,n)
 slip_nodes = matrix_slip @ quadratic_coefs
 slip_nodes_x = slip_nodes[0::2]
@@ -343,14 +277,8 @@ slip_nodes_y = slip_nodes[1::2]
 slip_vector = np.hstack((slip_nodes_x, slip_nodes_y))
 
 # compute traction components
-ts = (
-    traction_kernels_s[0] @ quadratic_coefs_s
-    + traction_kernels_n[0] @ quadratic_coefs_n
-)
-tn = (
-    traction_kernels_s[1] @ quadratic_coefs_s
-    + traction_kernels_n[1] @ quadratic_coefs_n
-)
+ts = T[:, :, 0, :].reshape(n_els, -1) @ c
+tn = T[:, :, 1, :].reshape(n_els, -1) @ c
 # ts = kerneleval_x @ quadratic_coefs
 # tn = kerneleval_y @ quadratic_coefs
 
