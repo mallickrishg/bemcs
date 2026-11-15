@@ -129,11 +129,11 @@ Square system of `2(N_s + N_f)` equations.
    bounded near every support node. Original note: (commit `8fd5a0f`: "weird issues"; later
    commits fixed stride and arctan bugs). It still needs a standalone check against the constant-force or
    line-force result.
-7. **Duplicated functions** in `bemcs.py` and `bemAssembly.py` (audited, see section 6). The 3 slip/gradient
+7. ~~**Duplicated functions**~~ **SOLVED in stage 3 (2026-11-16):** the duplicates were deleted, and `test_no_redundancy_between_modules` passes. Original: duplicated functions in `bemcs.py` and `bemAssembly.py` (audited, see section 6). The 3 slip/gradient
    helpers and the 2 antiplane kernels agree numerically. The plane-strain force kernel does not (item 9).
-8. **Minor:** a `1-2nu` typo in the notes' last sentence, `__init__.py` uses deprecated `pkg_resources`, and
+8. **Minor** (partly solved: `pkg_resources` was replaced by `importlib.metadata` in stage 3): a `1-2nu` typo in the notes' last sentence, `__init__.py` uses deprecated `pkg_resources`, and
    `solve_planestrain_heterogeneous` has `print(np.linalg.cond(A))` on every call.
-9. **`bemcs.get_displacement_stress_kernel_force_planestrain` (the `bemcs.py` version) is wrong for any
+9. ~~**`bemcs.get_displacement_stress_kernel_force_planestrain` is wrong for rotated elements**~~ **SOLVED in stage 3 (2026-11-16):** deleted; plane-strain force goes through the generated kernels, which are tested against Kelvin quadrature at 4 angles. Original: the `bemcs.py` version is wrong for any
    non-horizontal element (confirmed).** It agrees with the numba version only for horizontal elements, and differs
    by up to ~0.16 (stresses) for a 30-degree element. The numba version in `bemAssembly` matches an independent
    reference (Gauss-Legendre integration of the Kelvin point source) to ~1e-9. Cause: `rotate_vector` applies
@@ -141,19 +141,24 @@ Square system of `2(N_s + N_f)` equations.
    general angles. Nothing in the repo calls the buggy version (the heterogeneous solver goes through
    `get_kernels_trapezoidalforce_planestrain`, which uses the correct numba kernel), but it is public API.
    Its docstring also lists the wrong return order (`sxx, sxy, syy, ux, uy`; it actually returns `ux, uy, sxx, syy, sxy`).
-10. **numba is a hard dependency despite the `try/except`** at the top of `bemAssembly.py`: line 16
+10. ~~**numba is a hard dependency; 140 s JIT**~~ **SOLVED in stage 3 (2026-11-16):** numba is optional: without it there is a no-op `njit`, the numpy path works, and
+    `use_numba=True` raises `ImportError` (tested in a subprocess). All kernels are cached and compile in 1-2 s; the
+    full `--numba` suite takes 12 s from a cold cache. Original: numba was a hard dependency despite the `try/except` at the top of `bemAssembly.py`: line 16
     `from numba import njit, prange` runs unconditionally. The plane-strain force numba kernel has no `cache=True`,
     so it costs **~140 s of JIT compilation** in every fresh Python process (it dominates the test-suite runtime).
-11. **11 public functions in `bemcs.py` are not exported** from `bemcs/__init__.py`, including
+11. ~~**Unexported public functions**~~ **SOLVED in stage 3 (2026-11-16):** `KNOWN_UNEXPORTED` is empty. The Kelvin/Laplace point sources are exported;
+    the triangle helpers were renamed `_private`. Original: 11 public functions in `bemcs.py` were not exported from `bemcs/__init__.py`, including
     `kelvin_point_source_disp/_stress` and `get_displacement_stress_kernel_constant` (list in `tests/test_api.py::KNOWN_UNEXPORTED`).
 12. ~~**A third copy of kernels lives in `examples/antiplane/GF.py`**~~ **SOLVED** (file removed) (it also defines
     `get_displacement_stress_kernel_force_planestrain`, among others).
-13. `bemcs.py` lines 3009, 3036 and 3063 use `"$\sigma_{..}$"` in non-raw strings (invalid escape, `DeprecationWarning`,
+13. ~~**Invalid escape sequences**~~ **SOLVED in stage 3 (2026-11-16):** raw strings; the package compiles with warnings as errors. Original: `bemcs.py` lines 3009, 3036 and 3063 use `"$\sigma_{..}$"` in non-raw strings (invalid escape, `DeprecationWarning`,
     a `SyntaxWarning` on Python ≥ 3.12).
-14. **`get_kernels_trapezoidalforce_antiplane` ignores its `mu` argument** (it always passes `mu=1.0` to the element
+14. ~~**`get_kernels_trapezoidalforce_antiplane` ignores `mu`**~~ **SOLVED in stage 3 (2026-11-16):** deleted; `get_force_kernels` scales with `1/mu` (`test_displacement_scales_with_one_over_mu`). Original: it ignores its `mu` argument (it always passes `mu=1.0` to the element
     kernel), so displacements are wrong by a factor `1/mu` for `mu != 1`. `get_kernels(..., basis="trapezoid")` passes `mu`
     through; the old function is compared at `mu = 1` only.
-15. **Debug prints in library code:** `label_nodes` prints node counts, and the hat/trapezoid coefficient builders print
+15. ~~**Debug prints in library code**~~ **SOLVED in stage 3 (2026-11-16):** `label_nodes` defaults to `verbose=False`, the old builders are gone, and
+    `import bemcs` prints nothing (`test_import_is_quiet`). Remaining, user-facing: a "no connectivity file" note in
+    `solveAntiplaneBEM`, and the condition-number prints in `examples/planestrain/utilfunctions.py` (T1). Original: `label_nodes` prints node counts, and the hat/trapezoid coefficient builders print
     `patch number:` / `trapezoid number:` for every patch. `bemAssembly` prints the numba version on import.
     Partly fixed: `label_nodes(els, verbose=True)` gained a `verbose` flag, and the new code calls it quietly.
     The trapezoid builder no longer prints. The old hat builder (deleted in stage 3) and the numba import message remain.
@@ -220,8 +225,8 @@ Square system of `2(N_s + N_f)` equations.
 
 ### TA. Code audit and API consolidation (do before T1)
 - [x] Add a `pytest` suite skeleton (`tests/`, `pytest.ini`); run with
-  `/Users/mallickrishg/miniconda3/envs/bemcs/bin/python -m pytest`. Current status: 285 passed, 30 skipped, 2 expected
-  xfail, ~3 s.
+  `/Users/mallickrishg/miniconda3/envs/bemcs/bin/python -m pytest`. Current status (after stage 3): 270 passed and 28 skipped by
+  default, ~5 s; with `--numba` 298 passed in ~12 s from a cold cache.
   **Numba tests are opt-in.** They are marked `@pytest.mark.numba` and run only with `pytest --numba`. While developing,
   never trigger JIT; test through the numpy path. Pay the compile once, when the code is functional. (The numba cache
   is invalidated by any edit to `bemAssembly.py`; we keep the kernels in that module anyway.)
@@ -275,10 +280,28 @@ Square system of `2(N_s + N_f)` equations.
     `A T = 0` for hats and trapezoids, and the equation count `pe (N - N_tip) + rows = 3 pe N`.
   - **Not done here (T2):** one-ring hats; rejecting all-in/all-out junctions (issue 17). Force collocation count:
     issue 19.
-- [ ] Stage 3: delete the old kernel functions and the old-vs-new comparison tests.
-- [ ] Fix issue 9 (numpy plane-strain force kernel), or replace it with the unified implementation.
+- [x] Stage 3 (2026-11-16): deleted the old functions.
+  - **From `bemcs.py`:**
+    - the 4 `els`-based kernels, including the buggy plane-strain force kernel;
+    - `get_matrices_slip_slip_gradient*` and `construct_smoothoperator*`;
+    - `coeffs_to_disp_stress`, `get_traction_kernels*`, `get_slipvector_on_fault*`, `rotate_stress_antiplane`.
+  - **From `bemAssembly.py`:**
+    - the 3 monolithic numba kernels and the old patch kernels;
+    - the old hat/trapezoid coefficient builders;
+    - the duplicated slip helpers.
+  - **`trapezoid_coefficients`** was rebuilt on `force_node_matrix`, one implementation for both geometries,
+    identical to the old builders (difference 0.0).
+  - **Tests:**
+    - the old-vs-new comparisons and `tests/test_duplicates_consistent.py` were removed;
+    - the frozen old continuity operators were kept as references in `tests/reference_operators.py`;
+    - traction and slip-evaluation tests now compare against explicit formulas;
+    - `KNOWN_DUPLICATES` and `KNOWN_UNEXPORTED` are empty, and the strict xfail now passes as a normal test.
+  - **Examples:** all 8 give the same results as before the deletions.
+  - **Note:** quadratic slip coefficients are slip values at s = -2w/3, 0, +2w/3, not at the element ends (documented
+    in `KernelInfo`). The free-surface example had used them as end-node slip; fixed.
+- [x] Fix issue 9 (numpy plane-strain force kernel): deleted in stage 3.
 - [x] Add `cache=True` to every `@njit` (issue 10, first half).
-- [ ] Make numba an optional, lazily imported dependency (issue 10, second half).
+- [x] Make numba an optional dependency (issue 10, second half; stage 3).
 - [x] Rewrite the plane-strain force kernel and add a plane-strain slip numba kernel (2026-11-16):
   - **Formulas:** `_quadratic_slip_f` and `_linear_force_g` are scalar formulas generated with sympy from the old closed
     forms (common subexpressions only, plus factored `R`; see issue 16). They are shared by numba drivers
@@ -331,8 +354,7 @@ Square system of `2(N_s + N_f)` equations.
   ~1e-7 to 1e-5 relative error at 1e-5 L, and `tests/test_kernel_precision.py` sweeps 1e-1 ... 1e-5 L against 50-digit mpmath.
   Remaining: below ~1e-6 L (section 8.4, curvature form), and checking the formula itself against quadrature of the
   point-dislocation solution.
-- [ ] Resolve `KNOWN_UNEXPORTED` and `KNOWN_DUPLICATES` until both are empty. Then the strict xfail
-  `test_no_redundancy_between_modules` will start passing; remove its marker.
+- [x] Resolve `KNOWN_UNEXPORTED` and `KNOWN_DUPLICATES` until both are empty (stage 3); the xfail marker is removed.
 - [x] Remove `examples/antiplane/GF.py` (issue 12). It was removed with the antiplane examples that used it.
 
 ### T1. Correctness of plane-strain heterogeneous solver
@@ -352,7 +374,7 @@ Square system of `2(N_s + N_f)` equations.
 - [ ] Replace the 3-element hat builder with one-ring hats (section 7.4): one hat per non-tip element, built from
   mesh topology, covering triple junctions. Tips are clamped (tip elements get no hat and no BC row). No extra
   continuity rows are needed, since each hat satisfies them.
-- [ ] Remove the duplicated functions (issue 4.7) and decide on the public API in `__init__.py`.
+- [x] Remove the duplicated functions (issue 4.7) and decide on the public API in `__init__.py` (stage 3).
 - [ ] Reject unsupported triple-junction orientations (issue 17) in `label_nodes` (and so in
   `mesh.continuity_operator()`). If all 3 elements at a junction start there or all 3 end there, raise a `ValueError`
   that names the junction coordinates and the 3 element indices, with their orientation (start/end at J). It should say
@@ -362,7 +384,8 @@ Square system of `2(N_s + N_f)` equations.
 ### T3. Tests and docs
 - [ ] Extend `tests/` with the validation cases from T1.
 - [ ] Document heterogeneous elasticity (sections 2.1 and 2.2) in the README or wiki, plus a plane-strain tutorial.
-- [ ] Tidy up: update `environment.yml` if needed, replace `pkg_resources`, remove debug prints.
+- [x] Tidy up: `environment.yml` gains `mpmath` (the tests evaluate 50-digit references with it), `pkg_resources`
+  is replaced, and library debug prints are removed.
 
 ### T4. Possible extensions (later)
 - [ ] Spatially varying `nu` (currently assumed uniform).
@@ -371,7 +394,7 @@ Square system of `2(N_s + N_f)` equations.
 
 ---
 
-## 6. Duplicate-function audit (bemcs.py vs bemAssembly.py)
+## 6. Duplicate-function audit (bemcs.py vs bemAssembly.py) — resolved in stage 3, kept for history
 
 | Name | `bemcs.py` | `bemAssembly.py` | Agree? |
 | --- | --- | --- | --- |

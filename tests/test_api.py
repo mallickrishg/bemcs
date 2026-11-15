@@ -15,17 +15,9 @@ import bemcs.bemcs as core
 REPO = pathlib.Path(__file__).resolve().parents[1]
 MODULES = {"bemcs.bemcs": core, "bemcs.bemAssembly": GF}
 
-# Names that are currently defined in BOTH modules. This is the technical debt
-# to remove: when a name is consolidated, delete it here. The test below fails
-# if a *new* duplicate appears or if an entry here is stale.
-KNOWN_DUPLICATES = {
-    "get_displacement_stress_kernel_force_antiplane",
-    "get_displacement_stress_kernel_force_planestrain",
-    "get_displacement_stress_kernel_slip_antiplane",
-    "get_matrices_slip_slip_gradient",
-    "slip_functions",
-    "slipgradient_functions",
-}
+# Names defined in BOTH modules (none since stage 3). The test below fails if a
+# duplicate appears.
+KNOWN_DUPLICATES = set()
 
 
 def _top_level_functions(module):
@@ -102,27 +94,13 @@ def test_duplicates_between_modules_match_known_list():
     )
 
 
-@pytest.mark.xfail(
-    strict=True, reason="goal: bemcs.bemcs and bemcs.bemAssembly share no names"
-)
 def test_no_redundancy_between_modules():
     assert not set(_top_level_functions(core)) & set(_top_level_functions(GF))
 
 
-# Public functions of bemcs.bemcs that bemcs/__init__.py does not re-export.
-# Review each one: export it, or rename it with a leading "_" if internal.
-KNOWN_UNEXPORTED = {
-    "get_transformed_coordinates",
-    "get_triangle_area",
-    "kelvin_point_source_disp",
-    "kelvin_point_source_stress",
-    "laplacian_pointforce_disp",
-    "laplacian_pointforce_sx",
-    "laplacian_pointforce_sy",
-    "rotate_stress_antiplane",
-    "rotate_stresses",
-    "rotate_vector",
-}
+# Public functions of bemcs.bemcs that bemcs/__init__.py does not re-export
+# (none since stage 3): export new public functions or give them a leading "_".
+KNOWN_UNEXPORTED = set()
 
 
 def test_unexported_public_functions_are_listed():
@@ -148,3 +126,43 @@ def test_core_module_does_not_import_bemAssembly():
             imported.add(node.module or "")
             imported |= {a.name for a in node.names}
     assert not any("bemAssembly" in name for name in imported)
+
+
+def _run_python(code):
+    import subprocess
+    import sys
+
+    return subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, cwd=REPO, timeout=300
+    )
+
+
+def test_import_is_quiet():
+    r = _run_python("import bemcs")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == ""
+
+
+def test_package_works_without_numba():
+    """numba is optional: the numpy path runs, use_numba=True raises ImportError."""
+    code = """
+import sys
+sys.modules["numba"] = None  # make 'import numba' fail
+import numpy as np
+import bemcs
+assert not bemcs.bemAssembly.NUMBA_AVAILABLE
+els = bemcs.initialize_els()
+els.x1, els.y1, els.x2, els.y2 = (np.array(v) for v in ([0.0, 1.0], [0.0, 0.0], [1.0, 2.0], [0.0, 0.5]))
+bemcs.standardize_els_geometry(els, reorder=False)
+U, S, _ = bemcs.get_slip_kernels([0.3], [0.7], els, geometry="planestrain", mu=1.0, nu=0.25)
+assert np.isfinite(S).all()
+U, S, _ = bemcs.get_force_kernels([0.3], [0.7], els, geometry="antiplane", mu=1.0)
+assert np.isfinite(S).all()
+try:
+    bemcs.get_slip_kernels([0.3], [0.7], els, geometry="antiplane", mu=1.0, use_numba=True)
+except ImportError:
+    print("ok")
+"""
+    r = _run_python(code)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "ok"

@@ -7,6 +7,7 @@ dependencies:
   - matplotlib
   - jupyterlab
   - pytest
+  - mpmath  # tests: 50-digit reference evaluation of the kernels
   - addict
   - tqdm
   - h5py

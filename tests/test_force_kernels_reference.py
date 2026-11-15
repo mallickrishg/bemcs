@@ -11,7 +11,6 @@ import numpy as np
 import pytest
 
 import bemcs
-import bemcs.bemcs as core
 import reference_kernels as ref
 
 MU, NU = 1.3, 0.3
@@ -59,19 +58,3 @@ def test_antiplane_force_matches_laplace(angle, basis, use_numba):
         want = ref.laplacian_line_force_antiplane(els, 0, XO, YO, shape, MU)
         got = np.concatenate([U[:, j, :].T, S[:, j, :].T])
         np.testing.assert_allclose(got, want, rtol=1e-7, atol=1e-9)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="bemcs.bemcs.get_displacement_stress_kernel_force_planestrain applies "
-    "rot_mats_inv to displacements and mis-rotates stresses: wrong for any "
-    "non-horizontal element (issue 9; to be deleted in stage 3).",
-)
-def test_old_bemcs_planestrain_force_kernel_matches_kelvin_rotated():
-    els = _element(np.pi / 6)
-    K = core.get_displacement_stress_kernel_force_planestrain(XO, YO, els, mu=MU, nu=NU)
-    want = ref.kelvin_line_force_planestrain(els, 0, XO, YO, np.eye(2)[0], ref.RAMPS[0], MU, NU)
-    err = max(
-        min(np.abs(K[k][:, 0, b, 0] - want[k]).max() for b in (0, 1)) for k in range(5)
-    )
-    assert err < 1e-7

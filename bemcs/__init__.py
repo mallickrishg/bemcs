@@ -1,4 +1,4 @@
-import pkg_resources
+from importlib.metadata import PackageNotFoundError, version as _version
 
 from .bemcs import (
     discretized_line,
@@ -21,22 +21,9 @@ from .bemcs import (
     initialize_els,
     standardize_els_geometry,
     plot_els_geometry,
-    get_matrices_slip_slip_gradient,
-    get_matrices_slip_slip_gradient_antiplane,
-    get_displacement_stress_kernel,
-    get_displacement_stress_kernel_slip_antiplane,
-    get_displacement_stress_kernel_force_antiplane,
-    get_displacement_stress_kernel_force_planestrain,
-    coeffs_to_disp_stress,
     plot_displacements_stresses_els,
-    get_traction_kernels,
-    get_traction_kernels_antiplane,
     get_strainenergy_from_stress,
-    get_slipvector_on_fault,
-    get_slipvector_on_fault_antiplane,
     label_nodes,
-    construct_smoothoperator,
-    construct_smoothoperator_antiplane,
     inpolygon,
     displacements_stresses_triangle_force_planestrain_farfield,
     displacements_stresses_triangle_force_planestrain_nearfield,
@@ -44,6 +31,11 @@ from .bemcs import (
     displacements_stresses_triangle_force_antiplane_farfield,
     displacements_stresses_triangle_force_antiplane_nearfield,
     displacements_stresses_triangle_force_antiplane,
+    kelvin_point_source_disp,
+    kelvin_point_source_stress,
+    laplacian_pointforce_disp,
+    laplacian_pointforce_sx,
+    laplacian_pointforce_sy,
 )
 
 from . import bemAssembly
@@ -59,8 +51,8 @@ from .bemAssembly import (
 )
 
 try:
-    __version__ = pkg_resources.get_distribution(__name__).version
-except Exception:
+    __version__ = _version(__name__)
+except PackageNotFoundError:
     __version__ = "unknown"
 
 __all__ = [

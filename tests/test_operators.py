@@ -1,9 +1,9 @@
 """Node operators, continuity rows, tractions and values along elements
-(stage 2, tasks.md 7.4), in the interleaved column convention of the kernels.
+(tasks.md 7.4), in the interleaved column convention of the kernels.
 
-The old block-ordered functions (columns [s0 s1 s2 n0 n1 n2] per element) are
-used as references through a column permutation; those comparisons go away
-with the old functions in stage 3.
+The continuity rows are checked against the frozen pre-revamp operators in
+tests/reference_operators.py (block column order [s0 s1 s2 n0 n1 n2] per
+element), through a column permutation.
 """
 
 import numpy as np
@@ -12,6 +12,7 @@ import pytest
 import bemcs
 import bemcs.bemAssembly as GF
 import bemcs.bemcs as core
+import reference_operators as refops
 
 CONN = np.array([[0, 1, 2], [1, 2, 3]])
 
@@ -60,7 +61,7 @@ def _same_rows_up_to_sign(A, B, tol=1e-12):
 @pytest.mark.parametrize("reference", ["global", "local"])
 def test_slip_node_matrices_planestrain_match_old(els_curved, reference):
     new = GF.slip_node_matrices(els_curved, geometry="planestrain", reference=reference)
-    old = core.get_matrices_slip_slip_gradient(els_curved, reference=reference)
+    old = refops.get_matrices_slip_slip_gradient(els_curved, reference=reference)
     perm = _old_to_new_columns(4)
     for N, O in zip(new, old):
         np.testing.assert_allclose(N, O[:, perm], atol=1e-14)
@@ -68,7 +69,7 @@ def test_slip_node_matrices_planestrain_match_old(els_curved, reference):
 
 def test_slip_node_matrices_antiplane_match_old(els_curved):
     new = GF.slip_node_matrices(els_curved, geometry="antiplane")
-    old = core.get_matrices_slip_slip_gradient_antiplane(els_curved)
+    old = refops.get_matrices_slip_slip_gradient_antiplane(els_curved)
     for N, O in zip(new, old):
         np.testing.assert_allclose(N, O, atol=1e-14)
 
@@ -96,11 +97,11 @@ def _old_with_clamped_tips(els, geometry):
     labels = core.label_nodes(els, verbose=False)
     pe = 1 if geometry == "antiplane" else 2
     if geometry == "planestrain":
-        o, i, t = core.construct_smoothoperator(els, *labels)
-        _, grad = core.get_matrices_slip_slip_gradient(els)
+        o, i, t = refops.construct_smoothoperator(els, *labels)
+        _, grad = refops.get_matrices_slip_slip_gradient(els)
     else:
-        o, i, t = core.construct_smoothoperator_antiplane(els, *labels)
-        _, grad = core.get_matrices_slip_slip_gradient_antiplane(els)
+        o, i, t = refops.construct_smoothoperator_antiplane(els, *labels)
+        _, grad = refops.get_matrices_slip_slip_gradient_antiplane(els)
     open_rows = []
     for k, node in enumerate(labels[0]):
         n = int(np.abs(node).item())
@@ -196,49 +197,67 @@ def test_mesh_continuity_operator_skips_patch_and_constant_bases(els_curved):
 # ----------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("flag", ["global", "local"])
-def test_traction_kernels_match_old(els_curved, flag):
+@pytest.mark.parametrize("local", [False, True])
+def test_traction_kernels_planestrain(els_curved, local):
+    """t = sigma . n per source coefficient; optionally projected on (shear, normal)."""
     xo, yo = els_curved.x_centers, els_curved.y_centers + 0.05
     _, S, _ = bemcs.get_slip_kernels(xo, yo, els_curved, geometry="planestrain", mu=1.0, nu=0.25)
-    if flag == "global":
-        t = GF.traction_kernels(S, els_curved.x_normals, els_curved.y_normals)
-    else:
-        t = GF.traction_kernels(
-            S, els_curved.x_normals, els_curved.y_normals, els_curved.x_shears, els_curved.y_shears
-        )
-    for l, f in enumerate(("shear", "normal")):
-        K = core.get_displacement_stress_kernel(xo, yo, els_curved, 1.0, 0.25, f)
-        old = core.get_traction_kernels(els_curved, K, flag=flag)
-        for c in range(2):
-            np.testing.assert_allclose(t[:, :, c, l], old[c], rtol=1e-9, atol=1e-11)
+    nx, ny = els_curved.x_normals, els_curved.y_normals
+    sx, sy = els_curved.x_shears, els_curved.y_shears
+    t = GF.traction_kernels(S, nx, ny, sx, sy) if local else GF.traction_kernels(S, nx, ny)
+    assert t.shape == (4, 12, 2, 2)
+    for i in range(4):
+        for j in range(12):
+            for l in range(2):
+                sig = np.array([[S[i, j, 0, l], S[i, j, 2, l]], [S[i, j, 2, l], S[i, j, 1, l]]])
+                tv = sig @ np.array([nx[i], ny[i]])
+                if local:
+                    tv = np.array([tv @ [sx[i], sy[i]], tv @ [nx[i], ny[i]]])
+                np.testing.assert_allclose(t[i, j, :, l], tv, atol=1e-14)
 
 
-def test_traction_kernels_antiplane_match_old(els_curved):
+def test_traction_kernels_antiplane(els_curved):
     xo, yo = els_curved.x_centers, els_curved.y_centers + 0.05
     _, S, _ = bemcs.get_slip_kernels(xo, yo, els_curved, geometry="antiplane", mu=1.0)
     t = GF.traction_kernels(S, els_curved.x_normals, els_curved.y_normals)
-    old = core.get_traction_kernels_antiplane(els_curved, (S[:, :, 0], S[:, :, 1]))
-    np.testing.assert_allclose(t[:, :, 0], old, atol=1e-14)
+    expected = S[:, :, 0] * els_curved.x_normals[:, None] + S[:, :, 1] * els_curved.y_normals[:, None]
+    np.testing.assert_allclose(t[:, :, 0], expected, atol=1e-15)
 
 
-def test_values_on_elements_match_get_slipvector_on_fault(els_curved):
-    rng = np.random.default_rng(3)
-    c_new = rng.normal(size=24)
-    c_old = np.empty(24)
-    c_old[_old_to_new_columns(4)] = c_new
-    x, y, v = GF.values_on_elements(els_curved, c_new, kind="slip", geometry="planestrain", n_eval=5)
-    xo, yo, sx, sy = core.get_slipvector_on_fault(els_curved, c_old, 5)
-    np.testing.assert_allclose(x, xo, atol=1e-14)
-    np.testing.assert_allclose(y, yo, atol=1e-14)
-    np.testing.assert_allclose(v, np.c_[sx, sy], atol=1e-13)
+@pytest.mark.parametrize("geometry", ["antiplane", "planestrain"])
+def test_values_on_elements_quadratic_slip(els_curved, geometry):
+    """Slip along each element = quadratic Lagrange interpolation of its 3
+    coefficients, which are slip values at s = -2w/3, 0, +2w/3 (local frame),
+    rotated to (x, y) in plane strain."""
+    pe = 1 if geometry == "antiplane" else 2
+    c = np.random.default_rng(3).normal(size=12 * pe)
+    n_eval = 5
+    x, y, v = GF.values_on_elements(els_curved, c, kind="slip", geometry=geometry, n_eval=n_eval)
+    t = (np.arange(n_eval) + 0.5) / n_eval * 2 - 1  # sub-interval midpoints, s / w
+    nodes = np.array([-2.0, 0.0, 2.0]) / 3  # interpolation points, as s / w
 
+    def lagrange_k(k):
+        others = [m for m in range(3) if m != k]
+        return np.prod([(t - nodes[m]) / (nodes[k] - nodes[m]) for m in others], axis=0)
 
-def test_values_on_elements_antiplane_match_old(els_curved):
-    c = np.random.default_rng(4).normal(size=12)
-    x, y, v = GF.values_on_elements(els_curved, c, kind="slip", geometry="antiplane", n_eval=5)
-    xo, yo, s = core.get_slipvector_on_fault_antiplane(els_curved, c, 5)
-    np.testing.assert_allclose(v, s, atol=1e-14)
-    np.testing.assert_allclose(x, xo, atol=1e-14)
+    lagrange = np.stack([lagrange_k(k) for k in range(3)], axis=1)
+    for e in range(4):
+        R = els_curved.rot_mats[e]
+        w = els_curved.half_lengths[e]
+        rows = slice(e * n_eval, (e + 1) * n_eval)
+        np.testing.assert_allclose(x[rows], els_curved.x_centers[e] + R[0, 0] * t * w, atol=1e-14)
+        np.testing.assert_allclose(y[rows], els_curved.y_centers[e] + R[1, 0] * t * w, atol=1e-14)
+        local = lagrange @ c.reshape(4, 3, pe)[e]  # (n_eval, pe)
+        if geometry == "antiplane":
+            np.testing.assert_allclose(v[rows], local[:, 0], atol=1e-14)
+        else:
+            unit = np.array([[els_curved.x_shears[e], els_curved.x_normals[e]],
+                             [els_curved.y_shears[e], els_curved.y_normals[e]]])
+            np.testing.assert_allclose(v[rows], local @ unit.T, atol=1e-14)
+            _, _, v_loc = GF.values_on_elements(
+                els_curved, c, kind="slip", geometry=geometry, n_eval=n_eval, frame="local"
+            )
+            np.testing.assert_allclose(v_loc[rows], local, atol=1e-14)
 
 
 def test_force_values_are_linear_ramps(els_curved):

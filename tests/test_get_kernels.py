@@ -5,9 +5,8 @@ level 2  get_slip_kernels, get_force_kernels
 level 1  Mesh, get_kernels
 
 Comparisons with independent references (analytic constant slip, point-force
-quadrature) live in test_force_kernels_reference.py and here. The comparisons
-with the old per-case functions (`test_matches_old_function`) are temporary and
-go away with the old functions in stage 3.
+quadrature) live in test_force_kernels_reference.py and here; near-field and
+precision checks in test_near_field.py and test_kernel_precision.py.
 """
 
 import numpy as np
@@ -15,7 +14,6 @@ import pytest
 
 import bemcs
 import bemcs.bemAssembly as GF
-import bemcs.bemcs as core
 import reference_kernels as ref
 
 MU, NU = 1.3, 0.3
@@ -130,7 +128,7 @@ def test_derived_constant_slip_matches_analytic(els_curved, obs_points, flag_ind
 
 def _slip_at_nodes_antiplane(els, T):
     """Slip and slip gradient at the 3 nodes of each element for each column of T."""
-    m_slip, m_grad = core.get_matrices_slip_slip_gradient_antiplane(els)
+    m_slip, m_grad = GF.slip_node_matrices(els, geometry="antiplane")
     return m_slip @ T, m_grad @ T  # rows: 3 * element + node
 
 
@@ -155,13 +153,12 @@ def test_antiplane_hat_is_smooth_unit_bump(els_curved):
 def test_planestrain_hat_is_smooth_unit_bump(els_curved):
     T = GF.hat_coefficients(els_curved, CONN, geometry="planestrain")
     assert T.shape == (12, 2, 2, 2)
-    m_slip, m_grad = core.get_matrices_slip_slip_gradient(els_curved, reference="global")
+    m_slip, m_grad = GF.slip_node_matrices(els_curved, geometry="planestrain", reference="global")
     for p, (a, b, c) in enumerate(CONN):
         for m in (0, 1):  # unit shear patch, unit normal patch
-            # back to bemcs.bemcs's per-element block order [t0 t1 t2 n0 n1 n2]
-            blocks = T[:, :, p, m].reshape(4, 3, 2).transpose(0, 2, 1).reshape(-1)
-            slip = (m_slip @ blocks).reshape(-1, 2)  # global (x, y) slip per node
-            grad = (m_grad @ blocks).reshape(-1, 2)
+            coefs = T[:, :, p, m].reshape(-1)  # interleaved [t0, n0, t1, n1, ...]
+            slip = (m_slip @ coefs).reshape(-1, 2)  # global (x, y) slip per node
+            grad = (m_grad @ coefs).reshape(-1, 2)
             unit = np.array(
                 [els_curved.x_shears[b], els_curved.y_shears[b]]
                 if m == 0
@@ -449,81 +446,6 @@ def test_mesh_with_patches_uses_global_connectivity(els_curved, obs_points, geom
     )
     np.testing.assert_allclose(U[:, :1], Uh, rtol=1e-10, atol=1e-12)
     np.testing.assert_allclose(S[:, :1], Sh, rtol=1e-10, atol=1e-12)
-
-
-# ============================================================================
-# temporary: agreement with the old per-case functions (remove in stage 3)
-# ============================================================================
-
-_JIT = pytest.mark.numba  # the old function calls a numba-jitted kernel internally
-OLD_CASES = [
-    ("antiplane", "slip", "quadratic"),
-    ("antiplane", "force", "linear"),
-    pytest.param(("antiplane", "force", "trapezoid"), marks=_JIT, id="antiplane-force-trapezoid"),
-    ("planestrain", "slip", "quadratic"),
-    ("planestrain", "slip", "hat"),
-    ("planestrain", "force", "linear"),
-    pytest.param(("planestrain", "force", "trapezoid"), marks=_JIT, id="planestrain-force-trapezoid"),
-]
-
-
-def _old(els, obs, geometry, kind, basis):
-    """Old kernels as a list of (selector into new U/S, old array)."""
-    xo, yo = obs
-    n = xo.size
-    arr = (els.x_centers, els.y_centers, els.half_lengths, els.rot_mats, els.rot_mats_inv)
-    if (geometry, kind, basis) == ("antiplane", "slip", "quadratic"):
-        sx, sy, u = core.get_displacement_stress_kernel_slip_antiplane(xo, yo, els, mu=MU)
-        return [(("U", 0), u), (("S", 0), sx), (("S", 1), sy)]
-    if (geometry, kind, basis) == ("antiplane", "force", "linear"):
-        sx, sy, u = core.get_displacement_stress_kernel_force_antiplane(xo, yo, els, mu=MU)
-        r = lambda K: K.transpose(0, 2, 1).reshape(n, -1)  # noqa: E731
-        return [(("U", 0), r(u)), (("S", 0), r(sx)), (("S", 1), r(sy))]
-    if (geometry, kind, basis) == ("antiplane", "force", "trapezoid"):
-        # the old function ignores mu (issue 14), so compare at mu = 1
-        sx, sy, u = GF.get_kernels_trapezoidalforce_antiplane(xo, yo, els, CONN)
-        return [(("U", 0), u), (("S", 0), sx), (("S", 1), sy)]
-    if (geometry, kind, basis) == ("planestrain", "slip", "quadratic"):
-        out = []
-        for l, flag in enumerate(("shear", "normal")):
-            sxx, syy, sxy, ux, uy = core.get_displacement_stress_kernel(xo, yo, els, MU, NU, flag)
-            out += [(("U", 0, l), ux), (("U", 1, l), uy)]
-            out += [(("S", 0, l), sxx), (("S", 1, l), syy), (("S", 2, l), sxy)]
-        return out
-    if basis in ("hat", "trapezoid"):
-        fn = (
-            GF.get_kernels_quadratichatslip_planestrain
-            if basis == "hat"
-            else GF.get_kernels_trapezoidalforce_planestrain
-        )
-        ux, uy, sxx, syy, sxy = fn(xo, yo, els, CONN, MU, NU)
-        return [(("U", 0, None), ux), (("U", 1, None), uy), (("S", 0, None), sxx),
-                (("S", 1, None), syy), (("S", 2, None), sxy)]
-    K = GF.get_displacement_stress_kernel_force_planestrain.py_func(xo, yo, *arr, MU, NU)
-    out = []
-    for c, name in enumerate(("U0", "U1", "S0", "S1", "S2")):
-        r = K[c].transpose(0, 3, 2, 1).reshape(n, -1, 2)
-        out += [((name[0], int(name[1]), l), r[:, :, l]) for l in (0, 1)]
-    return out
-
-
-@pytest.mark.parametrize(
-    "case", OLD_CASES, ids=lambda c: "-".join(c) if isinstance(c, tuple) else None
-)
-def test_matches_old_function(els_curved, obs_points, case):
-    geometry, kind, basis = case
-    mu = 1.0 if (geometry, basis) == ("antiplane", "trapezoid") else MU
-    U, S, _ = _level2(els_curved, obs_points, geometry, kind, basis, mu=mu)
-    n = obs_points[0].size
-    for sel, old in _old(els_curved, obs_points, geometry, kind, basis):
-        arr = {"U": U, "S": S}[sel[0]]
-        if len(sel) == 2:
-            new = arr[:, :, sel[1]]
-        elif sel[2] is None:  # interleaved patch columns [t0, n0, t1, n1, ...]
-            new = arr[:, :, sel[1], :].reshape(n, -1)
-        else:
-            new = arr[:, :, sel[1], sel[2]]
-        np.testing.assert_allclose(new, old, rtol=1e-10, atol=1e-12, err_msg=str(sel))
 
 
 @pytest.mark.parametrize("geometry", GEOMETRIES)

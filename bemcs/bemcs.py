@@ -2256,111 +2256,6 @@ def get_slip_slipgradient(x, a, phi):
     return slip, slipgradient
 
 
-def get_matrices_slip_slip_gradient(els, flag="node", reference="global"):
-    """Assemble design matrix in (x,y) coordinate system for 2 slip components (s,n) for a
-    linear system of equations to calculate quadratic coefficients from applied boundary conditions for an ordered list of fault elements.
-
-    flag = "node" : slip is applied at each node of a fault element
-    flag = "mean" : slip is applied as a mean value over the entire fault element, not just at nodes
-
-    reference = "global" : slip is applied in a global (x,y) coordinate system
-    reference = "local"  : slip is applied in a local (s,n) coordinate system
-
-    Unit vectors for each patch are used to premultiply the input matrices for the global reference frame
-    [dx nx] [f1 f2 f3 0  0  0]
-    [dy ny] [0  0  0  f1 f2 f3]"""
-
-    stride = 6
-    n_els = len(els.x1)
-    mat_slip = np.zeros((stride * n_els, stride * n_els))
-    mat_slip_gradient = np.zeros_like(mat_slip)
-
-    for i in range(n_els):
-        slip_mat_stack = np.zeros((stride, stride))
-        slip_gradient_mat_stack = np.zeros_like(slip_mat_stack)
-        unit_vec_mat = np.array(
-            [
-                [els.x_shears[i], els.x_normals[i]],
-                [els.y_shears[i], els.y_normals[i]],
-            ]
-        )
-        unit_vec_mat_stack = np.kron(np.eye(3), unit_vec_mat)
-        x_obs = np.array([-els.half_lengths[i], 0.0, els.half_lengths[i]])
-
-        if flag == "node":
-            slip_mat = slip_functions(x_obs, els.half_lengths[i])
-        elif flag == "mean":
-            slip_mat = slip_functions_mean(x_obs)
-        else:
-            raise ValueError("Invalid flag. Use either 'node' or 'mean'.")
-
-        slip_gradient_mat = slipgradient_functions(x_obs, els.half_lengths[i])
-        slip_mat_stack[0::2, 0:3] = slip_mat
-        slip_mat_stack[1::2, 3:] = slip_mat
-        slip_gradient_mat_stack[0::2, 0:3] = slip_gradient_mat
-        slip_gradient_mat_stack[1::2, 3:] = slip_gradient_mat
-
-        if reference == "global":
-            mat_slip[stride * i : stride * (i + 1), stride * i : stride * (i + 1)] = (
-                unit_vec_mat_stack @ slip_mat_stack
-            )
-            mat_slip_gradient[
-                stride * i : stride * (i + 1), stride * i : stride * (i + 1)
-            ] = (unit_vec_mat_stack @ slip_gradient_mat_stack)
-        elif reference == "local":
-            mat_slip[stride * i : stride * (i + 1), stride * i : stride * (i + 1)] = (
-                slip_mat_stack
-            )
-
-            mat_slip_gradient[
-                stride * i : stride * (i + 1), stride * i : stride * (i + 1)
-            ] = slip_gradient_mat_stack
-        else:
-            raise ValueError("Invalid reference frame. Use either 'global' or 'local'")
-
-    return mat_slip, mat_slip_gradient
-
-
-def get_matrices_slip_slip_gradient_antiplane(els, flag="node"):
-    """Assemble design matrix in (x,y) coordinate system for antiplane slip for a
-    linear system of equations to calculate quadratic coefficients from applied boundary conditions for an ordered list of fault elements.
-
-    flag = "node" : slip is applied at each node of a fault element
-    flag = "mean" : slip is applied as a mean value over the entire fault element, not just at nodes
-
-    Unit vectors for each patch are used to premultiply the input matrices for the global reference frame
-    [s   =  [f1   f2   f3 ].[φ1
-    ds/dζ]  [f1'  f2'  f3']  φ2
-                             φ3]"""
-
-    stride = 3
-    n_els = len(els.x1)
-    mat_slip = np.zeros((stride * n_els, stride * n_els))
-    mat_slip_gradient = np.zeros_like(mat_slip)
-
-    for i in range(n_els):
-
-        x_obs = np.array([-els.half_lengths[i], 0.0, els.half_lengths[i]])
-
-        if flag == "node":
-            slip_mat = slip_functions(x_obs, els.half_lengths[i])
-        elif flag == "mean":
-            slip_mat = slip_functions_mean(x_obs)
-        else:
-            raise ValueError("Invalid flag. Use either 'node' or 'mean'.")
-
-        slip_gradient_mat = slipgradient_functions(x_obs, els.half_lengths[i])
-
-        mat_slip[stride * i : stride * (i + 1), stride * i : stride * (i + 1)] = (
-            slip_mat
-        )
-        mat_slip_gradient[
-            stride * i : stride * (i + 1), stride * i : stride * (i + 1)
-        ] = slip_gradient_mat
-
-    return mat_slip, mat_slip_gradient
-
-
 def rotate_displacement_stress(displacement, stress, inverse_rotation_matrix):
     """Rotate displacements stresses from local to global reference frame"""
     displacement = np.matmul(displacement.T, inverse_rotation_matrix).T
@@ -2375,454 +2270,6 @@ def rotate_displacement_stress(displacement, stress, inverse_rotation_matrix):
         stress[1, i] = stress_tensor_global[1, 1]
         stress[2, i] = stress_tensor_global[0, 1]
     return displacement, stress
-
-
-def get_displacement_stress_kernel(x_obs, y_obs, els, mu, nu, flag):
-    """Function to calculate displacement and stress kernels at a numpy array of locations [x_obs,y_obs]
-
-    flag can either be "shear" or "normal" for kernels resulting shear slip or tensile slip
-
-    kernels returned are stress_xx, stress_yy, stress_xy, u_x, u_y
-    """
-    n_obs = len(x_obs)
-    n_els = len(els.x1)
-
-    kernel_ux = np.zeros((n_obs, 3 * n_els))
-    kernel_uy = np.zeros((n_obs, 3 * n_els))
-    kernel_sxx = np.zeros((n_obs, 3 * n_els))
-    kernel_syy = np.zeros((n_obs, 3 * n_els))
-    kernel_sxy = np.zeros((n_obs, 3 * n_els))
-
-    # check for which slip component kernels the user wants
-    if flag == "shear":
-        flag_strike_slip = 1.0
-        flag_tensile_slip = 0.0
-    elif flag == "normal":
-        flag_strike_slip = 0.0
-        flag_tensile_slip = 1.0
-    else:
-        raise ValueError(
-            "shear/tensile flag must be 'shear' or 'normal', no other values allowed"
-        )
-
-    for i in range(n_els):
-        # Center observation locations (no translation needed)
-        x_trans = x_obs - els.x_centers[i]
-        y_trans = y_obs - els.y_centers[i]
-
-        # Rotate observations such that fault element is horizontal
-        rotated_coordinates = els.rot_mats_inv[i, :, :] @ np.vstack(
-            (x_trans.T, y_trans.T)
-        )
-        x_rot = rotated_coordinates[0, :].T + els.x_centers[i]
-        y_rot = rotated_coordinates[1, :].T + els.y_centers[i]
-
-        # Go through each of the 3 components for a given patch
-        # Component 1
-        slip_vector = np.array([1.0, 0.0, 0.0])
-        strike_slip = slip_vector * flag_strike_slip
-        tensile_slip = slip_vector * flag_tensile_slip
-
-        # Calculate displacements and stresses for current element
-        (
-            displacement_local,
-            stress_local,
-        ) = displacements_stresses_quadratic_no_rotation(
-            x_rot,
-            y_rot,
-            els.half_lengths[i],
-            mu,
-            nu,
-            strike_slip,
-            tensile_slip,
-            els.x_centers[i],
-            els.y_centers[i],
-        )
-        displacement_eval, stress_eval = rotate_displacement_stress(
-            displacement_local, stress_local, els.rot_mats_inv[i, :, :]
-        )
-        index = 3 * i
-        kernel_sxx[:, index] = stress_eval[0, :]
-        kernel_syy[:, index] = stress_eval[1, :]
-        kernel_sxy[:, index] = stress_eval[2, :]
-        kernel_ux[:, index] = displacement_eval[0, :]
-        kernel_uy[:, index] = displacement_eval[1, :]
-
-        # Component 2
-        slip_vector = np.array([0.0, 1.0, 0.0])
-        strike_slip = slip_vector * flag_strike_slip
-        tensile_slip = slip_vector * flag_tensile_slip
-
-        # Calculate displacements and stresses for current element
-        (
-            displacement_local,
-            stress_local,
-        ) = displacements_stresses_quadratic_no_rotation(
-            x_rot,
-            y_rot,
-            els.half_lengths[i],
-            mu,
-            nu,
-            strike_slip,
-            tensile_slip,
-            els.x_centers[i],
-            els.y_centers[i],
-        )
-        displacement_eval, stress_eval = rotate_displacement_stress(
-            displacement_local, stress_local, els.rot_mats_inv[i, :, :]
-        )
-        index = 3 * i + 1
-        kernel_sxx[:, index] = stress_eval[0, :]
-        kernel_syy[:, index] = stress_eval[1, :]
-        kernel_sxy[:, index] = stress_eval[2, :]
-        kernel_ux[:, index] = displacement_eval[0, :]
-        kernel_uy[:, index] = displacement_eval[1, :]
-
-        # Component 3
-        slip_vector = np.array([0.0, 0.0, 1.0])
-        strike_slip = slip_vector * flag_strike_slip
-        tensile_slip = slip_vector * flag_tensile_slip
-
-        # Calculate displacements and stresses for current element
-        (
-            displacement_local,
-            stress_local,
-        ) = displacements_stresses_quadratic_no_rotation(
-            x_rot,
-            y_rot,
-            els.half_lengths[i],
-            mu,
-            nu,
-            strike_slip,
-            tensile_slip,
-            els.x_centers[i],
-            els.y_centers[i],
-        )
-        displacement_eval, stress_eval = rotate_displacement_stress(
-            displacement_local, stress_local, els.rot_mats_inv[i, :, :]
-        )
-        index = 3 * i + 2
-        kernel_sxx[:, index] = stress_eval[0, :]
-        kernel_syy[:, index] = stress_eval[1, :]
-        kernel_sxy[:, index] = stress_eval[2, :]
-        kernel_ux[:, index] = displacement_eval[0, :]
-        kernel_uy[:, index] = displacement_eval[1, :]
-    return kernel_sxx, kernel_syy, kernel_sxy, kernel_ux, kernel_uy
-
-
-def rotate_stress_antiplane(stress, inverse_rotation_matrix):
-    """Rotate antiplane stress vector from local to global reference frame"""
-
-    stress_rot = np.transpose(
-        np.tensordot(stress, inverse_rotation_matrix, axes=(1, 1)), (0, 2, 1)
-    )
-
-    return stress_rot
-
-
-def get_displacement_stress_kernel_slip_antiplane(x_obs, y_obs, els, mu=1):
-    """Function to calculate displacement and stress kernels due to a fault source in antiplane geometry
-    at a numpy array of locations [x_obs,y_obs]
-
-    kernels returned are stress_xz, stress_yz, u
-    """
-    n_obs = len(x_obs)
-    n_els = len(els.x1)
-
-    kernel_u = np.zeros((n_obs, 3 * n_els))
-    kernel_sxz = np.zeros((n_obs, 3 * n_els))
-    kernel_syz = np.zeros((n_obs, 3 * n_els))
-
-    for i in range(n_els):  # loop over each element in els()
-        # Center observation locations (no translation needed)
-        x_trans = x_obs - els.x_centers[i]
-        y_trans = y_obs - els.y_centers[i]
-
-        # Rotate observations such that fault element is horizontal
-        rotated_coordinates = els.rot_mats_inv[i, :, :] @ np.vstack(
-            (x_trans.T, y_trans.T)
-        )
-        x_rot = rotated_coordinates[0, :].T + els.x_centers[i]
-        y_rot = rotated_coordinates[1, :].T + els.y_centers[i]
-
-        # Calculate displacements and stresses for current element
-        # returns a 2-d matrix for disp [n_obs x 3 basis functions], 3-d matrix for stress [n_obs x [sx,sy] x 3 basis functions]
-        (
-            displacement_eval,
-            stress_local,
-        ) = displacements_stresses_quadratic_slip_no_rotation_antiplane(
-            x_rot.reshape(-1, 1),
-            y_rot.reshape(-1, 1),
-            els.half_lengths[i],
-            mu,
-            els.x_centers[i],
-            els.y_centers[i],
-        )
-        # rotate stress from local -> global coordinates
-        stress_eval = rotate_stress_antiplane(stress_local, els.rot_mats[i, :, :])
-
-        for j in range(3):  # loop over each basis function
-            index = 3 * i + j
-            kernel_sxz[:, index] = stress_eval[:, 0, j]
-            kernel_syz[:, index] = stress_eval[:, 1, j]
-            kernel_u[:, index] = displacement_eval[:, j]
-
-    return kernel_sxz, kernel_syz, kernel_u
-
-
-def get_displacement_stress_kernel_force_antiplane(x_obs, y_obs, els, mu=1):
-    """Function to calculate displacement and stress kernels due to a line force source in antiplane geometry
-    at a numpy array of locations [x_obs,y_obs]
-
-    kernels returned are 3-d matrices stress_xz, stress_yz, u [Nobs x 2 basis functions x Nsources]
-    """
-    n_obs = len(x_obs)
-    n_els = len(els.x1)
-
-    kernel_u = np.zeros((n_obs, 2, n_els))
-    kernel_sxz = np.zeros((n_obs, 2, n_els))
-    kernel_syz = np.zeros((n_obs, 2, n_els))
-
-    for i in range(n_els):  # loop over each element in els()
-        # Center observation locations (no translation needed)
-        x_trans = x_obs - els.x_centers[i]
-        y_trans = y_obs - els.y_centers[i]
-
-        # Rotate observations such that fault element is horizontal
-        rotated_coordinates = els.rot_mats_inv[i, :, :] @ np.vstack(
-            (x_trans.T, y_trans.T)
-        )
-        x_rot = rotated_coordinates[0, :].T + els.x_centers[i]
-        y_rot = rotated_coordinates[1, :].T + els.y_centers[i]
-
-        # Calculate displacements and stresses for current element
-        # returns a 2-d matrix for disp [n_obs x 2 basis functions], 3-d matrix for stress [n_obs x [sx,sy] x 2 basis functions]
-        (
-            displacement_eval,
-            stress_local,
-        ) = displacements_stresses_linear_force_no_rotation_antiplane(
-            x_rot.reshape(-1, 1),
-            y_rot.reshape(-1, 1),
-            els.half_lengths[i],
-            mu,
-            els.x_centers[i],
-            els.y_centers[i],
-        )
-        # rotate stress from local -> global coordinates
-        stress_eval = rotate_stress_antiplane(stress_local, els.rot_mats[i, :, :])
-
-        kernel_sxz[:, :, i] = stress_eval[:, 0, :]
-        kernel_syz[:, :, i] = stress_eval[:, 1, :]
-        kernel_u[:, :, i] = displacement_eval[:, :]
-
-    return kernel_sxz, kernel_syz, kernel_u
-
-
-def get_displacement_stress_kernel_force_planestrain(x_obs, y_obs, els, mu=1, nu=0.25):
-    """Function to calculate displacement and stress kernels due to a force source in planestrain
-    at a numpy array of locations [x_obs,y_obs]
-
-    kernels returned are stress_xx, stress_xy, stress_yy, u_x, u_y
-
-    4-D kernels [Nobs x (fx,fy) x 2 basis functions x Nsources]
-    """
-
-    def rotate_vector(vector, inverse_rotation_matrix):
-        """Rotate vector from local to global reference frame"""
-
-        vector_rot = np.transpose(
-            np.tensordot(vector, inverse_rotation_matrix, axes=(1, 1)), (0, 1, 3, 2)
-        )
-        return vector_rot
-
-    def rotate_tensor(tensor, rotation_matrix):
-        """Rotate vector from local to global reference frame"""
-        inverse_rotation_matrix = rotation_matrix.T
-        tensor_rotated = np.zeros_like(tensor)
-        t0 = (
-            tensor[:, 0, :, :] * inverse_rotation_matrix[0, 0]
-            + tensor[:, 1, :, :] * inverse_rotation_matrix[1, 0]
-        )
-        t1 = (
-            tensor[:, 0, :, :] * inverse_rotation_matrix[0, 1]
-            + tensor[:, 1, :, :] * inverse_rotation_matrix[1, 1]
-        )
-        t2 = (
-            tensor[:, 1, :, :] * inverse_rotation_matrix[0, 0]
-            + tensor[:, 2, :, :] * inverse_rotation_matrix[1, 0]
-        )
-        t3 = (
-            tensor[:, 1, :, :] * inverse_rotation_matrix[0, 1]
-            + tensor[:, 2, :, :] * inverse_rotation_matrix[1, 1]
-        )
-
-        tensor_rotated[:, 0, :, :] = (
-            inverse_rotation_matrix[0, 0] * t0 + inverse_rotation_matrix[1, 0] * t2
-        )
-        tensor_rotated[:, 1, :, :] = (
-            inverse_rotation_matrix[0, 0] * t1 + inverse_rotation_matrix[1, 0] * t3
-        )
-        tensor_rotated[:, 2, :, :] = (
-            inverse_rotation_matrix[0, 1] * t1 + inverse_rotation_matrix[1, 1] * t3
-        )
-
-        return tensor_rotated
-
-    n_obs = len(x_obs)
-    n_els = len(els.x1)
-
-    kernel_ux = np.zeros((n_obs, 2, 2, n_els))
-    kernel_uy = np.zeros((n_obs, 2, 2, n_els))
-    kernel_sxx = np.zeros((n_obs, 2, 2, n_els))
-    kernel_sxy = np.zeros((n_obs, 2, 2, n_els))
-    kernel_syy = np.zeros((n_obs, 2, 2, n_els))
-
-    for i in range(n_els):  # loop over each element in els()
-        # Center observation locations (no translation needed)
-        x_trans = x_obs - els.x_centers[i]
-        y_trans = y_obs - els.y_centers[i]
-
-        # Rotate observations such that fault element is horizontal
-        rotated_coordinates = els.rot_mats_inv[i, :, :] @ np.vstack(
-            (x_trans.T, y_trans.T)
-        )
-        x_rot = rotated_coordinates[0, :].T  # + els.x_centers[i]
-        y_rot = rotated_coordinates[1, :].T  # + els.y_centers[i]
-
-        # Calculate displacements and stresses for current element
-        # returns a 4-d matrix for disp [n_obs x (ux,uy) x (fx,fy) x 2 basis functions],
-        # 4-d matrix for stress [n_obs x [sxx,sxy,syy] x (fx,fy) x 2 basis functions]
-        Dkernels, Skernels, _ = (
-            displacements_stresses_linear_force_no_rotation_planestrain(
-                x_rot.reshape(-1, 1),
-                y_rot.reshape(-1, 1),
-                xf=0,
-                yf=0,
-                w=els.half_lengths[i],
-                nu=nu,
-                mu=mu,
-            )
-        )
-
-        # rotate stress from local -> global coordinates
-        Dkernels_rot = rotate_vector(Dkernels, els.rot_mats_inv[i, :, :])
-        Skernels_rot = rotate_tensor(Skernels, els.rot_mats_inv[i, :, :])
-
-        kernel_sxx[:, :, :, i] = Skernels_rot[:, 0, :, :]
-        kernel_sxy[:, :, :, i] = Skernels_rot[:, 1, :, :]
-        kernel_syy[:, :, :, i] = Skernels_rot[:, 2, :, :]
-        kernel_ux[:, :, :, i] = Dkernels_rot[:, 0, :, :]
-        kernel_uy[:, :, :, i] = Dkernels_rot[:, 1, :, :]
-
-    return kernel_ux, kernel_uy, kernel_sxx, kernel_syy, kernel_sxy
-
-
-def coeffs_to_disp_stress(kernels_s, kernels_n, coeffs_s, coeffs_n):
-    """Function to compute displacements and stresses from 3qn coefficients.
-
-    Provide separate shear (k_s) and normal (k_n) stress kernels and appropriate 3qn coefficients
-    """
-    ux = kernels_s[3] @ coeffs_s + kernels_n[3] @ coeffs_n
-    uy = kernels_s[4] @ coeffs_s + kernels_n[4] @ coeffs_n
-    sxx = kernels_s[0] @ coeffs_s + kernels_n[0] @ coeffs_n
-    syy = kernels_s[1] @ coeffs_s + kernels_n[1] @ coeffs_n
-    sxy = kernels_s[2] @ coeffs_s + kernels_n[2] @ coeffs_n
-    return ux, uy, sxx, syy, sxy
-
-
-def get_traction_kernels(els, kernels, flag="global"):
-    """Function to calculate kernels of traction vector from a set of stress kernels and unit vectors.
-
-    Provide elements as a list with ["x_normal"] & ["y_normal"] for the unit normal vector.
-
-    kernels must be provided as kernels[0] = Kxx, kernels[1] = Kyy, kernels[2] = Kxy
-
-    flag can be either "global" for (x,y) coordinates or "local" for (shear,normal) coordinates
-    """
-    Kxx = kernels[0]
-    Kyy = kernels[1]
-    Kxy = kernels[2]
-    nrows = np.shape(Kxx)[
-        0
-    ]  # this is typically the same as number of elements because stress kernels are calculated ONLY at the center of a given element
-
-    tx = np.zeros_like(Kxx)
-    ty = np.zeros_like(Kxx)
-    # unit vector in normal direction
-    nvec = np.zeros((nrows, 2))
-    # unit vector in shear direction
-    svec = np.zeros((nrows, 2))
-    svec = np.vstack((els.x_shears, els.y_shears)).T
-    for i in range(nrows):
-        nvec[i, :] = np.array([els.x_normals[i], els.y_normals[i]])
-
-    nx_matrix = np.zeros_like(Kxx)
-    ny_matrix = np.zeros_like(Kxx)
-    sx_matrix = np.zeros_like(Kxx)
-    sy_matrix = np.zeros_like(Kxx)
-
-    nx_matrix[:, 0::3] = nvec[:, 0].reshape(-1, 1)
-    nx_matrix[:, 1::3] = nvec[:, 0].reshape(-1, 1)
-    nx_matrix[:, 2::3] = nvec[:, 0].reshape(-1, 1)
-    ny_matrix[:, 0::3] = nvec[:, 1].reshape(-1, 1)
-    ny_matrix[:, 1::3] = nvec[:, 1].reshape(-1, 1)
-    ny_matrix[:, 2::3] = nvec[:, 1].reshape(-1, 1)
-
-    sx_matrix[:, 0::3] = svec[:, 0].reshape(-1, 1)
-    sx_matrix[:, 1::3] = svec[:, 0].reshape(-1, 1)
-    sx_matrix[:, 2::3] = svec[:, 0].reshape(-1, 1)
-    sy_matrix[:, 0::3] = svec[:, 1].reshape(-1, 1)
-    sy_matrix[:, 1::3] = svec[:, 1].reshape(-1, 1)
-    sy_matrix[:, 2::3] = svec[:, 1].reshape(-1, 1)
-
-    # traction vector t = n.σ
-    tx = Kxx * nx_matrix + Kxy * ny_matrix
-    ty = Kxy * nx_matrix + Kyy * ny_matrix
-
-    ts = tx * sx_matrix + ty * sy_matrix
-    tn = tx * nx_matrix + ty * ny_matrix
-
-    if flag == "global":
-        return tx, ty
-    elif flag == "local":
-        return ts, tn
-    else:
-        ValueError("flag must be either global or local")
-
-
-def get_traction_kernels_antiplane(els, kernels, nbasis=3):
-    """Function to calculate kernels of traction vector from a set of stress kernels and unit vectors for a given number of basis functions.
-
-    Provide elements as a list with ["x_normal"] & ["y_normal"] for the unit normal vector.
-
-    kernels must be provided as kernels[0] = Kxz, kernels[1] = Kyz
-
-    """
-    Kxz = kernels[0]
-    Kyz = kernels[1]
-
-    # nbasis = int(np.shape(Kxz)[1]/len(els.x1))
-
-    # unit vector in normal direction
-    nvec = np.vstack((els.x_normals, els.y_normals)).T
-
-    nx_matrix = np.zeros_like(Kxz)
-    ny_matrix = np.zeros_like(Kxz)
-    for i in range(nbasis):
-        nx_matrix[:, i::nbasis] = nvec[:, 0].reshape(-1, 1)
-        ny_matrix[:, i::nbasis] = nvec[:, 1].reshape(-1, 1)
-
-    # nx_matrix[:, 0::3] = nvec[:, 0].reshape(-1, 1)
-    # nx_matrix[:, 1::3] = nvec[:, 0].reshape(-1, 1)
-    # nx_matrix[:, 2::3] = nvec[:, 0].reshape(-1, 1)
-    # ny_matrix[:, 0::3] = nvec[:, 1].reshape(-1, 1)
-    # ny_matrix[:, 1::3] = nvec[:, 1].reshape(-1, 1)
-    # ny_matrix[:, 2::3] = nvec[:, 1].reshape(-1, 1)
-
-    # traction vector t = n.σ
-    t = Kxz * nx_matrix + Kyz * ny_matrix
-
-    return t
 
 
 def plot_displacements_stresses_els(
@@ -2936,7 +2383,7 @@ def plot_displacements_stresses_els(
     plt.xlim([np.min(x_obs), np.max(x_obs)])
     plt.ylim([np.min(y_obs), np.max(y_obs)])
     plt.gca().set_aspect("equal", adjustable="box")
-    plt.title("$\sigma_{xx}$")
+    plt.title(r"$\sigma_{xx}$")
 
     plt.subplot(2, 3, 5)
     toplot = syy
@@ -2963,7 +2410,7 @@ def plot_displacements_stresses_els(
     plt.xlim([np.min(x_obs), np.max(x_obs)])
     plt.ylim([np.min(y_obs), np.max(y_obs)])
     plt.gca().set_aspect("equal", adjustable="box")
-    plt.title("$\sigma_{yy}$")
+    plt.title(r"$\sigma_{yy}$")
 
     plt.subplot(2, 3, 6)
     toplot = sxy
@@ -2990,7 +2437,7 @@ def plot_displacements_stresses_els(
     plt.xlim([np.min(x_obs), np.max(x_obs)])
     plt.ylim([np.min(y_obs), np.max(y_obs)])
     plt.gca().set_aspect("equal", adjustable="box")
-    plt.title("$\sigma_{xy}$")
+    plt.title(r"$\sigma_{xy}$")
     plt.show()
 
 
@@ -3111,107 +2558,8 @@ def get_strainenergy_from_stress(sxx, syy, sxy, mu, nu, conversion="plane_strain
     return strain_energy
 
 
-def get_slipvector_on_fault(els, coeffs, n_eval):
-    """Get slip vector evaluated ON the fault in (x,y) coordinate system.
-
-    Args:
-        els: fault geometry data structure
-
-        coeffs: quadratic slip coefficients ordered as [3 x shear_slip, 3 x tensile_slip] per fault element
-
-        n_eval: number of points to evaluate slip vector
-
-    Returns:
-        x_obs, y_obs: x,y coordinates of locations where slip vector is computed
-
-        fault_slip_x, fault_slip_y: components of slip vector, each of dimension [n_eval x n_els]
-    """
-
-    stride = 6
-    n_els = len(els.x1)
-
-    # calculate slip as a continuous function
-    fault_slip_s = np.zeros(n_els * n_eval)
-    fault_slip_n = np.zeros(n_els * n_eval)
-    fault_slip_x = np.zeros(n_els * n_eval)
-    fault_slip_y = np.zeros(n_els * n_eval)
-    # evaluation locations
-    x_obs = np.zeros_like(fault_slip_x)
-    y_obs = np.zeros_like(fault_slip_x)
-
-    # Extract (s, n) components and store them in two separate vectors
-    coeffs_s = np.zeros((3 * n_els))
-    coeffs_n = np.zeros((3 * n_els))
-    for i in range(n_els):
-        coeffs_s[3 * i : 3 * (i + 1)] = coeffs[stride * i : stride * i + 3]
-        coeffs_n[3 * i : 3 * (i + 1)] = coeffs[stride * i + 3 : stride * (i + 1)]
-
-    for i in range(n_els):
-        xvec = np.linspace(els.x1[i], els.x2[i], n_eval + 1)
-        yvec = np.linspace(els.y1[i], els.y2[i], n_eval + 1)
-        # evaluation locations on the fault
-        x_obs[i * n_eval : (i + 1) * n_eval] = 0.5 * (xvec[1:] + xvec[0:-1])
-        y_obs[i * n_eval : (i + 1) * n_eval] = 0.5 * (yvec[1:] + yvec[0:-1])
-
-        # calculate slip in (s,n) coordinates
-        xmesh = np.linspace(-0.5, 0.5, n_eval + 1)
-        xeval = 0.5 * (xmesh[1:] + xmesh[0:-1])
-        s_s = slip_functions(xeval, 0.5) @ coeffs_s[3 * i : 3 * (i + 1)]
-        s_n = slip_functions(xeval, 0.5) @ coeffs_n[3 * i : 3 * (i + 1)]
-        fault_slip_s[i * n_eval : (i + 1) * n_eval] = s_s
-        fault_slip_n[i * n_eval : (i + 1) * n_eval] = s_n
-
-        # rotate from (s,n) to (x,y)
-        slip_vector = np.vstack((s_s, s_n)).T
-        slip_vector_rotated = slip_vector @ els.rot_mats_inv[i, :, :]
-        s_x = slip_vector_rotated[:, 0]
-        s_y = slip_vector_rotated[:, 1]
-        fault_slip_x[i * n_eval : (i + 1) * n_eval] = s_x
-        fault_slip_y[i * n_eval : (i + 1) * n_eval] = s_y
-
-    return x_obs, y_obs, fault_slip_x, fault_slip_y
-
-
-def get_slipvector_on_fault_antiplane(els, coeffs, n_eval):
-    """Get slip scalar evaluated ON the fault in (x,y) coordinate system.
-
-    Args:
-        els: fault geometry data structure
-        coeffs: quadratic slip coefficients ordered as [3 x shear_slip] per fault element
-        n_eval: number of points to evaluate slip scalar
-
-    Returns:
-        x_obs, y_obs: x,y coordinates of locations where slip vector is computed
-        fault_slip: slip scalar, each of dimension [n_eval x n_els]
-    """
-
-    n_els = len(els.x1)
-
-    # calculate slip as a continuous function
-    fault_slip = np.zeros(n_els * n_eval)
-
-    # evaluation locations
-    x_obs = np.zeros_like(fault_slip)
-    y_obs = np.zeros_like(fault_slip)
-
-    for i in range(n_els):
-        xvec = np.linspace(els.x1[i], els.x2[i], n_eval + 1)
-        yvec = np.linspace(els.y1[i], els.y2[i], n_eval + 1)
-        # evaluation locations on the fault
-        x_obs[i * n_eval : (i + 1) * n_eval] = 0.5 * (xvec[1:] + xvec[0:-1])
-        y_obs[i * n_eval : (i + 1) * n_eval] = 0.5 * (yvec[1:] + yvec[0:-1])
-
-        # calculate slip in (s,n) coordinates
-        xmesh = np.linspace(-0.5, 0.5, n_eval + 1)
-        xeval = 0.5 * (xmesh[1:] + xmesh[0:-1])
-        s = slip_functions(xeval, 0.5) @ coeffs[3 * i : 3 * (i + 1)]
-        fault_slip[i * n_eval : (i + 1) * n_eval] = s
-
-    return x_obs, y_obs, fault_slip
-
-
 # Function to label open nodes, overlapping interior nodes and triple junctions automatically
-def label_nodes(els, verbose=True):
+def label_nodes(els, verbose=False):
     """provide a dictionary of line segments using bemcs.standardize_els_geometry(els),
     to return labelled indices for open nodes, overlapping nodes and triple junctions.
 
@@ -3283,8 +2631,9 @@ def label_nodes(els, verbose=True):
         elif np.size(id_combo) == 3:
             index_matrix3.append(id_combo)
         else:
-            print(id_combo)
-            raise ValueError("Cannot deal with more than 3 lines at a node")
+            raise ValueError(
+                f"Cannot deal with more than 3 lines at a node (node indices {id_combo.tolist()})"
+            )
 
     if verbose:
         print("Number of open nodes =", len(index_matrix1))
@@ -3295,309 +2644,6 @@ def label_nodes(els, verbose=True):
         print(":", index_matrix3)
 
     return index_matrix1, index_matrix2, index_matrix3
-
-
-def construct_smoothoperator(els, index_open, index_overlap, index_triple):
-    """function to construct linear operator that enforces
-    continuity and smoothness conditions at non-central nodes
-
-    returns 3 matrices: matrix_system_o, matrix_system_i, matrix_system_t for open, overlapping and triple junctions
-    """
-
-    n_els = len(els.x1)
-    Nunknowns = 6 * n_els
-    # Design matrices (in x,y coordinates) for slip and slip gradients at each 3qn
-    matrix_slip, matrix_slip_gradient = get_matrices_slip_slip_gradient(els)
-
-    N_o = 2 * len(index_open)  # open node equations
-    N_i = 4 * len(index_overlap)  # overlapping node equations
-    N_t = 6 * len(index_triple)  # triple junction equations
-
-    matrix_system_o = np.zeros((N_o, Nunknowns))
-    matrix_system_i = np.zeros((N_i, Nunknowns))
-    matrix_system_t = np.zeros((N_t, Nunknowns))
-
-    # Linear operator for open nodes
-    for i in range(int(N_o / 2)):
-        id1 = np.abs(index_open[i])  # node number
-        matrix_system_o[2 * i, :] = matrix_slip[2 * id1, :]  # x component
-        matrix_system_o[2 * i + 1, :] = matrix_slip[2 * id1 + 1, :]  # y component
-
-    # Linear operator for overlapping nodes
-    for i in range(int(N_i / 4)):
-        idvals = index_overlap[i]  # node number
-        # continuity condition
-        if (idvals[0] != 0) & (idvals[1] != 0):
-            sign1 = np.sign(idvals[0])
-            sign2 = np.sign(idvals[1])
-        elif (idvals[0] == 0) & (idvals[1] != 0):
-            sign1 = 1
-            sign2 = -1
-        else:
-            sign1 = -1
-            sign2 = 1
-
-        matrix_system_i[4 * i, :] = (
-            sign1 * matrix_slip[2 * np.abs(idvals[0]), :]
-            + sign2 * matrix_slip[2 * np.abs(idvals[1]), :]
-        )  # x
-        matrix_system_i[4 * i + 1, :] = (
-            sign1 * matrix_slip[2 * np.abs(idvals[0]) + 1, :]
-            + sign2 * matrix_slip[2 * np.abs(idvals[1]) + 1, :]
-        )  # y
-        # smoothing constraints
-        matrix_system_i[4 * i + 2, :] = (
-            sign1 * matrix_slip_gradient[2 * np.abs(idvals[0]), :]
-            + sign2 * matrix_slip_gradient[2 * np.abs(idvals[1]), :]
-        )  # x
-        matrix_system_i[4 * i + 3, :] = (
-            sign1 * matrix_slip_gradient[2 * np.abs(idvals[0]) + 1, :]
-            + sign2 * matrix_slip_gradient[2 * np.abs(idvals[1]) + 1, :]
-        )  # y
-
-    # Linear operator for triple junction nodes
-    for k in range(int(N_t / 6)):
-        id1 = index_triple[k]
-        idvalst = np.abs(id1)
-
-        # node number that need to be subtracted in TJ kinematics
-        id_neg = idvalst[id1 < 0]
-        # node numbers that need to be added
-        id_pos = idvalst[id1 >= 0]
-        # triple junction kinematics equations
-        if len(id_neg) == 2:
-            matrix_system_t[6 * k, :] = (
-                matrix_slip[2 * id_pos, :]
-                - matrix_slip[2 * id_neg[0], :]
-                - matrix_slip[2 * id_neg[1], :]
-            )  # x component
-            matrix_system_t[6 * k + 1, :] = (
-                matrix_slip[2 * id_pos + 1, :]
-                - matrix_slip[2 * id_neg[0] + 1, :]
-                - matrix_slip[2 * id_neg[1] + 1, :]
-            )  # y component
-
-            # Jacobian form of smoothing equations
-            matrix_system_t[6 * k + 2, :] = (
-                matrix_slip_gradient[2 * id_pos, :]
-                * els.x_shears[int(np.floor(id_pos / 3))]
-                - matrix_slip_gradient[2 * id_neg[0], :]
-                * els.x_shears[int(np.floor(id_neg[0] / 3))]
-                - matrix_slip_gradient[2 * id_neg[1], :]
-                * els.x_shears[int(np.floor(id_neg[1] / 3))]
-            )
-            matrix_system_t[6 * k + 3, :] = (
-                matrix_slip_gradient[2 * id_pos, :]
-                * els.y_shears[int(np.floor(id_pos / 3))]
-                - matrix_slip_gradient[2 * id_neg[0], :]
-                * els.y_shears[int(np.floor(id_neg[0] / 3))]
-                - matrix_slip_gradient[2 * id_neg[1], :]
-                * els.y_shears[int(np.floor(id_neg[1] / 3))]
-            )
-            matrix_system_t[6 * k + 4, :] = (
-                matrix_slip_gradient[2 * id_pos + 1, :]
-                * els.x_shears[int(np.floor(id_pos / 3))]
-                - matrix_slip_gradient[2 * id_neg[0] + 1, :]
-                * els.x_shears[int(np.floor(id_neg[0] / 3))]
-                - matrix_slip_gradient[2 * id_neg[1] + 1, :]
-                * els.x_shears[int(np.floor(id_neg[1] / 3))]
-            )
-            matrix_system_t[6 * k + 5, :] = (
-                matrix_slip_gradient[2 * id_pos + 1, :]
-                * els.y_shears[int(np.floor(id_pos / 3))]
-                - matrix_slip_gradient[2 * id_neg[0] + 1, :]
-                * els.y_shears[int(np.floor(id_neg[0] / 3))]
-                - matrix_slip_gradient[2 * id_neg[1] + 1, :]
-                * els.y_shears[int(np.floor(id_neg[1] / 3))]
-            )
-        else:
-            matrix_system_t[6 * k, :] = (
-                matrix_slip[2 * id_pos[0], :]
-                + matrix_slip[2 * id_pos[1], :]
-                - matrix_slip[2 * id_neg, :]
-            )  # x component
-            matrix_system_t[6 * k + 1, :] = (
-                matrix_slip[2 * id_pos[0] + 1, :]
-                + matrix_slip[2 * id_pos[1] + 1, :]
-                - matrix_slip[2 * id_neg + 1, :]
-            )  # y component
-
-            # Jacobian form of smoothing equations
-            matrix_system_t[6 * k + 2, :] = (
-                matrix_slip_gradient[2 * id_neg, :]
-                * els.x_shears[int(np.floor(id_neg / 3))]
-                - matrix_slip_gradient[2 * id_pos[0], :]
-                * els.x_shears[int(np.floor(id_pos[0] / 3))]
-                - matrix_slip_gradient[2 * id_pos[1], :]
-                * els.x_shears[int(np.floor(id_pos[1] / 3))]
-            )
-            matrix_system_t[6 * k + 3, :] = (
-                matrix_slip_gradient[2 * id_neg, :]
-                * els.y_shears[int(np.floor(id_neg / 3))]
-                - matrix_slip_gradient[2 * id_pos[0], :]
-                * els.y_shears[int(np.floor(id_pos[0] / 3))]
-                - matrix_slip_gradient[2 * id_pos[1], :]
-                * els.y_shears[int(np.floor(id_pos[1] / 3))]
-            )
-            matrix_system_t[6 * k + 4, :] = (
-                matrix_slip_gradient[2 * id_neg + 1, :]
-                * els.x_shears[int(np.floor(id_neg / 3))]
-                - matrix_slip_gradient[2 * id_pos[0] + 1, :]
-                * els.x_shears[int(np.floor(id_pos[0] / 3))]
-                - matrix_slip_gradient[2 * id_pos[1] + 1, :]
-                * els.x_shears[int(np.floor(id_pos[1] / 3))]
-            )
-            matrix_system_t[6 * k + 5, :] = (
-                matrix_slip_gradient[2 * id_neg + 1, :]
-                * els.y_shears[int(np.floor(id_neg / 3))]
-                - matrix_slip_gradient[2 * id_pos[0] + 1, :]
-                * els.y_shears[int(np.floor(id_pos[0] / 3))]
-                - matrix_slip_gradient[2 * id_pos[1] + 1, :]
-                * els.y_shears[int(np.floor(id_pos[1] / 3))]
-            )
-
-        """# smoothing constraints (2 nodes at a time)
-        matrix_system_t[6 * k + 2, :] = (
-            matrix_slip_gradient[2 * idvalst[0], :]
-            - matrix_slip_gradient[2 * idvalst[1], :]
-        )  # x
-        matrix_system_t[6 * k + 3, :] = (
-            matrix_slip_gradient[2 * idvalst[0] + 1, :]
-            - matrix_slip_gradient[2 * idvalst[1] + 1, :]
-        )  # y
-        matrix_system_t[6 * k + 4, :] = (
-            matrix_slip_gradient[2 * idvalst[0], :]
-            - matrix_slip_gradient[2 * idvalst[2], :]
-        )  # x
-        matrix_system_t[6 * k + 5, :] = (
-            matrix_slip_gradient[2 * idvalst[0] + 1, :]
-            - matrix_slip_gradient[2 * idvalst[2] + 1, :]
-        )  # y"""
-
-    return matrix_system_o, matrix_system_i, matrix_system_t
-
-
-def construct_smoothoperator_antiplane(els, index_open, index_overlap, index_triple):
-    """function to construct linear operator that enforces
-    continuity and smoothness conditions at non-central nodes for antiplane geometry
-
-    returns 3 matrices: matrix_system_o, matrix_system_i, matrix_system_t for open, overlapping and triple junctions
-    """
-
-    n_els = len(els.x1)
-    Nunknowns = 3 * n_els
-    # Design matrices (in x,y coordinates) for slip and slip gradients at each 3qn
-    matrix_slip, matrix_slip_gradient = get_matrices_slip_slip_gradient_antiplane(els)
-
-    N_o = len(index_open)  # open node equations
-    N_i = 2 * len(index_overlap)  # overlapping node equations
-    N_t = 3 * len(index_triple)  # triple junction equations
-
-    matrix_system_o = np.zeros((N_o, Nunknowns))
-    matrix_system_i = np.zeros((N_i, Nunknowns))
-    matrix_system_t = np.zeros((N_t, Nunknowns))
-
-    # Linear operator for open nodes
-    for i in range(N_o):
-        id1 = np.abs(index_open[i])  # node number
-        matrix_system_o[i, :] = matrix_slip[id1, :]  # x component
-
-    # Linear operator for overlapping nodes
-    for i in range(int(N_i / 2)):
-        idvals = index_overlap[i]  # node number
-
-        if (idvals[0] != 0) & (idvals[1] != 0):
-            sign1 = np.sign(idvals[0])
-            sign2 = np.sign(idvals[1])
-        elif (idvals[0] == 0) & (idvals[1] != 0):
-            sign1 = 1
-            sign2 = -1
-        else:
-            sign1 = -1
-            sign2 = 1
-
-        # continuity condition
-        matrix_system_i[2 * i, :] = (
-            sign1 * matrix_slip[np.abs(idvals[0]), :]
-            + sign2 * matrix_slip[np.abs(idvals[1]), :]
-        )
-
-        # smoothing constraints
-        matrix_system_i[2 * i + 1, :] = (
-            sign1 * matrix_slip_gradient[np.abs(idvals[0]), :]
-            + sign2 * matrix_slip_gradient[np.abs(idvals[1]), :]
-        )
-
-    # Linear operator for triple junction nodes
-    for k in range(int(N_t / 3)):
-        id1 = index_triple[k]
-        idvalst = np.abs(id1)
-
-        # node number that need to be subtracted in TJ kinematics
-        id_neg = idvalst[id1 < 0]
-        # node numbers that need to be added
-        id_pos = idvalst[id1 >= 0]
-        # triple junction kinematics equations
-        if len(id_neg) == 2:
-            matrix_system_t[3 * k, :] = (
-                matrix_slip[id_pos, :]
-                - matrix_slip[id_neg[0], :]
-                - matrix_slip[id_neg[1], :]
-            )
-            # smoothing constraints
-            matrix_system_t[3 * k + 1, :] = (
-                matrix_slip_gradient[id_pos, :]
-                * els.x_shears[int(np.floor(id_pos / 3))]
-                - matrix_slip_gradient[id_neg[0], :]
-                * els.x_shears[int(np.floor(id_neg[0] / 3))]
-                - matrix_slip_gradient[id_neg[1], :]
-                * els.x_shears[int(np.floor(id_neg[1] / 3))]
-            )
-
-            matrix_system_t[3 * k + 2, :] = (
-                matrix_slip_gradient[id_pos, :]
-                * els.y_shears[int(np.floor(id_pos / 3))]
-                - matrix_slip_gradient[id_neg[0], :]
-                * els.y_shears[int(np.floor(id_neg[0] / 3))]
-                - matrix_slip_gradient[id_neg[1], :]
-                * els.y_shears[int(np.floor(id_neg[1] / 3))]
-            )
-
-        else:
-            matrix_system_t[3 * k, :] = (
-                matrix_slip[id_pos[0], :]
-                + matrix_slip[id_pos[1], :]
-                - matrix_slip[id_neg, :]
-            )
-            # smoothing constraints
-            matrix_system_t[3 * k + 1, :] = (
-                matrix_slip_gradient[id_pos[0], :]
-                * els.x_shears[int(np.floor(id_pos[0] / 3))]
-                + matrix_slip_gradient[id_pos[1], :]
-                * els.x_shears[int(np.floor(id_pos[1] / 3))]
-                - matrix_slip_gradient[id_neg, :]
-                * els.x_shears[int(np.floor(id_neg / 3))]
-            )
-
-            matrix_system_t[3 * k + 2, :] = (
-                matrix_slip_gradient[id_pos[0], :]
-                * els.y_shears[int(np.floor(id_pos[0] / 3))]
-                + matrix_slip_gradient[id_pos[1], :]
-                * els.y_shears[int(np.floor(id_pos[1] / 3))]
-                - matrix_slip_gradient[id_neg, :]
-                * els.y_shears[int(np.floor(id_neg / 3))]
-            )
-
-        """# smoothing constraints (2 nodes at a time)
-        matrix_system_t[3 * k + 1, :] = (
-            matrix_slip_gradient[idvalst[0], :] - matrix_slip_gradient[idvalst[1], :]
-        )
-
-        matrix_system_t[3 * k + 2, :] = (
-            matrix_slip_gradient[idvalst[0], :] - matrix_slip_gradient[idvalst[2], :]
-        )"""
-
-    return matrix_system_o, matrix_system_i, matrix_system_t
 
 
 def inpolygon(xq, yq, xv, yv):
@@ -3791,7 +2837,7 @@ def kelvin_point_source_disp(x, y, xoffset, yoffset, fx, fy, mu, nu):
     return ux, uy
 
 
-def get_triangle_area(lx, ly, dly):
+def _triangle_area(lx, ly, dly):
     """
     Calculate the area of a triangle using the lengths of its sides.
 
@@ -3831,7 +2877,7 @@ def get_triangle_area(lx, ly, dly):
     return triangle_area
 
 
-def get_transformed_coordinates(vertices, obs_x, obs_y):
+def _transformed_coordinates(vertices, obs_x, obs_y):
     """
     Transform coordinates by translating and rotating the triangle and observation points.
 
@@ -3885,7 +2931,7 @@ def get_transformed_coordinates(vertices, obs_x, obs_y):
     return rotated_vertices, rotated_obs[:, 0], rotated_obs[:, 1]
 
 
-def rotate_vector(vertices, fx, fy, rotdir=1):
+def _rotate_vector(vertices, fx, fy, rotdir=1):
     """
     Rotate a vector to a new coordinate system aligned with the triangle's edge.
 
@@ -3934,7 +2980,7 @@ def rotate_vector(vertices, fx, fy, rotdir=1):
     return fx_rotated, fy_rotated
 
 
-def rotate_stresses(vertices, sxx, syy, sxy, rotdir=1):
+def _rotate_stresses(vertices, sxx, syy, sxy, rotdir=1):
     """
     Rotate stress components to a new coordinate system aligned with the triangle's edge.
 
@@ -4067,18 +3113,18 @@ def displacements_stresses_triangle_force_planestrain_nearfield(
 
     # Translate and rotate the triangle
     triangle_transformed, obs_x_transformed, obs_y_transformed = (
-        get_transformed_coordinates(triangle, x_obs, y_obs)
+        _transformed_coordinates(triangle, x_obs, y_obs)
     )
 
     # Rotated force vector
-    fx_rot, fy_rot = rotate_vector(triangle, fx, fy)
+    fx_rot, fy_rot = _rotate_vector(triangle, fx, fy)
 
     # Define a triangle region in dblquad style
     lx = triangle_transformed[2, 0]
     dly = triangle_transformed[2, 1]
     ly = triangle_transformed[1, 1]
 
-    triangle_area = get_triangle_area(lx, ly, dly)
+    triangle_area = _triangle_area(lx, ly, dly)
 
     # Definition of integration limits over a triangle and integrate using rotated forces
     ymin = lambda x: dly * x / lx
@@ -4190,14 +3236,14 @@ def displacements_stresses_triangle_force_planestrain_nearfield(
             sxy_dblquad[i] = sol / triangle_area
 
     # Rotate back to original coordinates
-    ux, uy = rotate_vector(
+    ux, uy = _rotate_vector(
         triangle,
         ux_dblquad.reshape(-1, 1),
         uy_dblquad.reshape(-1, 1),
         -1,
     )
 
-    sxx, syy, sxy = rotate_stresses(
+    sxx, syy, sxy = _rotate_stresses(
         triangle,
         sxx_dblquad,
         syy_dblquad,
@@ -4448,7 +3494,7 @@ def displacements_stresses_triangle_force_antiplane_nearfield(
 
     # Translate and rotate the triangle
     triangle_transformed, obs_x_transformed, obs_y_transformed = (
-        get_transformed_coordinates(triangle, x_obs, y_obs)
+        _transformed_coordinates(triangle, x_obs, y_obs)
     )
 
     # Define a triangle region in dblquad style
@@ -4456,7 +3502,7 @@ def displacements_stresses_triangle_force_antiplane_nearfield(
     dly = triangle_transformed[2, 1]
     ly = triangle_transformed[1, 1]
 
-    # triangle_area = get_triangle_area(lx, ly, dly)
+    # triangle_area = _triangle_area(lx, ly, dly)
     triangle_area = 1.0
 
     # Definition of integration limits over a triangle and integrate using rotated forces
@@ -4510,7 +3556,7 @@ def displacements_stresses_triangle_force_antiplane_nearfield(
             sy_dblquad[i] = sol / triangle_area
 
     # Rotate back to original coordinates
-    sx, sy = rotate_vector(
+    sx, sy = _rotate_vector(
         triangle,
         sx_dblquad.reshape(-1, 1),
         sy_dblquad.reshape(-1, 1),
@@ -4644,7 +3690,7 @@ def displacements_stresses_triangle_force_antiplane(
     """
 
     # Translate and rotate the triangle
-    triangle_transformed, _, _ = get_transformed_coordinates(triangle, x_obs, y_obs)
+    triangle_transformed, _, _ = _transformed_coordinates(triangle, x_obs, y_obs)
 
     # Define a triangle region in dblquad style
     lx = triangle_transformed[2, 0]

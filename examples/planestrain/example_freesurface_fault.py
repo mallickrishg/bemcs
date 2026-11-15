@@ -173,8 +173,10 @@ matrix_slip, _ = bemcs.bemAssembly.slip_node_matrices(els, geometry=geometry)
 slip_nodes = matrix_slip @ quadratic_coefs
 slip_nodes_x = slip_nodes[0::2]
 slip_nodes_y = slip_nodes[1::2]
-slip_nodes_s = quadratic_coefs[0::2]  # quadratic coefficients are nodal values (local)
-slip_nodes_n = quadratic_coefs[1::2]
+matrix_slip_local, _ = bemcs.bemAssembly.slip_node_matrices(els, geometry=geometry, reference="local")
+slip_nodes_local = matrix_slip_local @ quadratic_coefs
+slip_nodes_s = slip_nodes_local[0::2]
+slip_nodes_n = slip_nodes_local[1::2]
 
 index = (ynodes < 0) | (xnodes == 0)
 
