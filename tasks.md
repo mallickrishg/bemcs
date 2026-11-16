@@ -442,6 +442,13 @@ Square system of `2(N_s + N_f)` equations.
     `plot_BEM_field` and `plot_displacements_stresses_els`.
   - **Examples:** all use these (the split box keeps its custom friction assembly). Homogeneous examples reproduce
     their previous solutions to 1e-9 (slip with u BCs: 6e-7, from the sampling offset).
+  - **Traction boundaries need their own modulus (2026-11-16).** A free surface (or any `t` element) is a slip
+    element whose row uses the true traction (mu_side / mu0) S.n. Its mu_minus / mu_plus must be the modulus of
+    the material it bounds, matching the adjacent `h` side; the reference mu0 is arbitrary (1 is fine).
+    - **Not enforced:** `plot_mesh` makes it visible on one colour scale, with dots on both sides of `h`
+      elements and a square at the centre of `t` elements.
+    - **The user checks** that every closed polygon of `t` / `h` elements encloses one uniform modulus.
+    - `ConstructMesh.py` already gives the free surface the top-layer modulus.
   - **Accuracy note:** with the default trapezoids the interface condition is exact at collocation points and first
     order in h between them (force constant on every other element).
 - [ ] Support multiple patches, and patches that share nodes (junctions between slip and interface elements).

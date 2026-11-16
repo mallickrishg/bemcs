@@ -346,3 +346,29 @@ def test_mixed_component_bcs_solve():
     # the normal slip on the surface elements is zero at their centres (non-tip elements)
     nv = mesh.node_values(x, "slip", geometry="planestrain")
     np.testing.assert_allclose(nv[n_f + 1 : n - 1, 1, 1], 0, atol=1e-10)
+
+
+def test_plot_mesh_marks_every_modulus_used_by_the_solve():
+    """Interface elements: a dot on each side; traction elements: one square at the
+    centre; slip-BC elements: nothing (their rows do not use mu)."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    els, n_f, n_i = _fault_and_interface(n_int=10, L=2.0)
+    xs = np.linspace(-2, 2, 9)  # free surface above the interface
+    e2 = _els(np.r_[els.x1, xs[:-1]], np.r_[els.y1, np.full(8, 1.0)],
+              np.r_[els.x2, xs[1:]], np.r_[els.y2, np.full(8, 1.0)])
+    n_t = 8
+    mesh = bemcs.Mesh(
+        e2, bc_type=["s"] * n_f + ["h"] * n_i + ["t"] * n_t, bc_value=np.zeros(n_f + n_i + n_t),
+        mu_minus=np.r_[np.full(n_f, 3.0), np.full(n_i, 3.0), np.full(n_t, 1.5)],
+        mu_plus=np.r_[np.full(n_f, 3.0), np.full(n_i, 1.5), np.full(n_t, 1.5)],
+    )
+    ax = bemcs.plot_mesh(mesh, show_normals=False)
+    sizes = sorted(len(c.get_offsets()) for c in ax.collections)
+    assert sizes == [n_t, 2 * n_i]
+    values = sorted(np.unique(np.concatenate([np.asarray(c.get_array()) for c in ax.collections])))
+    assert values == [1.5, 3.0]
+    plt.close("all")

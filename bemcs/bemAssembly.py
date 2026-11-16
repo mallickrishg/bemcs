@@ -2020,7 +2020,12 @@ class Mesh:
         Prescribed values (ignored for "h").
     mu_minus, mu_plus : (n_els,) arrays
         Shear modulus on the -n and +n side of each element (n = element unit
-        normal). Required by `solve`; equal values for homogeneous media.
+        normal). Required by `solve`. Interface ("h") elements: the two materials.
+        Traction ("t") elements, e.g. a free surface: the modulus of the material
+        that boundary belongs to (true traction = mu_side / mu S.n); give it on
+        both sides, and make it match the adjacent interface side. The reference
+        mu of the kernels is arbitrary (1 is fine). Check with `plot_mesh`: every
+        closed polygon of "t" and "h" elements should enclose one uniform modulus.
     """
 
     def __init__(self, els, labels=None, basis=None, connectivity=None, bc_type=None,
@@ -2632,10 +2637,18 @@ def evaluate_fields(mesh, x, x_obs, y_obs, *, geometry, mu, nu=None, mu_field=No
 
 
 def plot_mesh(mesh, ax=None, *, show_normals=True, show_moduli=True, offset=0.2, cmap="viridis"):
-    """Plot the mesh: slip elements (black), force elements (red), normals, and the
-    shear modulus on the -n and +n side of each element as coloured dots placed
-    `offset` element lengths off each side (force elements, plus any element where
-    the two sides differ)."""
+    """Plot the mesh and every shear modulus that enters the solve, for a visual check.
+
+    Slip elements are black, force (interface) elements red; arrows are unit normals.
+    With show_moduli, on one colour scale:
+    - interface ("h") elements, and any element whose two sides differ: a dot on the
+      -n and the +n side, `offset` element lengths off the element;
+    - traction ("t", "t_local") elements with equal sides: one square at the centre,
+      the modulus of the material that boundary belongs to.
+    Elements with "s" or "u" conditions are not marked (their rows do not use mu).
+    Check that every closed polygon of "t" and "h" elements encloses one uniform
+    modulus: a traction element's mu must equal the adjacent interface side.
+    """
     import matplotlib.pyplot as plt
 
     els = mesh.els
@@ -2647,18 +2660,33 @@ def plot_mesh(mesh, ax=None, *, show_normals=True, show_moduli=True, offset=0.2,
         L = 2 * np.asarray(els.half_lengths)
         ax.quiver(els.x_centers, els.y_centers, els.x_normals * L * 0.4, els.y_normals * L * 0.4,
                   angles="xy", scale_units="xy", scale=1, width=0.003, color="0.4")
-    sc = None
     if show_moduli and mesh.mu_minus is not None and mesh.mu_plus is not None:
-        sel = (mesh.labels == "f") | (mesh.mu_minus != mesh.mu_plus)
-        if sel.any():
-            L = 2 * np.asarray(els.half_lengths)[sel]
-            xc, yc = np.asarray(els.x_centers)[sel], np.asarray(els.y_centers)[sel]
-            nx, ny = np.asarray(els.x_normals)[sel], np.asarray(els.y_normals)[sel]
-            vals = np.r_[mesh.mu_minus[sel], mesh.mu_plus[sel]]
-            sc = ax.scatter(np.r_[xc - offset * L * nx, xc + offset * L * nx],
-                            np.r_[yc - offset * L * ny, yc + offset * L * ny],
-                            c=vals, cmap=cmap, s=12, zorder=3)
-            plt.colorbar(sc, ax=ax, label=r"$\mu$ ($-n$ and $+n$ side)")
+        mm, mp = mesh.mu_minus, mesh.mu_plus
+        if mesh.bc_type is not None:
+            uses_mu = np.isin(mesh.bc_type, ("h", "t", "t_local")).any(axis=1)
+        else:
+            uses_mu = mesh.labels == "f"
+        two = uses_mu & ((mesh.labels == "f") | (mm != mp))
+        one = uses_mu & ~two
+        L = 2 * np.asarray(els.half_lengths)
+        xc, yc = np.asarray(els.x_centers), np.asarray(els.y_centers)
+        nx, ny = np.asarray(els.x_normals), np.asarray(els.y_normals)
+        vals = np.r_[mm[two], mp[two], mm[one]]
+        if vals.size:
+            norm = plt.Normalize(vals.min(), vals.max() if vals.max() > vals.min() else vals.min() + 1)
+            sc = None
+            if two.any():
+                d = offset * L[two]
+                sc = ax.scatter(np.r_[xc[two] - d * nx[two], xc[two] + d * nx[two]],
+                                np.r_[yc[two] - d * ny[two], yc[two] + d * ny[two]],
+                                c=np.r_[mm[two], mp[two]], cmap=cmap, norm=norm, s=14, zorder=3,
+                                label=r"$\mu$ on the $-n$ / $+n$ side (interface)")
+            if one.any():
+                sc = ax.scatter(xc[one], yc[one], c=mm[one], cmap=cmap, norm=norm, s=22, marker="s",
+                                edgecolors="k", linewidths=0.4, zorder=4,
+                                label=r"$\mu$ of a traction boundary")
+            plt.colorbar(sc, ax=ax, label=r"$\mu$")
+            ax.legend(loc="best", fontsize=8)
     ax.set_aspect("equal", adjustable="datalim")
     return ax
 
