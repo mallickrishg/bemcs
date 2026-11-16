@@ -525,17 +525,27 @@ checked by:
     - **Slip side unchanged:** the slip elements are treated as regular elements. Slip topology is that of the
       slip elements alone, so a free surface meeting a fault is an ordinary slip triple junction, with no taper.
       The earlier "both taper" wording was wrong for slip.
-    - **Force side:** a force chain that ends on a slip element has an open end
-      (`force_open_ends(els, labels)`, `mesh.force_open_ends`). The end trapezoid is constant over the end
-      element instead of tapering (`trapezoid_coefficients(..., open_ends=...)`), and the default stride counts
-      from the open end (`trapezoid_connectivity(..., breaks=...)` at chain tips).
-    - **Result:** the top contact force is now about exact (0.3355 vs 0.3407; it was 0 -> 0.34 ramped). The
-      surface error falls 2.6x: d = 0.5: 1.3e-2, 6.4e-3, 3.5e-3; d = 0: 6.0e-2, 2.5e-2, 1.1e-2 for
-      h = 0.1, 0.05, 0.025.
-    - **Still first order. Likely cause:** a force layer with non-zero density at its end has a log-singular
-      stress there. In the true half-space solution it is cancelled at the free surface; the hat-function surface
-      slip cancels it only to O(h). Options: refine the free surface towards the corner, or a corner correction.
-      To be investigated.
+    - **Force side:** a force chain that ends on a slip element has an open end (`force_open_ends(els, labels)`,
+      `mesh.force_open_ends`).
+      - **Open-end patch (user's choice: a free unknown):** the connectivity row [e, e, e] is a half-hat on the
+        tip element e, 1 at the tip node and 0 at the next node, with its own collocation point at e's centre.
+        The neighbouring trapezoid keeps its zero at the tip.
+      - **Default layout:** `trapezoid_connectivity(..., breaks=...)` adds these rows at tip breaks and counts the
+        stride from the tip. The `Mesh` default and `split_force_trapezoids()` include them.
+    - **Alternatives compared** (Rybicki, surface error, h = 0.1, 0.05, 0.025):
+
+      | end treatment | d = 0.5 | d = 0 |
+      |---|---|---|
+      | tapered | 3.3e-2, 1.7e-2, 8.9e-3 | 1.3e-1, 6.8e-2, 3.4e-2 |
+      | constant over the tip element | 1.3e-2, 6.4e-3, 3.5e-3 | 6.0e-2, 2.5e-2, 1.1e-2 |
+      | free node (chosen) | 1.1e-2, 6.1e-3, 3.4e-3 | 4.7e-2, 2.3e-2, 1.1e-2 |
+    - **Still first order: the corner** (confirmed). Grading the free surface and the contact towards the corner
+      only (geometric halving):
+      - d = 0.5, h = 0.1: 1.3e-2 -> 2.7e-3 (3 levels) -> 9.8e-4 (6 levels);
+      - d = 0, h = 0.05: 2.5e-2 -> 2.6e-3 (3 levels).
+      - **Cause:** a force layer with non-zero density at its end has a log-singular stress there, which the free
+        surface must cancel; uniform hats do it only to O(h). Corner grading is a meshing choice for the user
+        (document it); a corner correction would be the code-side alternative.
   - **Original note:**
   - **Gap:** where a force chain meets a slip (free-surface) element, the force tapers to zero ("slip-force contact:
     both taper"). The true force density there is generally nonzero, so expect a local, first-order error. Untested
@@ -580,6 +590,31 @@ checked by:
   - **Plane strain:** exact references for a dislocation, or a constant-slip segment, on a bimaterial interface
     exist (Dundurs 1969; Comninou). Unlike cracks there are no oscillatory singularities for a prescribed smooth
     slip. Compare the bimaterial normal-stress change on the fault.
+  - **Overlap handling, done (2026-11-16)** (`tests/test_overlapping_meshes.py`):
+    - **Classification** of force nodes on slip elements:
+      - inside an overlap (all neighbouring force elements on slip elements): fine, no warning;
+      - end of an overlap, or a true crossing: `mesh.fault_crossings`;
+      - chain tip on slip: `mesh.force_open_ends`.
+      `coincident_force_elements(els, labels)` lists the overlapping force elements.
+    - **Restart points** (`mesh.trapezoid_restart_points()`, used by `TrapezoidCrossingWarning` and
+      `split_force_trapezoids`): crossings, open ends, and overlap ends, except those formed by prescribed-slip
+      ("s") elements. Those taper smoothly at their tips, so the force has no step there; splitting at the bottom
+      of the Rybicki d = 0 fault made it slightly worse (3.2e-2 vs 2.5e-2). Traction ("t") cracks have singular
+      tips, so their overlap ends do restart.
+    - **Antiplane interface crack** ("t" on "h"; exact slip tau (1/mu1 + 1/mu2) sqrt(a^2 - x^2)):
+      - converges; with the stride restarted at the crack tips the contrast adds almost nothing to the crack's own
+        error: 4x contrast 1.4e-1, 6.4e-2, 3.0e-2 vs no contrast 1.2e-1, 5.8e-2, 2.9e-2;
+      - without the restart: 8.2e-2 at h = 0.05, and it warns;
+      - the crack's own first-order error is the clamped-tip hats vs the sqrt crack tip, a separate limitation of
+        the hat basis for traction-loaded cracks.
+    - **Plane-strain interface crack:**
+      - no contrast: the interface carries exactly zero force, and the slip is Griffith's (5.8e-2 at h = 0.05,
+        same as the crack alone);
+      - 4x contrast: converges (changes 7.3e-2, 3.2e-2, 1.6e-2), cond <= 8e2, and the true traction is continuous
+        to about 1e-5 at the bonded collocation points;
+      - the exact oscillatory solution (England 1965; Rice 1988) is a later check, with the Dundurs work.
+    - `bemcs.label_nodes(els)` on the whole overlapping mesh raises (it cannot label 2 slip + 2 force elements at
+      one node). The solver never calls it on the whole mesh.
   - **Options if the overlap formulation stays awkward:** a combined "bimaterial fault" element (slip with
     mu_minus != mu_plus that also carries the interface condition), instead of two coincident meshes.
 - [ ] **P5. Documentation of the heterogeneous formulation as implemented** (T3). Can follow P1-P4.

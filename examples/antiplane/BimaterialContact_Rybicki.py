@@ -175,21 +175,22 @@ ax.set_ylabel("depth / D")
 ax.grid(alpha=0.3)
 ax.legend(fontsize=8)
 ax.set_title("(d) fault near the contact: force density along the contact.\n"
-             "The chain end at the free surface is open (not tapered)", fontsize=10)
+             "The chain end at the free surface is open (a free value, not tapered)", fontsize=10)
 fig.tight_layout()
 plt.show()
 
 # %% [markdown]
 # **Reading the figure.** The BEM matches the exact solution for both faults: 6e-3 (d = 0.5) and
-# 2.5e-2 (d = 0) at the default element length, converging at first order.
+# 2.3e-2 (d = 0) at the default element length, converging at first order.
 #
-# Where the contact meets the free surface, the force chain ends on slip elements. Its end is open
-# (`mesh.force_open_ends`): the force is constant over the top element instead of tapering to zero,
-# because the true force density there is not zero (panel d). The free surface stays an ordinary
-# slip mesh, with the fault-surface triple junction handled by the slip elements alone. With a
-# tapered end, the missing net force made the error 2.6x larger.
+# Where the contact meets the free surface, the force chain ends on slip elements. That end is open
+# (`mesh.force_open_ends`): the default layout adds an open-end patch, a free force value at the tip
+# node with its own collocation point at the top element, instead of tapering the force to zero
+# there (panel d). The free surface stays an ordinary slip mesh, with the fault-surface triple junction
+# handled by the slip elements alone. With a tapered end the error was 2.8x larger.
 #
-# The remaining first-order error comes from the corner. A force layer with non-zero density at its
-# end has a log-singular stress there, which in the true half-space solution is cancelled at the
-# free surface; the hat-function surface slip cancels it only to O(h) (tasks.md P3). For d = 0 the
-# slip and force elements also coincide (tasks.md P6).
+# The remaining first-order error comes from the corner where the force layer meets the free surface.
+# Grading the elements towards that corner (3 levels of halving) cuts it to about 2e-3 for both faults
+# (tasks.md P3). For d = 0 the slip and force elements coincide along the fault (tasks.md P6); since
+# the fault's slip is prescribed and tapers smoothly at its bottom, no restart of the trapezoids is
+# needed there.

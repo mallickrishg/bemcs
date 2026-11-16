@@ -1466,8 +1466,9 @@ def trapezoid_connectivity(els, breaks=None, tol=1e-9):
         the whole solution (tasks.md; examples/antiplane/HeterogeneousElasticity_forces.py).
         A segment between two breaks (or a closed loop with one break) with an even
         number of elements can be flanked at 1.5 elements at one end only; the other
-        end gets 2.5. A break at a chain tip (e.g. an open force end, `Mesh.force_open_ends`)
-        counts the stride from that tip, so the tip element belongs to a trapezoid.
+        end gets 2.5. A break at a chain tip (an open force end, `Mesh.force_open_ends`)
+        counts the stride from that tip and adds an open-end patch [e, e, e] for the tip
+        element e (see `trapezoid_coefficients`).
     tol : float
         A node is a break if it is within tol times the largest element length of a
         break point.
@@ -1500,6 +1501,10 @@ def trapezoid_connectivity(els, breaks=None, tol=1e-9):
 
         tip_start = not closed and tip_is_break(chain[0], chain[1:2])
         tip_end = not closed and tip_is_break(chain[-1], chain[-2:-1])
+        if tip_start:  # open-end patch: a free force value at the chain tip
+            rows.append((chain[0],) * 3)
+        if tip_end and (n > 1 or not tip_start):
+            rows.append((chain[-1],) * 3)
         if not cuts and (tip_start or tip_end):
             for m in _segment_middles(n, from_end=tip_end and not tip_start):
                 rows.append((chain[m - 1], chain[m], chain[m + 1]))
@@ -1548,22 +1553,59 @@ def force_open_ends(els, labels, tol=1e-9):
     return pts[(d < tol * np.sqrt(L2)).any(axis=1)]
 
 
-def fault_crossings(els, labels, tol=1e-9):
-    """Nodes of force-element chains that lie on a slip element: (k, 2) points.
-
-    A fault crossing a material interface (without a shared node) passes through
-    one of these. tol is relative to the length of the slip element."""
-    labels = np.asarray(labels).astype(str)
-    f, s = np.flatnonzero(labels == "f"), np.flatnonzero(labels == "s")
-    if len(f) == 0 or len(s) == 0:
-        return np.zeros((0, 2))
-    pts = np.unique(np.r_[np.c_[els.x1[f], els.y1[f]], np.c_[els.x2[f], els.y2[f]]], axis=0)
+def _on_slip(pts, els, s, tol):
+    """Boolean per point: lies on one of the slip elements s (within tol x its length)."""
+    if len(pts) == 0 or len(s) == 0:
+        return np.zeros(len(pts), dtype=bool)
     ax, ay = np.asarray(els.x1)[s], np.asarray(els.y1)[s]
     dx, dy = np.asarray(els.x2)[s] - ax, np.asarray(els.y2)[s] - ay
     L2 = dx**2 + dy**2
     t = np.clip(((pts[:, :1] - ax) * dx + (pts[:, 1:] - ay) * dy) / L2, 0.0, 1.0)
     d = np.hypot(pts[:, :1] - ax - t * dx, pts[:, 1:] - ay - t * dy)
-    return pts[(d < tol * np.sqrt(L2)).any(axis=1)]
+    return (d < tol * np.sqrt(L2)).any(axis=1)
+
+
+def coincident_force_elements(els, labels, tol=1e-9):
+    """Force elements that lie on slip elements (their centre and both end points are on
+    slip elements): the slip and force meshes overlap there, e.g. a fault or a crack on a
+    material interface. Returns global element indices."""
+    labels = np.asarray(labels).astype(str)
+    f, s = np.flatnonzero(labels == "f"), np.flatnonzero(labels == "s")
+    if len(f) == 0 or len(s) == 0:
+        return np.zeros(0, dtype=int)
+    on = np.ones(len(f), dtype=bool)
+    for px, py in ((els.x1, els.y1), (els.x2, els.y2), (els.x_centers, els.y_centers)):
+        on &= _on_slip(np.c_[np.asarray(px)[f], np.asarray(py)[f]].astype(float), els, s, tol)
+    return f[on]
+
+
+def fault_crossings(els, labels, tol=1e-9):
+    """Nodes of force-element chains that lie on a slip element, excluding nodes inside a
+    stretch where the slip and force meshes overlap: (k, 2) points.
+
+    These are where the force density changes regime and the trapezoid stride should
+    restart (`TrapezoidCrossingWarning`):
+    - a fault crossing an interface (neither neighbouring force element on the fault);
+    - the end of an overlap (one neighbouring force element on slip elements, the other
+      not), e.g. a crack tip on an interface or the bottom of a fault on a contact.
+    Nodes with all neighbouring force elements on slip elements (inside an overlap) and
+    force-chain ends (see `force_open_ends`) are not included."""
+    labels = np.asarray(labels).astype(str)
+    f, s = np.flatnonzero(labels == "f"), np.flatnonzero(labels == "s")
+    if len(f) == 0 or len(s) == 0:
+        return np.zeros((0, 2))
+    coincident = set(coincident_force_elements(els, labels, tol).tolist())
+    at = {}
+    for e in f:
+        for p in ((float(els.x1[e]), float(els.y1[e])), (float(els.x2[e]), float(els.y2[e]))):
+            at.setdefault(p, []).append(int(e))
+    pts = np.array([p for p, es in at.items() if len(es) == 2], dtype=float).reshape(-1, 2)
+    if len(pts) == 0:
+        return np.zeros((0, 2))
+    on = _on_slip(pts, els, s, tol)
+    keep = [i for i, p in enumerate(map(tuple, pts))
+            if on[i] and not all(e in coincident for e in at[p])]
+    return pts[keep]
 
 
 def _check_trapezoid_overlap(conn):
@@ -1605,16 +1647,18 @@ def patch_elements(els, basis, connectivity=None):
     return trapezoid_connectivity(els)[:, 1]
 
 
-def trapezoid_coefficients(els, connectivity=None, *, geometry, open_ends=None, tol=1e-9):
+def trapezoid_coefficients(els, connectivity=None, *, geometry):
     """Transform from linear-force element DOFs to trapezoid patches (one per row of
     connectivity; connectivity=None: `trapezoid_connectivity`, every other element).
 
     Each trapezoid has unit force (t or n in plane strain, local frame of the middle
     element) at both nodes of its middle element, zero force at the two open ends
     of the patch, and continuous force (global frame) at the two internal nodes.
-    open_ends : (k, 2) points, optional. A patch end node at one of these points (a
-    force-chain end on a slip element, `Mesh.force_open_ends`) is open instead of
-    tapered: the force is constant over that end element (equal at its two nodes).
+    A row [e, e, e] is an open-end patch: a half-hat on element e alone, unit force
+    at e's chain-tip node (the node no other force element uses) and zero at its other
+    node, collocated at e's centre. It gives the force a free value at a chain end
+    that touches slip elements (`Mesh.force_open_ends`), where tapering to zero would
+    be wrong; the neighbouring trapezoid keeps its usual zero at the tip.
     Returns (2 n_els, n_patches) in antiplane and
     (2 n_els, 2, n_patches, 2) [dof, direction_in, patch, direction_out] in plane strain.
     """
@@ -1632,29 +1676,32 @@ def trapezoid_coefficients(els, connectivity=None, *, geometry, open_ends=None, 
         e, k = divmod(int(n3), 3)
         return 2 * e + k // 2
 
-    open_pts = np.zeros((0, 2)) if open_ends is None else np.asarray(open_ends, float).reshape(-1, 2)
-    L_max = 2 * np.max(np.asarray(els.half_lengths)) if n_els else 1.0
-
-    def is_open_end(x, y):
-        return len(open_pts) > 0 and np.hypot(open_pts[:, 0] - x, open_pts[:, 1] - y).min() < tol * L_max
+    use = {}
+    for e in range(n_els):
+        for pt in ((float(els.x1[e]), float(els.y1[e])), (float(els.x2[e]), float(els.y2[e]))):
+            use[pt] = use.get(pt, 0) + 1
 
     T = np.zeros((n_els * 2, pe, n_p, pe))
     for p in range(n_p):
+        if conn[p, 0] == conn[p, 1] == conn[p, 2]:  # open-end patch: half-hat at the tip node
+            e = int(conn[p, 0])
+            start_tip = use[(float(els.x1[e]), float(els.y1[e]))] == 1
+            end_tip = use[(float(els.x2[e]), float(els.y2[e]))] == 1
+            if start_tip == end_tip:
+                raise ValueError(f"open-end patch [{e}, {e}, {e}]: element {e} must have exactly one chain-tip node")
+            # ramp 0 is 1 at the element's end node (x2, y2), ramp 1 at its start node (x1, y1);
+            # unit force along each local direction of e (element coefficients are in e's frame)
+            k = 1 if start_tip else 0
+            T[2 * e + k, :, p, :] = np.eye(pe)
+            continue
         sub = _subset_els(els, conn[p])
         index_open, index_overlap, _ = _core.label_nodes(sub, verbose=False)
         m_glob = force_node_matrix(sub, geometry=geometry, reference="global")
         m_loc = force_node_matrix(sub, geometry=geometry, reference="local")
         rows = [m_loc[pe * (2 + k) + c] for k in range(2) for c in range(pe)]  # middle element
         for node in index_open:
-            n3 = int(np.abs(node).item())
-            n = frow(n3)
-            e_loc, k = divmod(n3, 3)
-            xn, yn = (sub.x1[e_loc], sub.y1[e_loc]) if k == 0 else (sub.x2[e_loc], sub.y2[e_loc])
-            if is_open_end(float(xn), float(yn)):  # open end: constant force over the end element
-                other = 2 * e_loc + (1 - k // 2)
-                rows += [m_glob[pe * n + c] - m_glob[pe * other + c] for c in range(pe)]
-            else:  # tapered end: zero force
-                rows += [m_glob[pe * n + c] for c in range(pe)]
+            n = frow(np.abs(node).item())
+            rows += [m_glob[pe * n + c] for c in range(pe)]
         for a, b in index_overlap:
             if a != 0 and b != 0:
                 sa, sb = np.sign(a), np.sign(b)
@@ -1680,7 +1727,7 @@ def trapezoid_coefficients(els, connectivity=None, *, geometry, open_ends=None, 
     return T[:, 0, :, 0] if geometry == "antiplane" else T
 
 
-def basis_transform(els, *, kind, basis, geometry, connectivity=None, open_ends=None):
+def basis_transform(els, *, kind, basis, geometry, connectivity=None):
     """Transform T from element-basis DOFs to the requested basis (see tasks.md 7.2)."""
     n_els = len(els.x_centers)
     n_nodes = _NODES[kind]
@@ -1690,7 +1737,7 @@ def basis_transform(els, *, kind, basis, geometry, connectivity=None, open_ends=
         return _per_element_transform(n_els, n_nodes, np.ones(n_nodes), geometry)
     if basis == "hat":
         return hat_coefficients(els, connectivity, geometry=geometry)
-    return trapezoid_coefficients(els, connectivity, geometry=geometry, open_ends=open_ends)
+    return trapezoid_coefficients(els, connectivity, geometry=geometry)
 
 
 def _apply_transform(U, S, T, geometry):
@@ -2167,8 +2214,9 @@ class Mesh:
         topology: one-ring hats on every non-tip slip element, and trapezoids
         centred on every other element along each chain of force elements.
         Where a force chain ends on a slip element (e.g. an interface meeting the
-        free surface, `mesh.force_open_ends`) the force is open there (constant over
-        the end element, not tapered) and the default stride counts from that end.
+        free surface, `mesh.force_open_ends`) the force is open there: the default
+        layout adds an open-end patch [e, e, e] (a free force value at the tip, see
+        `trapezoid_coefficients`) and counts the trapezoid stride from that end.
         Each value may also be the path of a CSV file with one patch per row: three
         0-based element indices (rows of the mesh file), with or without a header.
         The connectivity is the user's choice; `solve` warns about layouts that
@@ -2359,14 +2407,37 @@ class Mesh:
             self._cache[key] = self._subset(kind)
         return self._cache[key]
 
+    def trapezoid_restart_points(self, tol=1e-9):
+        """Points where the force trapezoid stride should restart: fault crossings, ends
+        of slip/force overlaps whose slip elements are not all prescribed-slip ("s")
+        elements, and open force ends. A prescribed-slip fault tapers smoothly (zero
+        slip and slope) where it ends, so the end of its overlap with an interface needs
+        no restart; a traction ("t") crack has singular stress at its tip, which does.
+        (A fault crossing an interface keeps a slip gradient there, so crossings always
+        count.)"""
+        pts = []
+        coincident = set(coincident_force_elements(self.els, self.labels, tol).tolist())
+        s_idx = self.elements("slip") if "slip" in self.kinds else np.zeros(0, dtype=int)
+        f_idx = self.elements("force") if "force" in self.kinds else np.zeros(0, dtype=int)
+        for px, py in self.fault_crossings:
+            adj = [e for e in f_idx if (np.isclose(self.els.x1[e], px) and np.isclose(self.els.y1[e], py))
+                   or (np.isclose(self.els.x2[e], px) and np.isclose(self.els.y2[e], py))]
+            overlap_end = any(e in coincident for e in adj)
+            if overlap_end and self.bc_type is not None:
+                touching = [e for e in s_idx if _on_slip(np.array([[px, py]]), self.els, np.array([e]), tol)[0]]
+                if touching and all((self.bc_type[e] == "s").all() for e in touching):
+                    continue
+            pts.append((px, py))
+        return np.r_[np.array(pts, dtype=float).reshape(-1, 2), self.force_open_ends]
+
     def split_force_trapezoids(self, points=None, tol=1e-9):
         """Force trapezoids (global element indices) with the stride restarted at
-        `points` (default: `self.fault_crossings`), a suggestion for the connectivity
+        `points` (default: `self.trapezoid_restart_points()`), a suggestion for the connectivity
         file when `solve` raises `TrapezoidCrossingWarning`. Save it with e.g.
         np.savetxt("connectivity.csv", conn, fmt="%d", delimiter=",")."""
         idx = self.elements("force")
         sub = _subset_els(self.els, idx)
-        pts = self.fault_crossings if points is None else points
+        pts = self.trapezoid_restart_points(tol) if points is None else points
         return idx[trapezoid_connectivity(sub, breaks=pts, tol=tol)]
 
     def transform(self, kind, *, geometry):
@@ -2376,8 +2447,7 @@ class Mesh:
         if key not in self._cache:
             sub, _, conn = self.subset(kind)
             self._cache[key] = basis_transform(sub, kind=kind, basis=self.basis[kind], geometry=geometry,
-                                               connectivity=conn,
-                                               open_ends=self.force_open_ends if kind == "force" else None)
+                                               connectivity=conn)
         return self._cache[key]
 
     def _subset(self, kind):
@@ -2828,6 +2898,7 @@ class TrapezoidCrossingWarning(UserWarning):
 def _warn_trapezoids_across_crossings(mesh, tol=1e-9, stacklevel=3):
     if "force" not in mesh.kinds or mesh.basis["force"] != "trapezoid" or not len(mesh.fault_crossings):
         return
+    restart = mesh.trapezoid_restart_points(tol)
     conn = mesh.connectivity["force"]
     if conn is None:
         sub, idx, _ = mesh.subset("force")
@@ -2836,7 +2907,7 @@ def _warn_trapezoids_across_crossings(mesh, tol=1e-9, stacklevel=3):
     f = mesh.elements("force")
     L = 2 * np.max(np.asarray(els.half_lengths)[f])
     bad = []
-    for px, py in mesh.fault_crossings:
+    for px, py in restart:
         at = [int(e) for e in f
               if min(np.hypot(els.x1[e] - px, els.y1[e] - py), np.hypot(els.x2[e] - px, els.y2[e] - py)) < tol * L]
         if len(at) == 2 and any(at[0] in row and at[1] in row for row in conn.tolist()):
@@ -2845,9 +2916,10 @@ def _warn_trapezoids_across_crossings(mesh, tol=1e-9, stacklevel=3):
         shown = ", ".join(f"({px:.4g}, {py:.4g}) between elements {a} and {b}" for px, py, (a, b) in bad[:5])
         more = f", ... ({len(bad)} crossings)" if len(bad) > 5 else ""
         warnings.warn(
-            f"force trapezoid(s) span fault crossing(s) at {shown}{more}: the trapezoid stride runs "
-            "through the crossing, so the force density there is poorly represented and the interface "
-            "can carry a spurious net force. Fix the force connectivity so the stride restarts at the "
+            f"force trapezoid(s) span fault crossing(s) or overlap end(s) at {shown}{more}: the trapezoid "
+            "stride runs through a point where the force density changes regime (a fault crossing the "
+            "interface, or the end of a stretch where slip and force elements coincide), so the force "
+            "density there is poorly represented and the interface can carry a spurious net force. Fix the force connectivity so the stride restarts at the "
             "crossing: mesh.split_force_trapezoids() suggests one (save it as your connectivity file).",
             TrapezoidCrossingWarning,
             stacklevel=stacklevel,

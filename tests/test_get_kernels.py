@@ -584,22 +584,34 @@ def test_connectivity_file_needs_three_integer_columns(tmp_path):
 
 def test_force_chain_ending_on_slip_elements_has_an_open_end():
     """A vertical interface (force) ending on a horizontal free surface (slip) at a slip node:
-    the end is open (constant force over the end element), the stride counts from it, and the
-    slip elements are untouched (their node is an ordinary interior node)."""
+    the default layout counts the trapezoids from that end and adds an open-end patch [e, e, e]
+    (a half-hat: a free force value at the tip node, collocated at the tip element). The slip
+    elements are untouched (the shared node is an ordinary interior slip node)."""
     surface = _straight(6, x0=-3.0, y=0.0)
     iface = [((0.0, -float(i)), (0.0, -float(i + 1))) for i in range(5)]
     els = _line_els(surface + iface)
     labels = ["s"] * 6 + ["f"] * 5
     np.testing.assert_allclose(GF.force_open_ends(els, labels), [[0.0, 0.0]], atol=1e-12)
     mesh = bemcs.Mesh(els, labels=labels, basis={"slip": "hat", "force": "trapezoid"})
-    np.testing.assert_array_equal(mesh.connectivity["force"], 6 + np.array([[0, 1, 2], [2, 3, 4]]))
-    T = mesh.transform("force", geometry="antiplane")  # (2 n_force, n_trapezoids)
-    np.testing.assert_allclose(T[0:2, 0], [1.0, 1.0])  # end element: constant, not tapered
-    # far end: tapered as before (ramp 0 is the element's end node, here the chain tip at depth 5)
-    np.testing.assert_allclose(T[8:10, 1], [0.0, 1.0])
-    # the slip elements see only themselves: the shared node is not a tip
-    assert len(mesh.tip_elements("slip")) == 2  # the two outer surface elements
+    np.testing.assert_array_equal(mesh.connectivity["force"], 6 + np.array([[0, 0, 0], [0, 1, 2], [2, 3, 4]]))
+    T = mesh.transform("force", geometry="antiplane")  # (2 n_force, n_patches)
+    # ramp 0 is the element's end node, ramp 1 its start node; element 0 starts at the surface
+    np.testing.assert_allclose(T[0:2, 0], [0.0, 1.0])  # open-end patch: 1 at the tip, 0 at the next node
+    np.testing.assert_allclose(T[2:, 0], 0.0)  # on the tip element only
+    np.testing.assert_allclose(T[0:2, 1], [1.0, 0.0])  # the first trapezoid still tapers at the tip
+    np.testing.assert_allclose(T[8:10, 2], [0.0, 1.0])  # far end: tapered as before
+    assert len(mesh.tip_elements("slip")) == 2  # the slip elements see only themselves
+    # plane strain: unit force along each local direction of the tip element
+    Tp = mesh.transform("force", geometry="planestrain")  # (2 n, 2, n_patches, 2)
+    np.testing.assert_allclose(Tp[1, :, 0, :], np.eye(2))
+    np.testing.assert_allclose(Tp[0, :, 0, :], 0.0)
     # a force chain that does not end on a slip element is unchanged
     els2 = _line_els(surface + [((0.0, -1.0 - i), (0.0, -2.0 - i)) for i in range(5)])
     mesh2 = bemcs.Mesh(els2, labels=labels, basis={"slip": "hat", "force": "trapezoid"})
     assert len(mesh2.force_open_ends) == 0 and mesh2.connectivity["force"] is None
+
+
+def test_open_end_patch_needs_a_chain_tip():
+    els = _line_els(_straight(5))
+    with pytest.raises(ValueError, match="exactly one chain-tip node"):
+        GF.trapezoid_coefficients(els, np.array([[2, 2, 2]]), geometry="antiplane")  # interior element

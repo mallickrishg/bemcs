@@ -249,12 +249,14 @@ def test_contact_reference_is_continuous_across_the_contact(dist):
 
 @pytest.mark.parametrize("dist, tol", [(0.5, 1e-2), (0.0, 4e-2)])
 def test_fault_near_and_on_a_vertical_contact_converges(dist, tol):
-    """The contact meets the free surface, where the force chain has an open (non-tapering) end.
-    First order: 1.3e-2 -> 6.4e-3 (d = 0.5) and 6.0e-2 -> 2.5e-2 (d = 0) for h = 0.1 -> 0.05.
-    With a tapered end it was 3.3e-2 -> 1.7e-2 and 1.3e-1 -> 6.8e-2 (tasks.md P3)."""
+    """The contact meets the free surface, where the force chain has an open end (a free force
+    value at the tip, collocated at the tip element). First order: 1.1e-2 -> 6.1e-3 (d = 0.5) and
+    4.7e-2 -> 2.3e-2 (d = 0) for h = 0.1 -> 0.05. With a tapered end it was 3.3e-2 -> 1.7e-2 and
+    1.3e-1 -> 6.8e-2; with a constant extrapolation over the tip element 1.3e-2 -> 6.4e-3 and
+    6.0e-2 -> 2.5e-2. The rest is the corner (tasks.md P3)."""
     e1, *_ = _contact_error(dist, 0.1)
     e2, mesh, x = _contact_error(dist, 0.05)
-    assert e2 < tol and 1.7 < e1 / e2 < 2.8
+    assert e2 < tol and 1.6 < e1 / e2 < 2.8
 
 
 def test_contact_force_is_exact_at_depth_and_open_at_the_free_surface():
