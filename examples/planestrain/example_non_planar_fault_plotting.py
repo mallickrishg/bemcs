@@ -58,26 +58,22 @@ bemcs.plot_els_geometry(els)
 
 # %%
 # Quadratic slip on every element; unknowns are interleaved [t0, n0, t1, n1, ...] per node
-mesh = bemcs.Mesh(els, "slip")
 geometry = "planestrain"
+mu = 1
+nu = 0.25
+
+# Boundary conditions: slip imposed at the centre of every element. The values above are global
+# (x, y); BC type "s" takes local (shear, normal) slip, so rotate them into each element's frame.
+# Open nodes are clamped (slip and gradient = 0) and interior nodes continuous and smooth; the end
+# elements carry a fault tip and are tapers without a BC row.
+slip_local = np.einsum("eji,ej->ei", els.rot_mats, np.c_[slip_vector_x, slip_vector_y])  # R^T s
+mesh = bemcs.Mesh(els, bc_type=["s"] * n_els, bc_value=slip_local, mu_minus=mu, mu_plus=mu)
 
 # Slip and slip gradient at the 3 nodes of every element, global (x, y) components
 slip_mat, slip_gradient_mat = bemcs.bemAssembly.slip_node_matrices(els, geometry=geometry)
 
-# Boundary conditions:
-# - slip (x, y) imposed at the central node of every element
-# - open nodes: slip = 0 and slip gradient = 0; interior nodes: continuity of slip and slip gradient
-# - the end elements carry an open node (fault tip): clamped tapers with no BC row
-keep = mesh.bc_elements("slip")
-centre_rows = np.vstack([slip_mat[2 * (3 * e + 1) + c] for e in keep for c in range(2)])
-continuity_rows, continuity_info = mesh.continuity_operator(geometry=geometry)
-design_mat = np.vstack((centre_rows, continuity_rows))
-bc_vec = np.concatenate(
-    (np.c_[slip_vector_x, slip_vector_y][keep].ravel(), np.zeros(len(continuity_rows)))
-)
-
 # Solve for quadratic node coefficients (in local (t, n) coordinates)
-coeffs = np.linalg.solve(design_mat, bc_vec)
+coeffs = bemcs.solve(mesh, geometry=geometry, mu=mu, nu=nu)
 
 # %% [markdown]
 # # Plot Slip along the fault
@@ -138,9 +134,6 @@ plt.show()
 
 # %%
 # Compute displacement and stress kernels
-# Elastic parameters
-mu = 1
-nu = 0.25
 
 # Compute displacements along a line
 n_pts = 15

@@ -234,7 +234,6 @@ def test_level2_geometry_and_mu_keyword_only(els_curved, obs_points, kind):
         ("slip", dict(basis="linear"), "not available"),
         ("force", dict(basis="quadratic"), "not available"),
         ("force", dict(basis="hat"), "not available"),
-        ("force", dict(basis="trapezoid"), "needs connectivity"),
         ("slip", dict(connectivity=CONN), "only used with patch bases"),
         ("force", dict(basis="trapezoid", connectivity=np.array([[0, 1]])), r"\(n_patches, 3\)"),
         ("force", dict(basis="trapezoid", connectivity=np.array([[0.0, 1, 2]])), "int"),
@@ -348,7 +347,6 @@ def test_numba_backend_matches_numpy(els_curved, obs_points, case):
         ((["s", "f"],), {}, "shape"),
         (("slip",), dict(basis={"slip": "linear"}), "not available"),
         (("slip",), dict(basis={"slp": "hat"}), "keys"),
-        (("force",), dict(basis={"force": "trapezoid"}), "needs connectivity"),
         (("slip",), dict(connectivity={"slip": CONN}), "only used with patch bases"),
         (("slip",), dict(basis={"force": "trapezoid"}), "no element is labelled"),
         (

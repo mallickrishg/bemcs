@@ -141,46 +141,24 @@ plt.gca().set_aspect("equal", adjustable="box")
 plt.show()
 
 # %% [markdown]
-# # Mesh, kernels and continuity conditions
-# All elements carry quadratic slip with 3 nodes per element (the general, element-DOF formulation).
-# Unknowns are ordered element-major, then node, then direction (t, n): [t0, n0, t1, n1, ...].
+# # Mesh, boundary conditions and solve
+# Every element carries quadratic slip (general form: 3 coefficients per element and direction,
+# plus continuity rows; fault tips are clamped). Boundary conditions: traction (global x, y) at
+# every element centre. The medium is homogeneous: the same shear modulus on both sides.
 
 # %%
-mesh = bemcs.Mesh(els, "slip")  # default basis for slip: quadratic
 geometry = "planestrain"
-
-# stress kernels evaluated ONLY at the element centres: S has shape (n_els, 3 n_els, 3, 2)
-_, S, info = bemcs.get_kernels(
-    els.x_centers, els.y_centers, mesh, geometry=geometry, mu=mu, nu=nu
+mesh = bemcs.Mesh(
+    els,
+    bc_type=["t"] * n_els,
+    bc_value=np.c_[traction_vector_x, traction_vector_y],
+    mu_minus=mu,
+    mu_plus=mu,
 )
-print(info)
-
-# traction kernels t = sigma . n in global (x, y) coordinates: (n_els, 3 n_els, 2, 2)
-T = bemcs.traction_kernels(S, els.x_normals, els.y_normals)
-
-# continuity and smoothness rows at open, overlapping and triple-junction nodes (RHS = 0)
-matrix_continuity, rows = mesh.continuity_operator(geometry=geometry)
-
-# %% [markdown]
-# # Assemble the design matrix and boundary conditions
-
-# %%
-# traction BCs at element centres: rows [tx0, ty0, tx1, ty1, ...]
-matrix_system_c = bemcs.kernel_matrix(T)
-BC_c = np.c_[traction_vector_x, traction_vector_y].reshape(-1, 1)
-
-# tip elements (with an open end node) are clamped tapers: they get no BC row
-keep = mesh.bc_elements("slip")
-matrix_system_c = matrix_system_c.reshape(n_els, 2, -1)[keep].reshape(2 * len(keep), -1)
-BC_c = BC_c.reshape(n_els, 2, -1)[keep].reshape(-1, 1)
-
-matrix_system = np.vstack((matrix_system_c, matrix_continuity))
-BCvector = np.vstack((BC_c, np.zeros((len(matrix_continuity), 1))))
-print("unknowns:", mesh.n_columns(geometry=geometry), " equations:", len(matrix_system))
-
-# compute quadratic node coefficients (slip in local (t, n) coordinates)
-quadratic_coefs = np.linalg.pinv(matrix_system) @ BCvector
-print("Linear Operator Condition Number:", np.linalg.cond(matrix_system))
+# traction-only box: rigid-body motions are free; least squares returns the minimum-norm solution
+quadratic_coefs, (A, b, rows) = bemcs.solve(mesh, geometry=geometry, mu=mu, nu=nu, return_system=True)
+print("unknowns:", A.shape[1], " equations:", A.shape[0])
+print("Linear Operator Condition Number:", np.linalg.cond(A))
 
 # evaluate slip (global x, y components) on a finer set of points along the elements
 n_eval = 4

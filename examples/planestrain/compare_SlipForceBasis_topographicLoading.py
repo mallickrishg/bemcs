@@ -2,7 +2,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import bemcs
-import utilfunctions as UF
 import warnings
 
 # Suppress all warnings
@@ -10,12 +9,10 @@ warnings.filterwarnings("ignore")
 
 
 
-def fields(K, coefs):
-    """Components of a kernel array (get_kernels layout) times the coefficients,
-    each as a column (n_obs, 1)."""
-    n = K.shape[0]
-    c = np.asarray(coefs).reshape(-1, 1)
-    return [K[:, :, k, :].reshape(n, -1) @ c for k in range(K.shape[2])]
+
+def logistic(x, L=1, k=1, x0=0):
+    """Logistic function L / (1 + exp(-k (x - x0)))."""
+    return L / (1 + np.exp(-k * (x - x0)))
 
 
 # %% Define mesh and boundary conditions
@@ -34,7 +31,7 @@ L_y = -5.0  # <-- USER-DEFINED bottom value
 # ------------------------------------------------------------
 half = np.logspace(np.log10(epsmin), np.log10(Lscale), N_top)
 x_top = np.concatenate([-half[::-1], [0.0], half])
-y_top = UF.logistic(x_top, L=hmax, k=2, x0=0)
+y_top = logistic(x_top, L=hmax, k=2, x0=0)
 N_top_pts = len(x_top)
 
 # ------------------------------------------------------------
@@ -83,22 +80,22 @@ bemcs.plot_els_geometry(els)
 
 # ------------------------------------------------------------
 # 8. Assign BC types
-# top = "t_global", others = "u_global"
+# top = "t" (traction, global), others = "u" (displacement, global)
 # ------------------------------------------------------------
 BCtype = np.empty_like(x1, dtype=object)
 N_left = len(x_left_vals)
 N_top_elems = N_top_pts - 1
 # left boundary
-BCtype[:N_left] = "u_global"
+BCtype[:N_left] = "u"
 # top boundary
-BCtype[N_left : N_left + N_top_elems] = "t_global"
+BCtype[N_left : N_left + N_top_elems] = "t"
 # right + bottom boundaries
-BCtype[N_left + N_top_elems :] = "u_global"
+BCtype[N_left + N_top_elems :] = "u"
 
 # apply a localized Gaussian load at the top boundary
 BCval = np.exp(-(els.x_centers**2) / (2 * np.pi * 0.5**2))
 # BCval = 1.0 * (els.y_centers - 0.0)
-BCval[BCtype == "u_global"] = 0.0
+BCval[BCtype == "u"] = 0.0
 
 # provide connections to compute trapeoidal basis functions
 # connectivity matrix: each row is a group of 3 consecutive elements
@@ -113,318 +110,97 @@ nu = 0.25  # Poisson's ratio
 rho = 1  # rho*g/mu
 ydatum = 1  # provide a datum for verticals
 
-# %% Compute displacement & stress kernels (slip & force basis)
-# Observation points
+# %% Solve the topographic load problem twice: slip basis and force basis
+geometry = "planestrain"
+bc_value = np.c_[BCval * els.x_normals, BCval * els.y_normals]  # traction = load * n on top
+common = dict(bc_type=BCtype, bc_value=bc_value, mu_minus=mu, mu_plus=mu)
+
+# (1) quadratic slip on every element (general form with continuity rows)
+mesh_slip = bemcs.Mesh(els, labels="slip", **common)
+quadratic_coefs = bemcs.solve(mesh_slip, geometry=geometry, mu=mu, nu=nu)
+
+# (2) trapezoidal force patches; BCs at the centres of their middle elements
+mesh_force = bemcs.Mesh(
+    els, labels="force", basis={"force": "trapezoid"}, connectivity={"force": connect_matrix}, **common
+)
+fcoefs = bemcs.solve(mesh_force, geometry=geometry, mu=mu, nu=nu)
+
+# %% Fields: deviatoric stress and pressure, then stress components (slip vs force)
 n_obs = 100
 xlimits = [-1.5 * np.abs(L_y), 1.5 * np.abs(L_y)]
 ylimits = [0.99 * L_y, 1.2 * hmax]
-x_obs = np.linspace(xlimits[0], xlimits[1], n_obs)
-# y_obs = np.linspace(-2 * hmax, 1.2 * hmax, n_obs)
-y_obs = np.linspace(ylimits[0], ylimits[1], n_obs)
-x_obs, y_obs = np.meshgrid(x_obs, y_obs)
-x_obs = x_obs.flatten()
-y_obs = y_obs.flatten()
-
-# create a mask to remove all plotted values above topography (outside the domain)
-index = bemcs.inpolygon(
-    x_obs,
-    y_obs,
-    np.hstack((els.x1)),
-    np.hstack((els.y1)),
-)
-# index = np.ones_like(x_obs, dtype=bool)
-
-# force kernels (trapezoidal basis) at the observation points
-geometry = "planestrain"
-force_kw = dict(geometry=geometry, mu=mu, nu=nu, basis="trapezoid", connectivity=connect_matrix)
-U_f, S_f, _ = bemcs.get_force_kernels(x_obs, y_obs, els, **force_kw)
-
-# Solve topographic load problem
-bc_x = BCval * els.x_normals
-bc_y = BCval * els.y_normals
-
-# solve for slip coefficients (quadratic slip on every element)
-quadratic_coefs, mesh_slip = UF.solve_bem_system_slip(
-    els, bc_x, bc_y, BCtype, BCtype, mu, nu
-)
-# slip kernels at the observation points and the resulting fields
-U_s, S_s, _ = bemcs.get_kernels(x_obs, y_obs, mesh_slip, geometry=geometry, mu=mu, nu=nu)
-ux, uy = fields(U_s, quadratic_coefs)
-sxx, syy, sxy = fields(S_s, quadratic_coefs)
-# # plot displacements & stresses
-# n_skip_plot = 3
-# bemcs.plot_displacements_stresses_els(
-#     els, n_obs, ux, uy, sxx, syy, sxy, x_obs, y_obs, n_skip_plot
-# )
 
 
-# solve for force coefficients (interleaved [t0, n0, t1, n1, ...])
-fcoefs = UF.solve_bem_system_force(
-    els,
-    connect_matrix,
-    bc_x[connect_matrix[:, 1]],
-    bc_y[connect_matrix[:, 1]],
-    BCtype[connect_matrix[:, 1]],
-    BCtype[connect_matrix[:, 1]],
-    mu,
-    nu,
-)
-# compute displacements & stresses from force coefficients
-ux_f, uy_f = fields(U_f, fcoefs)
-sxx_f, syy_f, sxy_f = fields(S_f, fcoefs)
-# # plot displacements & stresses
-# bemcs.plot_displacements_stresses_els(
-#     els, n_obs, ux_f, uy_f, sxx_f, syy_f, sxy_f, x_obs, y_obs, n_skip_plot
-# )
-# compute overpressure in the medium
-pressure = (sxx + syy) / 2  # - rho * (y_obs.reshape(-1, 1) - ydatum)
-pressure_f = (sxx_f + syy_f) / 2  # - rho * (y_obs.reshape(-1, 1) - ydatum)
-# compute deviatoric stress
-deviatoric_stress = np.sqrt(1 / 4 * ((sxx - syy) ** 2) + sxy**2)
-deviatoric_stress_f = np.sqrt(1 / 4 * ((sxx_f - syy_f) ** 2) + sxy_f**2)
+def inside(X, Y):
+    """Inside the domain (below the topography)."""
+    return bemcs.inpolygon(X.ravel(), Y.ravel(), els.x1, els.y1).reshape(X.shape)
 
-# %% Plot results in terms of deviatoric stress & pressure
-plt.figure(figsize=(15, 7))
-# plot results using slip coefficients
-plt.subplot(2, 2, 1)
-# plot deviatoric stress due to topography
-toplot = deviatoric_stress
-toplot[~index, 0] = np.nan
-maxval = 0.5
-bemcs.bemAssembly.plot_BEM_field(
-    toplot,
-    els,
-    x_obs,
-    y_obs,
-    xlimits,
-    ylimits,
-    maxval=maxval,
-    n_levels=11,
-    cmap="coolwarm",
-)
-plt.title("$\\sigma_{II}$ (slip)", fontsize=15)
-plt.ylabel("z", fontsize=12)
 
-plt.subplot(2, 2, 2)
-toplot = np.abs(pressure)
-toplot[~index, 0] = np.nan
-bemcs.bemAssembly.plot_BEM_field(
-    toplot,
-    els,
-    x_obs,
-    y_obs,
-    xlimits,
-    ylimits,
-    maxval=maxval,
-    n_levels=11,
-    cmap="coolwarm",
-)
-plt.title("$p=|\\frac{\\sigma_{kk}}{2}|$ (slip)", fontsize=15)
-plt.ylabel("z", fontsize=12)
-
-# Using force coefficients
-plt.subplot(2, 2, 3)
-# plot deviatoric stress due to topography
-toplot = deviatoric_stress_f
-toplot[~index, 0] = np.nan
-bemcs.bemAssembly.plot_BEM_field(
-    toplot,
-    els,
-    x_obs,
-    y_obs,
-    xlimits,
-    ylimits,
-    maxval=maxval,
-    n_levels=11,
-    cmap="coolwarm",
-)
-plt.title("$\\sigma_{II}$ (force)", fontsize=15)
-plt.xlabel("x", fontsize=12)
-plt.ylabel("z", fontsize=12)
-
-plt.subplot(2, 2, 4)
-toplot = np.abs(pressure_f)
-toplot[~index, 0] = np.nan
-bemcs.bemAssembly.plot_BEM_field(
-    toplot,
-    els,
-    x_obs,
-    y_obs,
-    xlimits,
-    ylimits,
-    maxval=maxval,
-    n_levels=11,
-    cmap="coolwarm",
-)
-plt.title("$p=|\\frac{\\sigma_{kk}}{2}|$ (force)", fontsize=15)
-plt.xlabel("x", fontsize=12)
-plt.ylabel("z", fontsize=12)
-plt.show()
-
-# now plot stress components using slip coefficients
-sxx_f, syy_f, sxy_f = fields(S_s, quadratic_coefs)
-# plotting parameters
-maxval = 2.0
-plt.figure(figsize=(15, 5))
-for count in range(3):
-    plt.subplot(2, 3, count + 1)
-    if count == 0:
-        toplot = sxx_f
-        labelname = "$\\sigma_{xx}$"
-    elif count == 1:
-        toplot = syy_f
-        labelname = "$\\sigma_{yy}$"
-    else:
-        toplot = sxy_f
-        labelname = "$\\sigma_{xy}$"
-    bemcs.bemAssembly.plot_BEM_field(
-        toplot,
-        els,
-        x_obs,
-        y_obs,
-        xlimits,
-        ylimits,
-        maxval=maxval,
-        n_levels=21,
-        cmap="Spectral",
+derived = {
+    "deviatoric stress": lambda f: np.sqrt(0.25 * (f["sxx"] - f["syy"]) ** 2 + f["sxy"] ** 2),
+    "pressure": lambda f: 0.5 * (f["sxx"] + f["syy"]),
+}
+plot_kw = dict(geometry=geometry, mu=mu, nu=nu, xlim=xlimits, ylim=ylimits, n=(n_obs, n_obs),
+               mask=inside, derived=derived)
+results = {}
+for name, mesh_k, coefs in (("slip", mesh_slip, quadratic_coefs), ("force", mesh_force, fcoefs)):
+    fig, axes, f = bemcs.plot_fields(
+        mesh_k, coefs, components=["deviatoric stress", "pressure", "sxx", "syy", "sxy"], **plot_kw
     )
-    plt.xlabel("x")
-    plt.ylabel("z")
-    plt.title(labelname + " (slip)")
-
-# now plot stress components using force coefficients
-sxx_f, syy_f, sxy_f = fields(S_f, fcoefs)
-
-for count in range(3):
-    plt.subplot(2, 3, 3 + count + 1)
-    if count == 0:
-        toplot = sxx_f
-        labelname = "$\\sigma_{xx}$"
-    elif count == 1:
-        toplot = syy_f
-        labelname = "$\\sigma_{yy}$"
-    else:
-        toplot = sxy_f
-        labelname = "$\\sigma_{xy}$"
-    bemcs.bemAssembly.plot_BEM_field(
-        toplot,
-        els,
-        x_obs,
-        y_obs,
-        xlimits,
-        ylimits,
-        maxval=maxval,
-        n_levels=21,
-        cmap="Spectral",
-    )
-    plt.xlabel("x")
-    plt.ylabel("z")
-    plt.title(labelname + " (force)")
-plt.show()
+    fig.suptitle(f"{name} basis")
+    plt.show()
+    results[name] = f
+pressure, pressure_f = results["slip"]["pressure"], results["force"]["pressure"]
+deviatoric_stress = results["slip"]["deviatoric stress"]
+deviatoric_stress_f = results["force"]["deviatoric stress"]
+ux, uy = results["slip"]["ux"], results["slip"]["uy"]
 
 # %% evaluate stress fields at the surface
 npts_per_elt = 3
-dr = -1e-9  # small offset to avoid discontinuity
-x_obs = np.zeros((len(els.x1[BCtype == "t_global"]) * npts_per_elt,))
-y_obs = np.zeros((len(els.x1[BCtype == "t_global"]) * npts_per_elt,))
-for i in range(len(els.x1[BCtype == "t_global"])):
-    xpts = np.linspace(
-        els.x1[BCtype == "t_global"][i],
-        els.x2[BCtype == "t_global"][i],
-        npts_per_elt + 2,
-    )[1:-1]
-    ypts = np.linspace(
-        els.y1[BCtype == "t_global"][i],
-        els.y2[BCtype == "t_global"][i],
-        npts_per_elt + 2,
-    )[1:-1]
-    x_obs[i * npts_per_elt : (i + 1) * npts_per_elt] = (
-        xpts + els.x_normals[BCtype == "t_global"][i] * dr
-    )
-    y_obs[i * npts_per_elt : (i + 1) * npts_per_elt] = (
-        ypts + els.y_normals[BCtype == "t_global"][i] * dr
-    )
-
-# Compute stresses (slip and force)
-_, S_s, _ = bemcs.get_kernels(x_obs, y_obs, mesh_slip, geometry=geometry, mu=mu, nu=nu)
-sxx, syy, sxy = fields(S_s, quadratic_coefs)
-_, S_f, _ = bemcs.get_force_kernels(x_obs, y_obs, els, **force_kw)
-
-# compute stresses from force coefficients
-sxx_f, syy_f, sxy_f = fields(S_f, fcoefs)
+dr = -1e-9  # small offset below the surface
+top = BCtype == "t"
+pts = [np.linspace(a, b, npts_per_elt + 2)[1:-1] for a, b in zip(els.x1[top], els.x2[top])]
+x_obs = np.concatenate(pts) + np.repeat(els.x_normals[top], npts_per_elt) * dr
+pts = [np.linspace(a, b, npts_per_elt + 2)[1:-1] for a, b in zip(els.y1[top], els.y2[top])]
+y_obs = np.concatenate(pts) + np.repeat(els.y_normals[top], npts_per_elt) * dr
+kw = dict(geometry=geometry, mu=mu, nu=nu)
+fs = bemcs.evaluate_fields(mesh_slip, quadratic_coefs, x_obs, y_obs, **kw)
+ff = bemcs.evaluate_fields(mesh_force, fcoefs, x_obs, y_obs, **kw)
+sxx, syy, sxy = fs["sxx"], fs["syy"], fs["sxy"]
+sxx_f, syy_f, sxy_f = ff["sxx"], ff["syy"], ff["sxy"]
 
 plt.figure(figsize=(15, 5))
-plt.subplot(1, 3, 1)
-plt.plot(x_obs, sxx, ".", label="slip")
-plt.plot(x_obs, sxx_f, "-", label="force")
-plt.xlabel("x", fontsize=10)
-plt.ylabel("$\\sigma_{xx}$", fontsize=10)
-plt.legend()
-plt.xlim(xlimits)
-plt.ylim([-1, 1])
-plt.subplot(1, 3, 2)
-plt.plot(x_obs, syy, ".")
-plt.plot(x_obs, syy_f, "-")
-plt.xlabel("x", fontsize=10)
-plt.ylabel("$\\sigma_{yy}$", fontsize=10)
-plt.xlim(xlimits)
-plt.ylim([-1, 1])
-plt.subplot(1, 3, 3)
-plt.plot(x_obs, sxy, ".")
-plt.plot(x_obs, sxy_f, "-")
-plt.xlabel("x", fontsize=10)
-plt.ylabel("$\\sigma_{xy}$", fontsize=10)
-plt.xlim(xlimits)
-plt.ylim([-1, 1])
+for count, name in enumerate(("sxx", "syy", "sxy")):
+    plt.subplot(1, 3, count + 1)
+    plt.plot(x_obs, fs[name], ".", label="slip")
+    plt.plot(x_obs, ff[name], "-", label="force")
+    plt.xlabel("x", fontsize=10)
+    plt.ylabel(name, fontsize=10)
+    plt.xlim(xlimits)
+    plt.ylim([-1, 1])
+    if count == 0:
+        plt.legend()
 plt.show()
 
-# evaluate stresses & tractions at element centers
-x_obs = (els.x_centers + els.x_normals * dr)[BCtype == "t_global"]
-y_obs = (els.y_centers + els.y_normals * dr)[BCtype == "t_global"]
-# Compute stresses (slip and force)
-U_s, S_s, _ = bemcs.get_kernels(x_obs, y_obs, mesh_slip, geometry=geometry, mu=mu, nu=nu)
-ux, uy = fields(U_s, quadratic_coefs)
-sxx, syy, sxy = fields(S_s, quadratic_coefs)
-_, S_f, _ = bemcs.get_force_kernels(x_obs, y_obs, els, **force_kw)
-# compute stresses from force coefficients
-sxx_f, syy_f, sxy_f = fields(S_f, fcoefs)
-# plot traction components
+# tractions at the centres of the surface elements
+x_obs = (els.x_centers + els.x_normals * dr)[top]
+y_obs = (els.y_centers + els.y_normals * dr)[top]
+nx, ny = els.x_normals[top], els.y_normals[top]
+fs = bemcs.evaluate_fields(mesh_slip, quadratic_coefs, x_obs, y_obs, **kw)
+ff = bemcs.evaluate_fields(mesh_force, fcoefs, x_obs, y_obs, **kw)
 plt.figure(figsize=(10, 2))
-plt.subplot(1, 2, 1)
-plt.plot(
-    x_obs,
-    sxx.flatten() * els.x_normals[BCtype == "t_global"]
-    + sxy.flatten() * els.y_normals[BCtype == "t_global"],
-    "o-",
-    label="slip",
-)
-plt.plot(
-    x_obs,
-    sxx_f.flatten() * els.x_normals[BCtype == "t_global"]
-    + sxy_f.flatten() * els.y_normals[BCtype == "t_global"],
-    ".-",
-    label="force",
-)
-plt.xlabel("x", fontsize=10)
-plt.ylabel("$\\tau_x$", fontsize=10)
-plt.legend()
-plt.xlim(xlimits)
-plt.subplot(1, 2, 2)
-plt.plot(
-    x_obs,
-    sxy.flatten() * els.x_normals[BCtype == "t_global"]
-    + syy.flatten() * els.y_normals[BCtype == "t_global"],
-    "o-",
-)
-plt.plot(
-    x_obs,
-    sxy_f.flatten() * els.x_normals[BCtype == "t_global"]
-    + syy_f.flatten() * els.y_normals[BCtype == "t_global"],
-    ".-",
-)
-plt.xlabel("x", fontsize=10)
-plt.ylabel("$\\tau_y$", fontsize=10)
-plt.xlim(xlimits)
+for count, (label, tx) in enumerate((
+    (r"$\tau_x$", lambda f: f["sxx"] * nx + f["sxy"] * ny),
+    (r"$\tau_y$", lambda f: f["sxy"] * nx + f["syy"] * ny),
+)):
+    plt.subplot(1, 2, count + 1)
+    plt.plot(x_obs, tx(fs), "o-", label="slip")
+    plt.plot(x_obs, tx(ff), ".-", label="force")
+    plt.xlabel("x", fontsize=10)
+    plt.ylabel(label, fontsize=10)
+    plt.xlim(xlimits)
+    if count == 0:
+        plt.legend()
 plt.show()
 
 # %%

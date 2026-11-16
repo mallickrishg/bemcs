@@ -26,324 +26,6 @@ except ImportError:  # numba is optional; only use_numba=True needs it
         return wrap
 
 
-def construct_linearoperator_slip_antiplane(els, BCtype, BCval, mu=1):
-    """
-    Construct the global linear operator and right-hand side vector for the
-    antiplane boundary-integral problem using quadratic slip basis functions.
-
-    Parameters
-    ----------
-    els : object
-        Mesh / element container providing geometry and connectivity required by
-        the bemcs helper routines. Must contain at least x_centers, y_centers
-        and per-element node arrays (e.g. x1) compatible with the bemcs helpers.
-    BCtype : array-like, shape (n_els,)
-        Boundary condition labels for each element/central node: 's' for slip
-        (use slip-basis operator) or 't' for traction (use traction kernel).
-    BCval : array-like, shape (n_els,) or (n_els, 1)
-        Values of the prescribed boundary condition at central nodes. Only the
-        central-node entries produce non-zero entries in the returned BC vector.
-    mu : float, optional
-        Shear modulus used when assembling kernels (default 1.0).
-
-    Returns
-    -------
-    matrix_system_c : ndarray, shape (N_c, Nunknowns)
-        Central-node linear operator block. N_c = n_els (one central equation per element;
-        callers drop the rows of tip elements, see `tip_elements`, since open nodes are
-        clamped by the rows in matrix_nodes),
-        Nunknowns = 3 * n_els (antiplane stride = 3 DOFs per element). Each row is either
-        a slip-basis row (if BCtype == 's') or a displacement/traction-kernel row (if BCtype == 't' or 'u').
-    matrix_nodes : ndarray, shape (N_o + N_i + N_t, Nunknowns)
-        Stacked smoothness operator for open nodes, overlapping nodes and triple
-        junctions. Row ordering matches the stacked BCnodes ordering below.
-    BC_c : ndarray, shape (N_c, 1)
-        Central-node prescribed BC values (only these may be non-zero).
-    BCnodes : ndarray, shape (Nequations, 1)
-        Full stacked BC vector [BC_c; BC_o; BC_i; BC_t] where BC_o, BC_i, BC_t are
-        homogeneous zero blocks for open, overlapping and triple-junction nodes.
-    """
-
-    stride = 3  # antiplane
-    n_els = len(els.x1)
-    geometry = "antiplane"
-    mesh = Mesh(els, "slip")
-
-    # continuity rows at open, overlapping and triple-junction nodes (RHS = 0)
-    matrix_nodes, _ = mesh.continuity_operator(geometry=geometry)
-    BC_c = np.asarray(BCval, dtype=float).reshape(-1, 1)  # the only non-zero entries
-    BCnodes = np.zeros((len(matrix_nodes), 1))
-
-    slip_mat, _ = slip_node_matrices(els, geometry=geometry)
-    U, S, _ = get_slip_kernels(
-        els.x_centers, els.y_centers, els, geometry=geometry, mu=mu
-    )
-    t_kernels = traction_kernels(S, els.x_normals, els.y_normals)[:, :, 0]
-    u_kernels = U[:, :, 0]
-
-    # Linear operators for the boundary conditions at the element centres
-    matrix_system_c = np.zeros((n_els, stride * n_els))
-    for i in range(n_els):
-        if BCtype[i] == "s":
-            matrix_system_c[i, :] = slip_mat[stride * i + 1, :]
-        elif BCtype[i] == "t":
-            matrix_system_c[i, :] = t_kernels[i, :]
-        elif BCtype[i] == "u":
-            matrix_system_c[i, :] = u_kernels[i, :]
-        else:
-            raise ValueError(f"boundary condition label {BCtype[i]!r} not recognized")
-
-    return matrix_system_c, matrix_nodes, BC_c, BCnodes
-
-
-def solveAntiplaneBEM(fileinput, connectivityfile=None, mu=1):
-    """
-    Solve a 2D antiplane BEM problem given a mesh input file.
-
-    Parameters
-    ----------
-    fileinput : str
-        Path to CSV mesh file containing columns [x1, z1, x2, z2, BC_type, value].
-    connectivityfile : str
-        Path to CSV file defining connectivity matrix.
-    mu : float, optional
-        Shear modulus (default=1).
-
-    Returns
-    -------
-    els : object
-        Full mesh element object.
-    els_s : object
-        Slip-element-only mesh object.
-    quadcoefs : ndarray
-        Quadratic coefficients (slip field).
-    forcecoefs : ndarray
-        Force coefficients (if any 'h' type elements exist, otherwise zeros).
-
-    Notes
-    -----
-    - The function reads the mesh and connectivity files, constructs the necessary
-        element objects, builds the BIE system matrix and BC vector, and solves
-        for the slip and force coefficients.
-    - The mesh file must contain columns: x1, z1, x2, z2, BC_type, value.
-    - The connectivity file must define the element connectivity for force elements.
-    - The function handles both slip ('s', 't') and heterogeneous ('h') boundary
-        conditions.
-    """
-
-    # --- Read mesh file ---
-    datain = pd.read_csv(fileinput)
-    x1 = datain["x1"].values
-    x2 = datain["x2"].values
-    y1 = datain["z1"].values
-    y2 = datain["z2"].values
-    BCtype = datain["BC_type"].values
-    BCval = datain["value"].values
-
-    if connectivityfile is not None:
-        connmatrix = pd.read_csv(connectivityfile, header=None).values
-    else:
-        print("No connectivity file provided; assuming homogenous medium.")
-
-    # --- Construct mesh objects ---
-    stride = 3
-    els = bemcs.initialize_els()
-    els.x1, els.y1, els.x2, els.y2 = x1, y1, x2, y2
-
-    # Identify slip elements ('s', 't') vs heterogeneous ('h')
-    bc_mask = BCtype != "h"
-    els_s = bemcs.initialize_els()
-    els_s.x1, els_s.y1 = els.x1[bc_mask], els.y1[bc_mask]
-    els_s.x2, els_s.y2 = els.x2[bc_mask], els.y2[bc_mask]
-
-    # Standardize geometry
-    bemcs.standardize_els_geometry(els, reorder=False)
-    bemcs.standardize_els_geometry(els_s, reorder=False)
-    # plot mesh
-    bemcs.plot_els_geometry(els)
-    # ---
-    # Define function evaluation points
-    # need to shift observation points by an infinitesimal amount to sample discontinuity either in u or du/dn
-    # IMPORTANT NOTE: for force elements, observation points are shifted in the element normal direction
-    # while for slip elements, observation points are shifted towards the 'interior' of the domain
-
-    dr = -1e-9
-    if np.any(BCtype == "h"):
-        xo = np.hstack(
-            (
-                els_s.x_centers,
-                els.x_centers[connmatrix[:, 1].astype(int)]
-                - dr * els.x_normals[connmatrix[:, 1].astype(int)],
-            )
-        ).flatten()
-        yo = np.hstack(
-            (
-                els_s.y_centers,
-                els.y_centers[connmatrix[:, 1].astype(int)]
-                - dr * els.y_normals[connmatrix[:, 1].astype(int)],
-            )
-        ).flatten()
-
-        # --- Construct kernels ---
-        conn = connmatrix.astype(int)
-        _, S_f, _ = get_force_kernels(
-            xo, yo, els, geometry="antiplane", mu=mu, basis="trapezoid", connectivity=conn
-        )
-        K_x, K_y = S_f[:, :, 0], S_f[:, :, 1]
-        nxvec = np.hstack(
-            (els_s.x_normals, els.x_normals[connmatrix[:, 1].astype(int)])
-        )
-        nyvec = np.hstack(
-            (els_s.y_normals, els.y_normals[connmatrix[:, 1].astype(int)])
-        )
-        Kforce_n = K_x * nxvec[:, None] + K_y * nyvec[:, None]
-
-        # Stress kernels for slip elements
-        _, S_s, _ = get_slip_kernels(xo, yo, els_s, geometry="antiplane", mu=mu)
-        K_x, K_y = S_s[:, :, 0], S_s[:, :, 1]
-        Kslip_n = K_x * nxvec[:, None] + K_y * nyvec[:, None]
-    else:
-        xo = els_s.x_centers
-        yo = els_s.y_centers
-        nxvec = els_s.x_normals
-        nyvec = els_s.y_normals
-
-    # Slip operator
-    matrix_slip_c, matrix_slip_nodes, BC_slip_c, BC_slip_nodes = (
-        construct_linearoperator_slip_antiplane(
-            els_s, BCtype[bc_mask], BCval[bc_mask], mu=mu
-        )
-    )
-
-    # --- Assemble and solve system ---
-    if np.any(BCtype == "h"):
-        # Full system with heterogeneous ('h') BC elements
-        N_equations = len(els_s.x1) + len(connmatrix[:, 0])
-        N_unknowns = stride * len(els_s.x1) + len(connmatrix[:, 0])
-        matrix_system = np.zeros((N_equations, N_unknowns))
-
-        # Populate for slip BCs
-        for i in range(len(els_s.x1)):
-            if BCtype[i] == "s":
-                matrix_system[i, 0 : stride * len(els_s.x1)] = matrix_slip_c[i, :]
-            elif BCtype[i] == "t":
-                matrix_system[i, :] = np.hstack((matrix_slip_c[i, :], Kforce_n[i, :]))
-            else:
-                raise ValueError("Unrecognized BC label for slip-elements")
-
-        # Bottom part for heterogeneous ('h') layers
-        n_bottom_rows = len(connmatrix[:, 0])
-        start_row = len(els_s.x1)
-        alpha = np.diag(BCval[connmatrix[:, 1].astype(int)])
-        matrix_system[start_row:, : stride * len(els_s.x1)] = (
-            alpha @ Kslip_n[len(els_s.x1) :, :]
-        )
-        matrix_system[start_row:, stride * len(els_s.x1) :] = (
-            np.eye(n_bottom_rows) + alpha @ Kforce_n[len(els_s.x1) :, :]
-        )
-
-        # Append node continuity constraints
-        matrix_system = np.vstack(
-            (
-                matrix_system,
-                np.hstack(
-                    (
-                        matrix_slip_nodes,
-                        np.zeros((matrix_slip_nodes.shape[0], len(connmatrix[:, 0]))),
-                    )
-                ),
-            )
-        )
-        BC_vector = np.vstack(
-            (BC_slip_c, np.zeros((len(connmatrix[:, 0]), 1)), BC_slip_nodes)
-        )
-
-        # tip slip elements (open end node) are clamped tapers: drop their BC rows
-        tips = tip_elements(els_s)
-        matrix_system = np.delete(matrix_system, tips, axis=0)
-        BC_vector = np.delete(BC_vector, tips, axis=0)
-
-        # Solve linear system
-        solution_vector = np.linalg.solve(matrix_system, BC_vector)
-        quadcoefs = solution_vector[: stride * len(els_s.x1)]
-        forcecoefs = solution_vector[stride * len(els_s.x1) :]
-
-    else:
-        # Only slip elements → simpler system
-        # tip elements (open end node) are clamped tapers: drop their BC rows
-        tips = tip_elements(els_s)
-        BC_vector = np.vstack((np.delete(BC_slip_c, tips, axis=0), BC_slip_nodes))
-        matrix_system = np.vstack((np.delete(matrix_slip_c, tips, axis=0), matrix_slip_nodes))
-        quadcoefs = np.linalg.solve(matrix_system, BC_vector)
-        forcecoefs = np.zeros((0, 0))  # empty placeholder
-
-    return els, els_s, quadcoefs, forcecoefs
-
-
-def plot_BEM_field(
-    toplot, els, xo, yo, xlimits, ylimits, maxval, n_levels=10, cmap="coolwarm"
-):
-    """
-    Plot BEM scalar field with element geometry and automatically computed contours.
-
-    Parameters
-    ----------
-    toplot : ndarray
-        Scalar field values at observation points (1D array of size nx_obs*ny_obs)
-    els : object
-        Mesh object with attributes x1, x2, y1, y2
-    xo, yo : ndarray
-        Observation point coordinates (1D arrays)
-    xlimits, ylimits : tuple
-        (xmin, xmax) and (ymin, ymax)
-    maxval : float
-        Maximum absolute value for color scaling
-    n_levels : int, optional
-        Number of contour levels (default 10)
-    cmap : str, optional
-        Colormap (default "coolwarm")
-    """
-
-    # Determine grid shape
-    nx_obs = len(np.unique(xo))
-    ny_obs = len(np.unique(yo))
-
-    X = xo.reshape(ny_obs, nx_obs)
-    Y = yo.reshape(ny_obs, nx_obs)
-    Z = toplot.reshape(ny_obs, nx_obs)
-
-    # color limits
-    vmin, vmax = -maxval, maxval
-
-    # contour levels
-    levels = np.linspace(vmin, vmax, n_levels)
-
-    # plot field using colors
-    plt.pcolor(X, Y, Z, cmap=cmap, vmin=vmin, vmax=vmax)
-
-    # overlay mesh elements
-    n_els = len(els.x1)
-    for i in range(n_els):
-        plt.plot(
-            [els.x1[i], els.x2[i]],
-            [els.y1[i], els.y2[i]],
-            "k.-",
-            linewidth=0.2,
-            markersize=1,
-        )
-
-    # colorbar
-    plt.colorbar()
-
-    # contour lines
-    plt.contour(X, Y, Z, colors="k", levels=levels, linewidths=0.5)
-
-    # limits and aspect
-    plt.xlim(xlimits)
-    plt.ylim(ylimits)
-    plt.gca().set_aspect("equal", adjustable="box")
-
-
 # Slip gradient functions
 # =============================================================================
 # Plane-strain element kernels: scalar formulas shared by numpy and numba drivers
@@ -1391,6 +1073,8 @@ _BASES = {
     "force": ("linear", "constant", "trapezoid"),
 }
 _PATCH_BASES = ("hat", "trapezoid")
+_BC_TYPES = ("s", "u", "t", "t_local", "h")
+_BC_FOR = {"slip": ("s", "u", "t", "t_local"), "force": ("h", "u", "t", "t_local")}
 _HAS_NUMBA_KERNEL = {
     ("antiplane", "slip"): True,
     ("antiplane", "force"): True,
@@ -1695,8 +1379,69 @@ def hat_coefficients(els, connectivity=None, *, geometry):
     return T[:, 0, :, 0] if geometry == "antiplane" else T
 
 
-def trapezoid_coefficients(els, connectivity, *, geometry):
-    """Transform from linear-force element DOFs to trapezoid patches (one per row of connectivity).
+def _chains(els):
+    """Ordered chains of connected elements: (list of element indices, closed?)."""
+    n_els = len(els.x_centers)
+    ends = [((float(els.x1[e]), float(els.y1[e])), (float(els.x2[e]), float(els.y2[e]))) for e in range(n_els)]
+    at_point = {}
+    for e, (a, b) in enumerate(ends):
+        at_point.setdefault(a, []).append(e)
+        at_point.setdefault(b, []).append(e)
+    for pt, es in at_point.items():
+        if len(es) > 2:
+            raise ValueError(
+                f"{len(es)} force elements meet at ({pt[0]:.6g}, {pt[1]:.6g}); trapezoids need chains "
+                "(force elements never form junctions)"
+            )
+    tips = set(tip_elements(els).tolist())
+    seen, chains = set(), []
+    for start in sorted(tips) + list(range(n_els)):
+        if start in seen:
+            continue
+        chain, prev, e = [], None, start
+        while e is not None and e not in seen:
+            chain.append(e)
+            seen.add(e)
+            nxt = [o for pt in ends[e] for o in at_point[pt] if o != e and o != prev and o not in seen]
+            prev, e = e, (nxt[0] if nxt else None)
+        closed = start not in tips and len(chain) > 2
+        chains.append((chain, closed))
+    return chains
+
+
+def trapezoid_connectivity(els):
+    """Default trapezoid patches: along each chain of force elements, patches
+    (c[i-1], c[i], c[i+1]) centred on every other element (i = 1, 3, 5, ...),
+    so consecutive patches share one element: [0, 1, 2], [2, 3, 4], ...
+    Closed loops wrap around.
+
+    Every-element (fully overlapping) trapezoids are avoided: their alternating
+    combination has zero force density at every element centre, so centre
+    collocation cannot control it (a checkerboard near-null mode).
+    """
+    rows = []
+    for chain, closed in _chains(els):
+        n = len(chain)
+        last = n if closed else n - 1
+        for i in range(1, last, 2):
+            rows.append((chain[i - 1], chain[i], chain[(i + 1) % n]))
+    return np.array(rows, dtype=int).reshape(-1, 3)
+
+
+def patch_elements(els, basis, connectivity=None):
+    """Element at the centre of each patch: the middle element of each connectivity
+    row; by default every non-tip element for hats (one-ring) and every other
+    element along each chain for trapezoids (`trapezoid_connectivity`)."""
+    if connectivity is not None:
+        return _check_connectivity(connectivity, len(els.x_centers))[:, 1]
+    if basis == "hat":
+        return hat_elements(els)
+    return trapezoid_connectivity(els)[:, 1]
+
+
+def trapezoid_coefficients(els, connectivity=None, *, geometry):
+    """Transform from linear-force element DOFs to trapezoid patches (one per row of
+    connectivity; connectivity=None: `trapezoid_connectivity`, every other element).
 
     Each trapezoid has unit force (t or n in plane strain, local frame of the middle
     element) at both nodes of its middle element, zero force at the two open ends
@@ -1706,6 +1451,8 @@ def trapezoid_coefficients(els, connectivity, *, geometry):
     """
     if geometry not in _GEOMETRIES:
         raise ValueError(f"geometry must be one of {_GEOMETRIES}, got {geometry!r}")
+    if connectivity is None:
+        connectivity = trapezoid_connectivity(els)
     conn = _check_connectivity(connectivity, len(els.x_centers))
     n_els, n_p = len(els.x_centers), len(conn)
     pe = 1 if geometry == "antiplane" else 2
@@ -1764,9 +1511,11 @@ def basis_transform(els, *, kind, basis, geometry, connectivity=None):
 
 
 def _apply_transform(U, S, T, geometry):
-    if geometry == "antiplane":
-        return np.einsum("osc,sb->obc", U, T), np.einsum("osc,sb->obc", S, T)
-    return np.einsum("oscl,slbm->obcm", U, T), np.einsum("oscl,slbm->obcm", S, T)
+    """Contract the source axis (and direction) of U, S with T (via BLAS)."""
+    if geometry == "antiplane":  # osc,sb->obc
+        return tuple(np.tensordot(K, T, axes=([1], [0])).transpose(0, 2, 1) for K in (U, S))
+    # oscl,slbm->obcm
+    return tuple(np.tensordot(K, T, axes=([1, 3], [0, 1])).transpose(0, 2, 1, 3) for K in (U, S))
 
 
 # ----------------------------------------------------------------------------
@@ -2033,11 +1782,8 @@ def _source_kernels(kind, x_obs, y_obs, els, geometry, mu, nu, basis, connectivi
     if basis not in _BASES[kind]:
         raise ValueError(f"basis {basis!r} is not available for {kind}; choose from {_BASES[kind]}")
     n_els = len(els.x_centers)
-    if basis in _PATCH_BASES:
-        if connectivity is None and basis != "hat":
-            raise ValueError(f"basis {basis!r} needs connectivity (n_patches, 3)")
-        if connectivity is not None:
-            connectivity = _check_connectivity(connectivity, n_els)
+    if basis in _PATCH_BASES and connectivity is not None:  # None: one-ring patches
+        connectivity = _check_connectivity(connectivity, n_els)
     elif connectivity is not None:
         raise ValueError(f"connectivity is only used with patch bases, not {basis!r}")
     if use_numba and not _HAS_NUMBA_KERNEL[(geometry, kind)]:
@@ -2058,12 +1804,10 @@ def _source_kernels(kind, x_obs, y_obs, els, geometry, mu, nu, basis, connectivi
         index, node = np.repeat(np.arange(n_els), n_nodes), np.tile(np.arange(n_nodes), n_els)
     elif basis == "constant":
         index, node = np.arange(n_els), np.full(n_els, -1)
-    elif basis == "hat":
-        index = hat_elements(els, connectivity)
+    else:  # patch bases: connectivity row, or the element of a one-ring patch
+        index = patch_elements(els, basis, connectivity)
         index = np.arange(len(index)) if connectivity is not None else index
         node = np.full(len(index), -1)
-    else:
-        index, node = np.arange(len(connectivity)), np.full(len(connectivity), -1)
 
     disp_c, stress_c, dirs = _COMPONENTS[geometry]
     info = KernelInfo(
@@ -2170,21 +1914,48 @@ class Mesh:
     ----------
     els : addict.Dict
         Standardized element geometry.
-    labels : "slip" | "force" | sequence of "s"/"f"
-        Source type of every element.
+    labels : "slip" | "force" | sequence of "s"/"f", optional
+        Source type of every element. If omitted, it follows bc_type: elements
+        with bc_type "h" are force elements, all others slip elements.
     basis : dict, optional
-        {"slip": ..., "force": ...}. Defaults: "quadratic" slip, "linear" force
-        (the general element-DOF formulation).
+        {"slip": ..., "force": ...}. Defaults: "quadratic" slip, "linear" force.
+        For `solve`: slip "quadratic" (general form with continuity rows) or
+        "hat" (one-ring hats); force "trapezoid".
     connectivity : dict, optional
         {"slip": (n, 3) int, "force": (m, 3) int} with *global* element
-        indices; required for the patch bases "hat" and "trapezoid".
-    bc_type, bc_value, alpha : optional
-        Per-element boundary-condition data (used by the solvers; T1/T2).
+        indices. Optional for "hat" and "trapezoid"; defaults from the mesh
+        topology: one-ring hats on every non-tip slip element, and trapezoids
+        centred on every other element along each chain of force elements.
+    bc_type : sequence of str, or (n_els, 2) for per-component types (plane strain)
+        Boundary condition of each element, used by `solve`:
+        "s": slip (local t, n) at the element centre (slip elements);
+        "u": displacement (global x, y; antiplane z);
+        "t": traction (global x, y; antiplane sigma.n);
+        "t_local": traction (local shear, normal);
+        "h": material interface (force elements; needs mu_minus != mu_plus).
+    bc_value : (n_els,) or (n_els, 2) array
+        Prescribed values (ignored for "h").
+    mu_minus, mu_plus : (n_els,) arrays
+        Shear modulus on the -n and +n side of each element (n = element unit
+        normal). Required by `solve`; equal values for homogeneous media.
     """
 
-    def __init__(self, els, labels, basis=None, connectivity=None, bc_type=None,
-                 bc_value=None, alpha=None):
+    def __init__(self, els, labels=None, basis=None, connectivity=None, bc_type=None,
+                 bc_value=None, mu_minus=None, mu_plus=None):
         n_els = len(els.x_centers)
+        if bc_type is not None:
+            bc_type = np.asarray(bc_type).astype(str)
+            if bc_type.ndim == 1:
+                bc_type = np.stack((bc_type, bc_type), axis=1)
+            if bc_type.shape != (n_els, 2):
+                raise ValueError(f"bc_type must have shape ({n_els},) or ({n_els}, 2), got {bc_type.shape}")
+            bad = sorted(set(bc_type.ravel().tolist()) - set(_BC_TYPES))
+            if bad:
+                raise ValueError(f"unknown bc_type {bad}; choose from {_BC_TYPES}")
+        if labels is None:
+            if bc_type is None:
+                raise TypeError("Mesh needs labels or bc_type")
+            labels = np.where(bc_type[:, 0] == "h", "f", "s")
         if isinstance(labels, str):
             if labels not in _KINDS:
                 raise ValueError(f"labels must be 'slip', 'force' or per-element 's'/'f', got {labels!r}")
@@ -2213,9 +1984,7 @@ class Mesh:
             if b not in _BASES[k]:
                 raise ValueError(f"basis {b!r} is not available for {k}; choose from {_BASES[k]}")
             c = connectivity.get(k)
-            if b in _PATCH_BASES and not (b == "hat" and c is None):  # hat: one-ring by default
-                if c is None:
-                    raise ValueError(f"{k} basis {b!r} needs connectivity[{k!r}]")
+            if b in _PATCH_BASES and c is not None:  # None: one-ring patches
                 c = _check_connectivity(c, n_els)
                 if not (labels[c] == k[0]).all():
                     raise ValueError(f"{k} connectivity refers to elements not labelled {k[0]!r}")
@@ -2225,7 +1994,52 @@ class Mesh:
         for k in set(basis) | set(connectivity):
             if k not in self.kinds:
                 raise ValueError(f"basis/connectivity given for {k!r} but no element is labelled {k[0]!r}")
-        self.bc_type, self.bc_value, self.alpha = bc_type, bc_value, alpha
+        if bc_type is not None:
+            for e in range(n_els):
+                kind = "slip" if labels[e] == "s" else "force"
+                allowed = _BC_FOR[kind]
+                if not set(bc_type[e]) <= set(allowed):
+                    raise ValueError(f"element {e} ({kind}): bc_type {bc_type[e].tolist()} not in {allowed}")
+                if "h" in bc_type[e] and not (bc_type[e] == "h").all():
+                    raise ValueError(f"element {e}: 'h' applies to both components")
+        if bc_value is not None:
+            bc_value = np.asarray(bc_value, dtype=float)
+            if bc_value.ndim == 1:
+                bc_value = np.stack((bc_value, np.zeros(n_els)), axis=1)
+            if bc_value.shape != (n_els, 2):
+                raise ValueError(f"bc_value must have shape ({n_els},) or ({n_els}, 2), got {bc_value.shape}")
+        mus = []
+        for name, m in (("mu_minus", mu_minus), ("mu_plus", mu_plus)):
+            if m is not None:
+                m = np.broadcast_to(np.asarray(m, dtype=float), (n_els,)).copy()
+                if not (m > 0).all():
+                    raise ValueError(f"{name} must be positive")
+            mus.append(m)
+        self.bc_type, self.bc_value = bc_type, bc_value
+        self.mu_minus, self.mu_plus = mus
+
+    @classmethod
+    def from_csv(cls, path, *, basis=None, connectivity=None, reorder=False, length_scale=1.0):
+        """Mesh from a CSV file with columns x1, z1, x2, z2, BC_type, value
+        [, value2], mu_minus, mu_plus (one row per element). Coordinates are
+        divided by length_scale (e.g. 1e3 for metres -> km)."""
+        import pandas as pd
+
+        d = pd.read_csv(path)
+        missing = {"x1", "z1", "x2", "z2", "BC_type", "value", "mu_minus", "mu_plus"} - set(d.columns)
+        if missing:
+            raise ValueError(f"{path}: missing columns {sorted(missing)}")
+        els = _core.initialize_els()
+        els.x1, els.y1 = d["x1"].to_numpy(float) / length_scale, d["z1"].to_numpy(float) / length_scale
+        els.x2, els.y2 = d["x2"].to_numpy(float) / length_scale, d["z2"].to_numpy(float) / length_scale
+        _core.standardize_els_geometry(els, reorder=reorder)
+        value = d["value"].to_numpy(float)
+        if "value2" in d.columns:
+            value = np.stack((value, d["value2"].to_numpy(float)), axis=1)
+        return cls(
+            els, basis=basis, connectivity=connectivity, bc_type=d["BC_type"].to_numpy(str),
+            bc_value=value, mu_minus=d["mu_minus"].to_numpy(float), mu_plus=d["mu_plus"].to_numpy(float),
+        )
 
     @property
     def n_els(self):
@@ -2256,8 +2070,9 @@ class Mesh:
         """Number of source coefficients of one type (axis 1 of the kernels)."""
         b = self.basis[kind]
         n = len(self.elements(kind))
-        if b == "hat" and self.connectivity[kind] is None:  # one-ring: one per non-tip element
-            return len(self.elements(kind)) - len(self.tip_elements(kind))
+        if b in _PATCH_BASES and self.connectivity[kind] is None:  # default patches
+            sub, _, _ = self.subset(kind)
+            return len(patch_elements(sub, b))
         if b in _PATCH_BASES:
             return len(self.connectivity[kind])
         return n if b == "constant" else n * _NODES[kind]
@@ -2451,108 +2266,268 @@ def plane_strain_compliance(sxx, syy, sxy, mu, nu):
     return exx, eyy, exy
 
 
-def solve_planestrain_heterogeneous(
-    els,
-    connect_slip,
-    BCtype_slip,
-    BCval_slip,
-    connect_force,
-    alpha_force,
-    mu=1.0,
-    nu=0.25,
-    dr=-1e-9,
-    verbose=False,
-):
-    """Solve a plane-strain problem with hat slip patches and trapezoid force patches
-    on heterogeneous-material interfaces (equivalent body forces, tasks.md 2.2).
+# =============================================================================
+# Unified solver: mesh + boundary conditions -> coefficients
+# =============================================================================
+
+
+def interface_kappa(mu_minus, mu_plus, side):
+    """Exact interface coefficient kappa for a sharp jump in shear modulus.
+
+    With uniform nu, the true traction t = mu C.n is continuous across the
+    interface, so the equivalent line force in the reference medium (mu0) is
+    F = mu0 t (1/mu_minus - 1/mu_plus). Sampling the reference traction
+    (S_ref . n) on side `side` (-1: the -n side with modulus mu_minus, +1: the
+    +n side) gives F = kappa (S_ref . n)_side with
+    kappa = mu_side (1/mu_minus - 1/mu_plus), i.e. 1 - mu_minus/mu_plus on the
+    -n side and mu_plus/mu_minus - 1 on the +n side.
+    """
+    mu_side = np.where(np.asarray(side) < 0, mu_minus, mu_plus)
+    return mu_side * (1.0 / np.asarray(mu_minus) - 1.0 / np.asarray(mu_plus))
+
+
+def _patch_operator(sub, kind, basis, conn, geometry):
+    """Flattened basis transform T (element-basis dofs x patch/basis dofs)."""
+    T = basis_transform(sub, kind=kind, basis=basis, geometry=geometry, connectivity=conn)
+    return T if geometry == "antiplane" else T.reshape(T.shape[0] * 2, -1)
+
+
+def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False):
+    """Linear system A x = b for a mesh with boundary conditions (see `solve`).
+
+    Returns (A, b, rows) with rows a dict of per-row arrays: element, component,
+    type ("s", "u", "t", "t_local", "h" or "continuity").
+    """
+    _check_numba(use_numba)
+    _check_material(geometry, mu, nu)
+    if mesh.bc_type is None:
+        raise ValueError("mesh has no bc_type")
+    if mesh.mu_minus is None or mesh.mu_plus is None:
+        raise ValueError(
+            "solve needs the shear modulus on both sides of every element: "
+            "Mesh(..., mu_minus=..., mu_plus=...) (equal values for a homogeneous medium)"
+        )
+    if side not in (-1, 1):
+        raise ValueError("side must be -1 (sample the -n side) or +1")
+    els = mesh.els
+    pe = 1 if geometry == "antiplane" else 2
+    n_cols = mesh.n_columns(geometry=geometry)
+    if "slip" in mesh.kinds and mesh.basis["slip"] not in ("quadratic", "hat", "constant"):
+        raise ValueError(f"slip basis {mesh.basis['slip']!r} is not supported by solve")
+    if "force" in mesh.kinds and mesh.basis["force"] != "trapezoid":
+        raise ValueError("solve uses trapezoids for force sources: Mesh(basis={'force': 'trapezoid'})")
+
+    # collocation elements and the operators giving slip / force density at their centres
+    colloc, centre_ops = [], {}
+    for k in mesh.kinds:
+        sub, idx, conn = mesh.subset(k)
+        b = mesh.basis[k]
+        if b == "quadratic":
+            local = np.setdiff1d(np.arange(len(idx)), tip_elements(sub))  # tips: clamped tapers
+        elif b == "constant":
+            local = np.arange(len(idx))
+        else:
+            local = patch_elements(sub, b, conn)
+        T = _patch_operator(sub, k, b, conn, geometry)
+        if k == "slip":
+            M, _ = slip_node_matrices(sub, geometry=geometry, reference="local")
+            node_rows = lambda le: M[pe * (3 * le + 1) : pe * (3 * le + 2)]  # noqa: E731  centre node
+        else:
+            M = force_node_matrix(sub, geometry=geometry, reference="local")
+            node_rows = lambda le: 0.5 * (M[pe * 2 * le : pe * (2 * le + 1)] + M[pe * (2 * le + 1) : pe * (2 * le + 2)])  # noqa: E731
+        cols = mesh.columns(k, geometry=geometry)
+        for le in local:
+            op = np.zeros((pe, n_cols))
+            op[:, cols] = node_rows(le) @ T  # local-frame slip / force density at the centre
+            centre_ops[int(idx[le])] = op
+            colloc.append(int(idx[le]))
+    colloc = np.array(colloc, dtype=int)
+
+    # kernels at the collocation points, offset to the sampled side of each element
+    L = 2 * np.asarray(els.half_lengths)[colloc]
+    nx, ny = np.asarray(els.x_normals)[colloc], np.asarray(els.y_normals)[colloc]
+    sx, sy = np.asarray(els.x_shears)[colloc], np.asarray(els.y_shears)[colloc]
+    xo = np.asarray(els.x_centers)[colloc] + side * dr * L * nx
+    yo = np.asarray(els.y_centers)[colloc] + side * dr * L * ny
+    U, S, _ = get_kernels(xo, yo, mesh, geometry=geometry, mu=mu, nu=nu, use_numba=use_numba)
+    Tg = traction_kernels(S, nx, ny)  # reference traction, global
+    Tl = traction_kernels(S, nx, ny, sx, sy) if pe == 2 else Tg
+    mu_side = np.where(side < 0, mesh.mu_minus, mesh.mu_plus)[colloc]
+
+    def flat(K, i, c):
+        return K[i, :, c].ravel() if pe == 1 else K[i, :, c, :].ravel()
+
+    A, b, rows = [], [], {"element": [], "component": [], "type": []}
+    for i, e in enumerate(colloc):
+        for c in range(pe):
+            t = mesh.bc_type[e, c]
+            if t == "s":
+                row = centre_ops[e][c]
+            elif t == "u":
+                row = flat(U, i, c)
+            elif t == "t":
+                row = mu_side[i] / mu * flat(Tg, i, c)
+            elif t == "t_local":
+                row = mu_side[i] / mu * flat(Tl, i, c)
+            else:  # "h": force density = interface line force from the traction
+                kappa = interface_kappa(mesh.mu_minus[e], mesh.mu_plus[e], side)
+                if pe == 1:  # antiplane force kernel convention: mu0 lap(u) = f delta
+                    row = centre_ops[e][0] + kappa * flat(Tg, i, 0)
+                else:  # plane-strain Kelvin convention: force acts along f
+                    R = els.rot_mats[e]
+                    t_local_c = R[0, c] * flat(Tg, i, 0) + R[1, c] * flat(Tg, i, 1)  # (R^T T)_c
+                    row = centre_ops[e][c] - kappa * t_local_c
+            A.append(row)
+            b.append(0.0 if t == "h" else mesh.bc_value[e, c] if mesh.bc_value is not None else 0.0)
+            rows["element"].append(e)
+            rows["component"].append(c)
+            rows["type"].append(t)
+    if "slip" in mesh.kinds and mesh.basis["slip"] == "quadratic":
+        Ac, info = mesh.continuity_operator(geometry=geometry)
+        A.extend(Ac)
+        b.extend(np.zeros(len(Ac)))
+        rows["element"].extend(info["element"])
+        rows["component"].extend([-1] * len(Ac))
+        rows["type"].extend(["continuity"] * len(Ac))
+    return np.array(A), np.array(b), {k: np.array(v) for k, v in rows.items()}
+
+
+def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False, return_system=False):
+    """Solve a BEM problem defined by a Mesh with boundary conditions.
+
+    The formulation follows the mesh bases:
+    - slip "quadratic": the general form, element coefficients (3 per element and
+      direction) with continuity rows (open nodes clamped) and one BC row per
+      direction on every non-tip element;
+    - slip "hat": the reduced form, one-ring hats (or the given connectivity), one
+      BC row per direction at the centre of each hat element;
+    - force "trapezoid" (the only force basis): one row per direction at the centre
+      of each trapezoid's middle element.
+
+    Rows are exact: slip ("s") and force density ("h") at a collocation centre come
+    from the basis transforms; "u" and "t" are sampled just off the element on side
+    `side` (default the -n side) at distance dr times the element length; tractions
+    are true tractions, (mu_side / mu) S.n, using the modulus on that side; "h" rows
+    impose the exact sharp-interface condition (`interface_kappa`).
 
     Parameters
     ----------
-    els : element structure (slip and interface elements together)
-    connect_slip : (N_s, 3) int array
-        Hat patches (global element indices); the collocation point of each is
-        the centre of its middle element.
-    BCtype_slip : sequence of "s" | "t", length N_s
-        "s": prescribed slip (local shear, normal) at the collocation point;
-        "t": prescribed projected strain psi = eps . n (global x, y).
-    BCval_slip : (N_s, 2) array
-        The prescribed values.
-    connect_force : (N_f, 3) int array
-        Trapezoid patches on the interface elements.
-    alpha_force : (N_f,) array
-        alpha = (d mu / d n) / mu at each force collocation point.
-    mu, nu : float
-        Reference shear modulus and (uniform) Poisson's ratio.
-    dr : float
-        Offset of the collocation points along the element normal (side of
-        evaluation; tasks.md issue 2).
-    verbose : bool
-        Print the condition number of the system.
+    mesh : Mesh
+        With bc_type, bc_value, mu_minus and mu_plus.
+    geometry : {"antiplane", "planestrain"}
+    mu : float
+        Reference shear modulus of the kernels.
+    nu : float
+        Uniform Poisson's ratio (plane strain).
 
     Returns
     -------
-    coefs_slip : (2 N_s,) array, interleaved [t0, n0, t1, n1, ...] per hat
-    coefs_force : (2 N_f,) array, interleaved per trapezoid
+    x : ndarray
+        Coefficients in the kernel order: slip then force; within each, source
+        coefficient (element/patch, then basis node) then direction (t, n in plane
+        strain). Fields: `evaluate_fields(mesh, x, ...)`; slip/force along the
+        elements: `mesh.values_on_elements(x, kind, geometry=...)`.
+    (A, b, rows) : if return_system=True, also the linear system.
 
-    Rows (notes, section 2.2): "s" rows: slip at the collocation point;
-    "t" rows: Psi^(s) s + Psi^(f) f = psi_given; "h" rows:
-    alpha Psi~^(s) s + (I + alpha Psi~^(f)) f = 0, with
-    Psi~ = Psi + nu / (1 - 2 nu) n eps_kk.
+    The system is solved by least squares, so rigid-body null spaces (e.g. a
+    domain with traction conditions only) give the minimum-norm solution.
     """
-    geometry = "planestrain"
-    connect_slip = np.zeros((0, 3), dtype=int) if connect_slip is None else np.asarray(connect_slip, dtype=int)
-    connect_force = np.zeros((0, 3), dtype=int) if connect_force is None else np.asarray(connect_force, dtype=int)
-    N_s, N_f = len(connect_slip), len(connect_force)
-    if N_s + N_f == 0:
-        return np.zeros(0), np.zeros(0)
-    colloc = np.concatenate((connect_slip[:, 1], connect_force[:, 1])).astype(int)
-    nx, ny = els.x_normals[colloc], els.y_normals[colloc]
-    x_obs = els.x_centers[colloc] + dr * nx
-    y_obs = els.y_centers[colloc] + dr * ny
-    kw = dict(geometry=geometry, mu=mu, nu=nu)
+    A, b, rows = assemble(mesh, geometry=geometry, mu=mu, nu=nu, side=side, dr=dr, use_numba=use_numba)
+    x = np.linalg.lstsq(A, b, rcond=None)[0]
+    return (x, (A, b, rows)) if return_system else x
 
-    blocks = []  # projected strain Psi and augmented Psi~ per source type: (N_obs, 2 comp, 2 N_src)
-    for n_p, kind, basis, conn in ((N_s, "slip", "hat", connect_slip), (N_f, "force", "trapezoid", connect_force)):
-        if n_p == 0:
-            blocks.append((np.zeros((len(colloc), 2, 0)), np.zeros((len(colloc), 2, 0))))
-            continue
-        fn = get_slip_kernels if kind == "slip" else get_force_kernels
-        _, S, _ = fn(x_obs, y_obs, els, basis=basis, connectivity=conn, **kw)
-        exx, eyy, exy = plane_strain_compliance(S[:, :, 0, :], S[:, :, 1, :], S[:, :, 2, :], mu, nu)
-        psi_x = exx * nx[:, None, None] + exy * ny[:, None, None]
-        psi_y = exy * nx[:, None, None] + eyy * ny[:, None, None]
-        trace = (exx + eyy) * nu / (1 - 2 * nu)
-        n_obs = len(colloc)
-        Psi = np.stack((psi_x, psi_y), axis=1).reshape(n_obs, 2, -1)
-        Psi_t = np.stack((psi_x + nx[:, None, None] * trace, psi_y + ny[:, None, None] * trace), axis=1).reshape(n_obs, 2, -1)
-        blocks.append((Psi, Psi_t))
-    (Psi_s, Psit_s), (Psi_f, Psit_f) = blocks
 
-    A = np.zeros((2 * (N_s + N_f), 2 * (N_s + N_f)))
-    b = np.zeros(2 * (N_s + N_f))
-    if N_s:
-        # slip at the centre of each collocation element (local frame), exactly from the hat basis
-        T = basis_transform(els, kind="slip", basis="hat", geometry=geometry, connectivity=connect_slip)
-        T = T.reshape(T.shape[0] * 2, -1)  # (2 * 3 n_els, 2 N_s)
-        m_local, _ = slip_node_matrices(els, geometry=geometry, reference="local")
-    for i in range(N_s):
-        rows = slice(2 * i, 2 * i + 2)
-        if BCtype_slip[i] == "s":
-            j = connect_slip[i, 1]
-            A[rows, : 2 * N_s] = m_local[2 * (3 * j + 1) : 2 * (3 * j + 1) + 2] @ T
-        elif BCtype_slip[i] == "t":
-            A[rows, : 2 * N_s] = Psi_s[i]
-            A[rows, 2 * N_s :] = Psi_f[i]
-        else:
-            raise ValueError(f"Unknown BCtype_slip: {BCtype_slip[i]!r}")
-        b[rows] = BCval_slip[i]
-    for i in range(N_f):
-        rows = slice(2 * (N_s + i), 2 * (N_s + i) + 2)
-        alpha = alpha_force[i]
-        A[rows, : 2 * N_s] = alpha * Psit_s[N_s + i]
-        A[rows, 2 * N_s :] = alpha * Psit_f[N_s + i]
-        A[rows, 2 * N_s + 2 * i : 2 * N_s + 2 * i + 2] += np.eye(2)
-    if verbose:
-        print("Heterogeneous BEM linear operator condition number:", np.linalg.cond(A))
-    sol = np.linalg.solve(A, b)
-    return sol[: 2 * N_s], sol[2 * N_s :]
+# =============================================================================
+# Fields and plots tied to a mesh
+# =============================================================================
+
+
+def evaluate_fields(mesh, x, x_obs, y_obs, *, geometry, mu, nu=None, mu_field=None, use_numba=False):
+    """Displacement and stress components at observation points from a solution x.
+
+    Returns a dict: antiplane "u", "sxz", "syz"; plane strain "ux", "uy", "sxx",
+    "syy", "sxy" (arrays shaped like x_obs). Stresses are those of the reference
+    medium (mu) unless mu_field(x, y) gives the true shear modulus, in which case
+    they are scaled to the true stress (uniform nu).
+    """
+    shape = np.shape(x_obs)
+    xo, yo = _obs(x_obs, y_obs)
+    U, S, _ = get_kernels(xo, yo, mesh, geometry=geometry, mu=mu, nu=nu, use_numba=use_numba)
+    x = np.asarray(x, dtype=float).ravel()
+    names_u, names_s, _ = _COMPONENTS[geometry]
+    names_s = tuple(n if geometry == "planestrain" else n for n in names_s)
+    scale = 1.0 if mu_field is None else np.asarray(mu_field(xo, yo), dtype=float) / mu
+    out = {}
+    for k, name in enumerate(names_u):
+        out[name] = (kernel_matrix(U[:, :, k : k + 1]) @ x).reshape(shape)
+    for k, name in enumerate(names_s):
+        out[name] = (scale * (kernel_matrix(S[:, :, k : k + 1]) @ x)).reshape(shape)
+    return out
+
+
+def plot_mesh(mesh, ax=None, *, show_normals=True, show_moduli=True, offset=0.2, cmap="viridis"):
+    """Plot the mesh: slip elements (black), force elements (red), normals, and the
+    shear modulus on the -n and +n side of each element as coloured dots placed
+    `offset` element lengths off each side (force elements, plus any element where
+    the two sides differ)."""
+    import matplotlib.pyplot as plt
+
+    els = mesh.els
+    ax = ax or plt.gca()
+    for e in range(mesh.n_els):
+        colour = "k" if mesh.labels[e] == "s" else "tab:red"
+        ax.plot([els.x1[e], els.x2[e]], [els.y1[e], els.y2[e]], "-", color=colour, lw=1.5)
+    if show_normals:
+        L = 2 * np.asarray(els.half_lengths)
+        ax.quiver(els.x_centers, els.y_centers, els.x_normals * L * 0.4, els.y_normals * L * 0.4,
+                  angles="xy", scale_units="xy", scale=1, width=0.003, color="0.4")
+    sc = None
+    if show_moduli and mesh.mu_minus is not None and mesh.mu_plus is not None:
+        sel = (mesh.labels == "f") | (mesh.mu_minus != mesh.mu_plus)
+        if sel.any():
+            L = 2 * np.asarray(els.half_lengths)[sel]
+            xc, yc = np.asarray(els.x_centers)[sel], np.asarray(els.y_centers)[sel]
+            nx, ny = np.asarray(els.x_normals)[sel], np.asarray(els.y_normals)[sel]
+            vals = np.r_[mesh.mu_minus[sel], mesh.mu_plus[sel]]
+            sc = ax.scatter(np.r_[xc - offset * L * nx, xc + offset * L * nx],
+                            np.r_[yc - offset * L * ny, yc + offset * L * ny],
+                            c=vals, cmap=cmap, s=12, zorder=3)
+            plt.colorbar(sc, ax=ax, label=r"$\mu$ ($-n$ and $+n$ side)")
+    ax.set_aspect("equal", adjustable="datalim")
+    return ax
+
+
+def plot_fields(mesh, x, *, geometry, mu, nu=None, xlim, ylim, n=(100, 100), components=None,
+                derived=None, mu_field=None, mask=None, cmap="RdBu_r", levels=21, use_numba=False):
+    """Evaluate and plot the fields of a solution x on a regular grid.
+
+    Components default to all of the geometry (antiplane: uz, sxz, syz; plane
+    strain: ux, uy, sxx, syy, sxy). derived = {name: f(fields)} adds quantities
+    computed from them (e.g. pressure), which can then be listed in components.
+    mask(X, Y) -> bool hides grid points (e.g. outside the domain). Returns
+    (fig, axes, fields) with fields on the grid, including "x" and "y".
+    """
+    import matplotlib.pyplot as plt
+
+    X, Y = np.meshgrid(np.linspace(*xlim, n[0]), np.linspace(*ylim, n[1]))
+    fields = evaluate_fields(mesh, x, X, Y, geometry=geometry, mu=mu, nu=nu, mu_field=mu_field, use_numba=use_numba)
+    for name, fn in (derived or {}).items():
+        fields[name] = fn(fields)
+    names = components or list(fields)
+    hide = np.zeros(X.shape, bool) if mask is None else ~np.asarray(mask(X, Y), bool)
+    fig, axes = plt.subplots(len(names), 1, figsize=(7, 3.2 * len(names)), squeeze=False)
+    els = mesh.els
+    for ax, name in zip(axes[:, 0], names):
+        F = np.where(hide, np.nan, fields[name])
+        vmax = np.nanmax(np.abs(F)) or 1.0
+        im = ax.contourf(X, Y, F, levels=np.linspace(-vmax, vmax, levels), cmap=cmap, extend="both")
+        for e in range(mesh.n_els):
+            ax.plot([els.x1[e], els.x2[e]], [els.y1[e], els.y2[e]], "k-", lw=0.8)
+        fig.colorbar(im, ax=ax, label=name)
+        ax.set_title(name)
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+        ax.set_aspect("equal", adjustable="box")
+    fields.update(x=X, y=Y)
+    fig.tight_layout()
+    return fig, axes, fields

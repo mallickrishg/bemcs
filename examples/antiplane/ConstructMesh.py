@@ -33,8 +33,10 @@ x2 = []
 y1 = []
 y2 = []
 
-# calculation the dμ/dx and dμ/dy terms as α,β
-beta = np.zeros(nlayers * (npts_layer - 1))
+# shear modulus below (-n side) and above (+n side) each interface element: elements run
+# left to right, so their unit normal points up (+n = above)
+mu_below = np.zeros(nlayers * (npts_layer - 1))
+mu_above = np.zeros(nlayers * (npts_layer - 1))
 y1perturb = np.sin(2 * np.pi * 4 * xt1 / Lscale) * 0.005
 y2perturb = np.sin(2 * np.pi * 4 * xt2 / Lscale) * 0.005
 for i in range(nlayers):
@@ -43,31 +45,21 @@ for i in range(nlayers):
     x2 = np.hstack([x2, xvals[1:]])
     y1 = np.hstack([y1, np.ones(npts_layer - 1) * zlayer[i] + y1perturb])
     y2 = np.hstack([y2, np.ones(npts_layer - 1) * zlayer[i] + y2perturb])
-    beta[i * (npts_layer - 1) : (npts_layer - 1) * (i + 1)] = (
-        -(mulayer[i + 1] - mulayer[i]) / mulayer[i + 1]
-    )
-print(np.unique(beta))
-# along with x1,y1 and x2,y2 we also need to provide a connectivity matrix tying three elements together
-# this connectivity matrix is for two elements at a time - i want to connect [0,1,2] then [2,3,4] and so on
-# connectivity construction
-connectivity = []
-for i in range(nlayers):
-    start_idx = i * (npts_layer - 1) + len(xf1) + len(xt1)
-    end_idx = start_idx + (npts_layer - 1)
-    local_idx = np.arange(start_idx, end_idx)
-    for j in range(0, len(local_idx) - 2, 2):
-        connectivity.append(local_idx[j : j + 3])
-    # sliding window of 3 consecutive indices with stride 1
-    # for j in range(len(local_idx) - 2):
-    #     connectivity.append(local_idx[j : j + 3])
-connectivity = np.array(connectivity)
+    rows = slice(i * (npts_layer - 1), (i + 1) * (npts_layer - 1))
+    mu_below[rows] = mulayer[i]  # layer i lies below interface i
+    mu_above[rows] = mulayer[i + 1]
+print("interfaces (mu below, mu above):", sorted(set(zip(mu_below, mu_above))))
+# No connectivity file is needed: bemcs.solve builds one trapezoidal force patch per non-tip
+# interface element from the mesh topology.
 
-print(connectivity)
-# export connectivity in a csv file
-pd.DataFrame(connectivity).to_csv(
-    "HeterogeneousDomainMeshConnectivity.csv", index=False, header=False
-)
-print("connectivity file created: HeterogeneousDomainMeshConnectivity.csv")
+
+def mu_at_depth(z):
+    """Shear modulus of the layered structure at depth z (z < 0)."""
+    mu_z = np.full(np.shape(z), mulayer[-1], dtype=float)
+    for i in range(nlayers):
+        mu_z = np.where(z < zlayer[nlayers - 1 - i], mulayer[nlayers - 1 - i], mu_z)
+    return mu_z
+
 
 
 # plot elastic structure
@@ -93,10 +85,10 @@ plt.plot(
 plt.xlabel("$\\mu$")
 plt.ylabel("depth")
 plt.show()
-# %% Store all x,y pairs and BC types and values in a csv file
-# xf,yf have a BC type 's' with a value of 1.0 (unit slip)
-# xt,yt have a BC type 't' with a value of 0.0 (traction free)
-# x,y pairs have a BC type of 'h' with a value of beta (dμ/dy term)
+# %% Store all x,y pairs, BC types and values, and the shear modulus on both sides in a csv file
+# xf,yf have a BC type 's' with the slip value
+# xt,yt have a BC type 't' with a value of 0.0 (traction free); their -n side is the ground
+# x,y pairs have a BC type of 'h' (material interface): mu_minus below, mu_plus above
 
 BCtype = np.hstack(
     [
@@ -105,7 +97,12 @@ BCtype = np.hstack(
         np.full_like(x1, "h", dtype=object),
     ]
 )
-BCval = np.hstack([slip_values, np.ones_like(xt1) * 0.0, beta])
+BCval = np.hstack([slip_values, np.ones_like(xt1) * 0.0, np.zeros_like(x1)])
+# fault: modulus of the layer at each element's centre (same on both sides);
+# free surface: the top layer below it (air above: only the -n side is sampled)
+mu_fault = mu_at_depth(0.5 * (yf1 + yf2))
+mu_minus = np.hstack([mu_fault, np.full_like(xt1, mulayer[-1]), mu_below])
+mu_plus = np.hstack([mu_fault, np.full_like(xt1, mulayer[-1]), mu_above])
 
 # export in the format xs,ys,xe,y2e,BCtype,BCval
 # where(xs,ys) is start point and (xe,ye) is end point of each segment
@@ -117,6 +114,8 @@ dataout = pd.DataFrame(
         "z2": np.hstack([yf2, yt2, y2]),
         "BC_type": BCtype,
         "value": BCval,
+        "mu_minus": mu_minus,
+        "mu_plus": mu_plus,
     }
 )
 

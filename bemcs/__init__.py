@@ -21,7 +21,6 @@ from .bemcs import (
     initialize_els,
     standardize_els_geometry,
     plot_els_geometry,
-    plot_displacements_stresses_els,
     get_strainenergy_from_stress,
     label_nodes,
     inpolygon,
@@ -47,7 +46,12 @@ from .bemAssembly import (
     get_force_kernels,
     traction_kernels,
     kernel_matrix,
-    plot_BEM_field,
+    solve,
+    assemble,
+    interface_kappa,
+    evaluate_fields,
+    plot_fields,
+    plot_mesh,
 )
 
 try:
@@ -64,5 +68,10 @@ __all__ = [
     "get_force_kernels",
     "traction_kernels",
     "kernel_matrix",
-    "plot_BEM_field",
+    "solve",
+    "assemble",
+    "interface_kappa",
+    "evaluate_fields",
+    "plot_fields",
+    "plot_mesh",
 ]

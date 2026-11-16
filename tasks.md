@@ -110,12 +110,35 @@ Square system of `2(N_s + N_f)` equations.
    Verified numerically in the `bemcs` env: inverting the Hooke matrix at `nu = 0.25` gives
    `[[0.75, -0.25], [-0.25, 0.75]] / (2mu)`, not `[[0.8, -0.2], ...]`.
    Location: `compute_strains` in `examples/utilfunctions.py`.
-2. **Observation-point side for `'h'` rows.** Plane strain uses `x_c + dr*n` with `dr = -1e-9`
+2. ~~**Observation-point side for `'h'` rows**~~ **SOLVED and tested (2026-11-16, exact sharp-interface condition).**
+   - **Derivation.** With uniform nu, sigma = mu C with C = 2 eps + 2nu/(1-2nu) tr(eps) I. The true traction
+     t = mu C.n is continuous across the interface, so the equivalent line force in the reference medium mu0 is
+     F = mu0 t (1/mu_minus - 1/mu_plus).
+   - **Sampling.** Sampling the reference traction (S_ref.n) on side s gives F = kappa (S_ref.n)_s, with
+     kappa = mu_s (1/mu_minus - 1/mu_plus): `bemcs.interface_kappa`. That is 1 - mu-/mu+ on the -n side and
+     mu+/mu- - 1 on the +n side; both sides give the same solution (`test_solution_does_not_depend_on_the_sampled_side`).
+   - **Kernel sign conventions.** Plane-strain Kelvin acts along f, so the row is f_local - kappa R^T T = 0. The
+     antiplane kernel has u = +f ln r/(2 pi mu), so the row is f + kappa T = 0.
+   - **The force density is taken at the collocation centre from the trapezoid basis, not as the identity.**
+     Overlapping trapezoids add 0.5 a_{j+-1} there.
+   - **Inputs.** Every element now carries `mu_minus` / `mu_plus` (Mesh, CSV columns), and `solve` requires them.
+   - **Validation:**
+     - antiplane fault near a bimaterial interface vs the exact image solution, h^2 convergence (1.8e-3, 3.5e-4,
+       9.0e-5), identical from both sides;
+     - plane-strain true-traction continuity at collocation points, 1e-6 (the reference traction jumps by 150%),
+       converging between them.
+   - **The previous rows were wrong:**
+     - antiplane `beta = -(mu_{i+1} - mu_i)/mu_{i+1}` in the example had the wrong sign and size for its +y normals
+       (+0.667 where the exact value is -0.4);
+     - plane strain lacked the factor 2 mu0 and had the wrong sign;
+     - both used the identity for the force density.
+
+   Original: (issue 2) Plane strain uses `x_c + dr*n` with `dr = -1e-9`
    for slip and force elements alike. Antiplane uses `x_c - dr*n` for force elements. Stress from a
    line force is discontinuous across the interface, so the side matters. Decide
    what `psi` should be sampled on (probably each side's value, or an average, related to how `alpha` is defined) and
    document it.
-3. **Definition of `alpha` at a sharp interface.** `alpha = mu_,n/mu` is a delta function at a jump.
+3. ~~**Definition of `alpha` at a sharp interface**~~ **SOLVED with issue 2** (exact kappa from (mu_minus, mu_plus)). Original: `alpha = mu_,n/mu` is a delta function at a jump.
    The code takes `alpha_force` as an input. Write down how it relates to `(mu1, mu2)` (and which
    side of `psi` multiplies it) and add a helper to compute it.
 4. ~~**`'s'` rows differ from the notes**~~ **SOLVED and tested:** the `'s'` rows are now exact. They are slip at the
@@ -369,19 +392,42 @@ Square system of `2(N_s + N_f)` equations.
 
 ### T1. Correctness of plane-strain heterogeneous solver
 - [x] Fix issue 4.1 (compliance) and re-run `testing_HeterogeneousMaterialsPlanestrain.py` (runs; same solution, see issue 1).
-- [ ] Resolve 4.2 and 4.3 (side of evaluation, definition and helper for `alpha`).
+- [x] Resolve 4.2 and 4.3: exact kappa from (mu_minus, mu_plus) and the sampled side, `bemcs.interface_kappa` (see issue 2).
 - [x] Fix 4.5 so the test script runs end to end.
-- [ ] Validate: ~~(a) `alpha = 0` must reproduce the homogeneous hat-slip solution~~ (done:
-  `tests/test_heterogeneous.py` also checks that the `'h'` and `'t'` rows hold for the solved fields); (b) the antiplane
-  limit; (c) a circular/layered inclusion with a known analytic solution, or an independent FEM result;
-  (d) symmetry `mu1 <-> mu2` with sign-flipped `alpha`; (e) traction continuity across the interface.
-- [x] Add a `'t'`-row test (prescribed projected strain): `test_t_rows_prescribe_the_projected_strain`.
+- [ ] Validate (`tests/test_solve.py`):
+  - [x] (a) no contrast gives no interface force;
+  - [ ] (b) the antiplane limit;
+  - [x] (c) layered inclusion with an analytic solution: antiplane bimaterial image solution (plane strain: still
+    to do, e.g. a Dundurs bimaterial solution or FEM);
+  - [ ] (d) symmetry `mu1 <-> mu2`;
+  - [x] (e) plane-strain traction continuity across the interface.
+- [x] `'t'` rows now prescribe the true traction (mu_side / mu0) S.n; prescribed projected strain is no longer a BC type.
 - [x] Verify the trapezoidal-force kernels in isolation (issue 4.6; see the issue for the tests).
 
 ### T2. Package integration
 - [x] Move `solve_planestrain_heterogeneous` into `bemcs/bemAssembly.py` (mirroring `solveAntiplaneBEM`). It uses the new
   kernel API, has exact `'s'` rows, and prints the condition number only when `verbose=True`.
-- [ ] Build the mesh/connectivity interface (CSV: `x1,z1,x2,z2,BC_type,value`, `'h'` rows carry `alpha` or `(mu1, mu2)`).
+- [x] Mesh/connectivity interface: `Mesh.from_csv` reads `x1, z1, x2, z2, BC_type, value[, value2], mu_minus, mu_plus`
+  (`length_scale=`). Patches default from the topology:
+  - one-ring hats for slip;
+  - trapezoids centred on every other element along each force chain, as in the original design.
+
+  Every-element trapezoids have an alternating near-null mode that centre collocation cannot see. It blew up to +-49
+  where a fault crosses an interface; the default layout removes it, and the condition number drops from 1.6e5 to 2.7e3.
+- [x] Unified solver `bemcs.solve(mesh, geometry=, mu=, nu=)` (and `bemcs.assemble`), 2026-11-16:
+  - **Formulation from the mesh basis:** general (quadratic slip + continuity rows) or reduced (one-ring hats);
+    trapezoids for force.
+  - **BC types:** `s, u, t, t_local, h`, per element or per component.
+  - **Exact rows** throughout; least squares; returns the coefficients in kernel order.
+  - **Replaces** `solveAntiplaneBEM`, `construct_linearoperator_slip_antiplane`, `solve_planestrain_heterogeneous`
+    and the solvers in `examples/planestrain/utilfunctions.py` (file deleted).
+  - **Plotting:** `bemcs.evaluate_fields`, `bemcs.plot_fields` (geometry-aware components, `derived=`, `mask=`, true
+    stresses with `mu_field=`) and `bemcs.plot_mesh` (normals, mu_minus / mu_plus dots on each side). These replace
+    `plot_BEM_field` and `plot_displacements_stresses_els`.
+  - **Examples:** all use these (the split box keeps its custom friction assembly). Homogeneous examples reproduce
+    their previous solutions to 1e-9 (slip with u BCs: 6e-7, from the sampling offset).
+  - **Accuracy note:** with the default trapezoids the interface condition is exact at collocation points and first
+    order in h between them (force constant on every other element).
 - [ ] Support multiple patches, and patches that share nodes (junctions between slip and interface elements).
 - [x] One-ring hats (section 7.4), 2026-11-16:
   - **API:** `basis="hat"` *without* connectivity builds one hat per non-tip element from the mesh topology
@@ -402,7 +448,7 @@ Square system of `2(N_s + N_f)` equations.
   check that 1-in/2-out and 2-in/1-out still pass.
 
 ### T3. Tests and docs
-- [ ] Extend `tests/` with the validation cases from T1.
+- [ ] Extend `tests/` with the remaining T1 validation cases ((b), (d), and a plane-strain analytic case).
 - [ ] Document heterogeneous elasticity (sections 2.1 and 2.2) in the README or wiki, plus a plane-strain tutorial.
 - [x] Tidy up: `environment.yml` gains `mpmath` (the tests evaluate 50-digit references with it), `pkg_resources`
   is replaced, and library debug prints are removed.

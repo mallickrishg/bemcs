@@ -105,6 +105,10 @@ labels = els_labels(els, H, L)
 # ## Mesh: quadratic slip on every element (general, element-DOF formulation)
 # Open nodes, overlapping interior nodes and triple junctions are identified automatically by
 # the continuity operator. Unknowns are interleaved [t0, n0, t1, n1, ...] per node.
+#
+# The interior fault obeys static friction (t_s - f t_n = 0, no normal slip), a linear combination
+# that `bemcs.solve` does not offer as a BC type, so this example assembles its system from the
+# building blocks (kernels, traction kernels, slip node matrices, continuity operator).
 
 # %%
 mesh = bemcs.Mesh(els, "slip")
@@ -246,25 +250,17 @@ syy_f = S[:, :, 1, :].reshape(n_els, -1) @ c
 # # Plot displacement and stress components in the medium
 
 # %%
-# Observation points
+# Displacement and stress fields on a grid (plane strain: ux, uy, sxx, syy, sxy)
 n_obs = 50
 width = 2.001
-x_obs = np.linspace(-width, width, n_obs)
-y_obs = np.linspace(-width, width, n_obs)
-x_obs, y_obs = np.meshgrid(x_obs, y_obs)
-x_obs = x_obs.flatten()
-y_obs = y_obs.flatten()
-
-# Displacement and stress kernels at the observation points
-U_obs, S_obs, _ = bemcs.get_kernels(x_obs, y_obs, mesh, geometry=geometry, mu=mu, nu=nu)
-
-# Compute displacement and stresses (we will plot it later)
-ux, uy = (U_obs[:, :, k, :].reshape(len(x_obs), -1) @ c for k in range(2))
-sxx, syy, sxy = (S_obs[:, :, k, :].reshape(len(x_obs), -1) @ c for k in range(3))
-
-bemcs.plot_displacements_stresses_els(
-    els, n_obs, ux, uy, sxx, syy, sxy, x_obs, y_obs, n_skip_plot=9
+fig, axes, fields = bemcs.plot_fields(
+    mesh, c, geometry=geometry, mu=mu, nu=nu,
+    xlim=(-width, width), ylim=(-width, width), n=(n_obs, n_obs),
 )
+plt.show()
+x_obs, y_obs = fields["x"].ravel(), fields["y"].ravel()
+ux, uy = fields["ux"].ravel(), fields["uy"].ravel()
+sxx, syy, sxy = fields["sxx"].ravel(), fields["syy"].ravel(), fields["sxy"].ravel()
 
 # %% [markdown]
 # ## Plot slip on the wavy fault
