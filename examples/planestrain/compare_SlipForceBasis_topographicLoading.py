@@ -1,13 +1,18 @@
+# %% [markdown]
+# # Topographic loading: slip basis vs force basis
+# The same plane-strain boundary-value problem solved twice: once with quadratic slip elements on the
+# boundary, and once with trapezoidal force elements, to compare the two source bases.
+#
+# The domain is a closed polygon: a smooth (logistic) topographic step on top, and vertical sides and a
+# flat bottom below it. A Gaussian normal traction acts on the topography; the sides and bottom are fixed
+# (u = 0). The last section checks both bases against an exact (Kelvin point-force) solution for several
+# Poisson's ratios.
+
 # %% Imports
 import numpy as np
 import matplotlib.pyplot as plt
+
 import bemcs
-import warnings
-
-# Suppress all warnings
-warnings.filterwarnings("ignore")
-
-
 
 
 def logistic(x, L=1, k=1, x0=0):
@@ -15,119 +20,61 @@ def logistic(x, L=1, k=1, x0=0):
     return L / (1 + np.exp(-k * (x - x0)))
 
 
-# %% Define mesh and boundary conditions
-# construct mesh
-Lscale = 30
-N_top = 50  # always choose odd npts so that 0 can be included symmetrically
-hmax = 1
-# xvals = np.linspace(-Lscale, Lscale, npts)
-# build symmetric log-spaced x array from –Lscale → 0 → +Lscale
-epsmin = 5e-3 * Lscale
-h_fixed = 2.0  # uniform spacing for left/right/bottom
-L_y = -5.0  # <-- USER-DEFINED bottom value
+# %% Geometry: one closed polygon, traversed left side -> top -> right side -> bottom
+Lscale = 30  # half-width of the domain
+L_y = -5.0  # depth of the bottom
+hmax = 1  # height of the topographic step
+N_top = 50  # log-spaced points on each half of the topography (refined towards x = 0)
+h_fixed = 1.0  # element length on the sides and bottom
 
-# ------------------------------------------------------------
-# 1. Top boundary (logistic spacing)
-# ------------------------------------------------------------
-half = np.logspace(np.log10(epsmin), np.log10(Lscale), N_top)
+half = np.logspace(np.log10(5e-3 * Lscale), np.log10(Lscale), N_top)
 x_top = np.concatenate([-half[::-1], [0.0], half])
+x_top[[0, -1]] = -Lscale, Lscale  # exact corners, so the polygon closes
 y_top = logistic(x_top, L=hmax, k=2, x0=0)
-N_top_pts = len(x_top)
 
-# ------------------------------------------------------------
-# 2. Left boundary (fixed spacing)
-# bottom → top
-# ------------------------------------------------------------
-y_left_vals = np.arange(L_y, y_top[0] - h_fixed, h_fixed)
-x_left_vals = np.full_like(y_left_vals, x_top[0])
+y_left = np.arange(L_y, y_top[0], h_fixed)  # bottom -> top
+y_right = np.arange(y_top[-1], L_y, -h_fixed)[1:]  # top -> bottom
+x_bottom = np.arange(Lscale, -Lscale - h_fixed / 2, -h_fixed)  # right -> left, ends at the start
 
-# ------------------------------------------------------------
-# 3. Right boundary (fixed spacing)
-# top → bottom
-# ------------------------------------------------------------
-y_right_vals = np.arange(y_top[-1], L_y, -h_fixed)
-x_right_vals = np.full_like(y_right_vals, x_top[-1])
+xvals = np.concatenate([np.full_like(y_left, -Lscale), x_top, np.full_like(y_right, Lscale), x_bottom])
+yvals = np.concatenate([y_left, y_top, y_right, np.full_like(x_bottom, L_y)])
+on_top = np.concatenate([np.zeros(len(y_left)), np.ones(len(x_top) - 1), np.zeros(len(y_right) + len(x_bottom))]) > 0
 
-# ------------------------------------------------------------
-# 4. Bottom boundary (fixed spacing)
-# right → left
-# ------------------------------------------------------------
-x_bottom_vals = np.arange(Lscale, -Lscale - h_fixed, -h_fixed)
-y_bottom_vals = np.full_like(x_bottom_vals, L_y)
-
-# ------------------------------------------------------------
-# 5. Concatenate boundaries in reversed circulation:
-# left → top → right → bottom
-# ------------------------------------------------------------
-xvals = np.concatenate([x_left_vals, x_top, x_right_vals[1:], x_bottom_vals[0:]])
-yvals = np.concatenate([y_left_vals, y_top, y_right_vals[1:], y_bottom_vals[0:]])
-
-x1 = xvals[0:-1]
-x2 = xvals[1:]
-y1 = yvals[0:-1]
-y2 = yvals[1:]
-
-# construct mesh
 els = bemcs.initialize_els()
-
-els.x1 = x1
-els.y1 = y1
-els.x2 = x2
-els.y2 = y2
-
+els.x1, els.y1 = xvals[:-1], yvals[:-1]
+els.x2, els.y2 = xvals[1:], yvals[1:]
 bemcs.standardize_els_geometry(els, reorder=False)
-bemcs.plot_els_geometry(els)
+n_els = len(els.x1)
 
-# ------------------------------------------------------------
-# 8. Assign BC types
-# top = "t" (traction, global), others = "u" (displacement, global)
-# ------------------------------------------------------------
-BCtype = np.empty_like(x1, dtype=object)
-N_left = len(x_left_vals)
-N_top_elems = N_top_pts - 1
-# left boundary
-BCtype[:N_left] = "u"
-# top boundary
-BCtype[N_left : N_left + N_top_elems] = "t"
-# right + bottom boundaries
-BCtype[N_left + N_top_elems :] = "u"
-
-# apply a localized Gaussian load at the top boundary
-BCval = np.exp(-(els.x_centers**2) / (2 * np.pi * 0.5**2))
-# BCval = 1.0 * (els.y_centers - 0.0)
-BCval[BCtype == "u"] = 0.0
-
-# provide connections to compute trapeoidal basis functions
-# connectivity matrix: each row is a group of 3 consecutive elements
-connect_matrix = np.vstack(
-    [np.array([i, i + 1, i + 2]) for i in range(0, len(els.x1) - 2, 2)]
-)
-
-# Define material properties
-# Elastic parameters and lithostatic effects
-mu = 1  # normalized units (mostly does not matter for topographic problem)
-nu = 0.25  # Poisson's ratio
-rho = 1  # rho*g/mu
-ydatum = 1  # provide a datum for verticals
-
-# %% Solve the topographic load problem twice: slip basis and force basis
+# %% Boundary conditions and material
 geometry = "planestrain"
-bc_value = np.c_[BCval * els.x_normals, BCval * els.y_normals]  # traction = load * n on top
-common = dict(bc_type=BCtype, bc_value=bc_value, mu_minus=mu, mu_plus=mu)
+mu = 1.0  # reference shear modulus (stresses do not depend on it; displacements scale as 1/mu)
+nu = 0.25  # Poisson's ratio
 
-# (1) quadratic slip on every element (general form with continuity rows)
-mesh_slip = bemcs.Mesh(els, labels="slip", **common)
-quadratic_coefs = bemcs.solve(mesh_slip, geometry=geometry, mu=mu, nu=nu)
+# Topography: traction in the local (shear, normal) frame, a Gaussian normal traction (positive =
+# along the outward normal) with no shear. Sides and bottom: zero displacement (global x, y).
+load = np.exp(-(els.x_centers**2) / (2 * np.pi * 0.5**2))
+bc_type = np.where(on_top, "t_local", "u")
+bc_value = np.where(on_top[:, None], np.c_[np.zeros(n_els), load], 0.0)
 
-# (2) trapezoidal force patches; BCs at the centres of their middle elements
-mesh_force = bemcs.Mesh(
-    els, labels="force", basis={"force": "trapezoid"}, connectivity={"force": connect_matrix}, **common
-)
-fcoefs = bemcs.solve(mesh_force, geometry=geometry, mu=mu, nu=nu)
+meshes = {
+    # (1) quadratic slip on every element (general form with continuity rows)
+    "slip": bemcs.Mesh(els, labels="slip", bc_type=bc_type, bc_value=bc_value, mu_minus=mu, mu_plus=mu),
+    # (2) trapezoidal force patches (default connectivity: centred on every other element around the
+    #     closed loop); BCs at the centres of their middle elements
+    "force": bemcs.Mesh(els, labels="force", basis={"force": "trapezoid"}, bc_type=bc_type,
+                        bc_value=bc_value, mu_minus=mu, mu_plus=mu),
+}
+fig, ax = plt.subplots(figsize=(12, 3))
+bemcs.plot_mesh(meshes["slip"], ax=ax, show_moduli=False, offset=0.5)
+ax.set_title("mesh, outward normals")
+plt.show()
 
-# %% Fields: deviatoric stress and pressure, then stress components (slip vs force)
-n_obs = 100
-xlimits = [-1.5 * np.abs(L_y), 1.5 * np.abs(L_y)]
+# %% Solve with both bases
+coefs = {name: bemcs.solve(m, geometry=geometry, mu=mu, nu=nu) for name, m in meshes.items()}
+
+# %% Fields on a grid: deviatoric stress, pressure and stress components
+xlimits = [-1.5 * abs(L_y), 1.5 * abs(L_y)]
 ylimits = [0.99 * L_y, 1.2 * hmax]
 
 
@@ -140,67 +87,89 @@ derived = {
     "deviatoric stress": lambda f: np.sqrt(0.25 * (f["sxx"] - f["syy"]) ** 2 + f["sxy"] ** 2),
     "pressure": lambda f: 0.5 * (f["sxx"] + f["syy"]),
 }
-plot_kw = dict(geometry=geometry, mu=mu, nu=nu, xlim=xlimits, ylim=ylimits, n=(n_obs, n_obs),
-               mask=inside, derived=derived)
-results = {}
-for name, mesh_k, coefs in (("slip", mesh_slip, quadratic_coefs), ("force", mesh_force, fcoefs)):
-    fig, axes, f = bemcs.plot_fields(
-        mesh_k, coefs, components=["deviatoric stress", "pressure", "sxx", "syy", "sxy"], **plot_kw
+grid = {}
+for name, m in meshes.items():
+    fig, axes, grid[name] = bemcs.plot_fields(
+        m, coefs[name], geometry=geometry, mu=mu, nu=nu, xlim=xlimits, ylim=ylimits, n=(100, 100),
+        mask=inside, derived=derived, components=["deviatoric stress", "pressure", "sxx", "syy", "sxy"],
     )
     fig.suptitle(f"{name} basis")
     plt.show()
-    results[name] = f
-pressure, pressure_f = results["slip"]["pressure"], results["force"]["pressure"]
-deviatoric_stress = results["slip"]["deviatoric stress"]
-deviatoric_stress_f = results["force"]["deviatoric stress"]
-ux, uy = results["slip"]["ux"], results["slip"]["uy"]
 
-# %% evaluate stress fields at the surface
-npts_per_elt = 3
-dr = -1e-9  # small offset below the surface
-top = BCtype == "t"
-pts = [np.linspace(a, b, npts_per_elt + 2)[1:-1] for a, b in zip(els.x1[top], els.x2[top])]
-x_obs = np.concatenate(pts) + np.repeat(els.x_normals[top], npts_per_elt) * dr
-pts = [np.linspace(a, b, npts_per_elt + 2)[1:-1] for a, b in zip(els.y1[top], els.y2[top])]
-y_obs = np.concatenate(pts) + np.repeat(els.y_normals[top], npts_per_elt) * dr
-kw = dict(geometry=geometry, mu=mu, nu=nu)
-fs = bemcs.evaluate_fields(mesh_slip, quadratic_coefs, x_obs, y_obs, **kw)
-ff = bemcs.evaluate_fields(mesh_force, fcoefs, x_obs, y_obs, **kw)
-sxx, syy, sxy = fs["sxx"], fs["syy"], fs["sxy"]
-sxx_f, syy_f, sxy_f = ff["sxx"], ff["syy"], ff["sxy"]
+# %% Stresses and tractions just below the topography
+dr = -1e-9  # offset along the outward normal, i.e. just inside the domain
+n_per_el = 3
+t = (np.arange(n_per_el) + 0.5) / n_per_el  # fractions along each element
+x_surf = (els.x1[on_top, None] + t * (els.x2 - els.x1)[on_top, None] + dr * els.x_normals[on_top, None]).ravel()
+y_surf = (els.y1[on_top, None] + t * (els.y2 - els.y1)[on_top, None] + dr * els.y_normals[on_top, None]).ravel()
+nx, ny = np.repeat(els.x_normals[on_top], n_per_el), np.repeat(els.y_normals[on_top], n_per_el)
+sx, sy = np.repeat(els.x_shears[on_top], n_per_el), np.repeat(els.y_shears[on_top], n_per_el)
+surf = {
+    name: bemcs.evaluate_fields(m, coefs[name], x_surf, y_surf, geometry=geometry, mu=mu, nu=nu)
+    for name, m in meshes.items()
+}
+for f in surf.values():
+    tx, ty = f["sxx"] * nx + f["sxy"] * ny, f["sxy"] * nx + f["syy"] * ny
+    f["shear traction"], f["normal traction"] = tx * sx + ty * sy, tx * nx + ty * ny
 
-plt.figure(figsize=(15, 5))
-for count, name in enumerate(("sxx", "syy", "sxy")):
-    plt.subplot(1, 3, count + 1)
-    plt.plot(x_obs, fs[name], ".", label="slip")
-    plt.plot(x_obs, ff[name], "-", label="force")
-    plt.xlabel("x", fontsize=10)
-    plt.ylabel(name, fontsize=10)
-    plt.xlim(xlimits)
-    plt.ylim([-1, 1])
-    if count == 0:
-        plt.legend()
+fig, axes = plt.subplots(1, 5, figsize=(20, 4))
+for ax, name in zip(axes, ("sxx", "syy", "sxy", "shear traction", "normal traction")):
+    ax.plot(x_surf, surf["slip"][name], ".", label="slip")
+    ax.plot(x_surf, surf["force"][name], "-", label="force")
+    if name == "normal traction":
+        ax.plot(els.x_centers[on_top], load[on_top], "k--", lw=1, label="imposed")
+    ax.set_xlabel("x")
+    ax.set_title(name)
+    ax.set_xlim(xlimits)
+axes[0].legend()
 plt.show()
 
-# tractions at the centres of the surface elements
-x_obs = (els.x_centers + els.x_normals * dr)[top]
-y_obs = (els.y_centers + els.y_normals * dr)[top]
-nx, ny = els.x_normals[top], els.y_normals[top]
-fs = bemcs.evaluate_fields(mesh_slip, quadratic_coefs, x_obs, y_obs, **kw)
-ff = bemcs.evaluate_fields(mesh_force, fcoefs, x_obs, y_obs, **kw)
-plt.figure(figsize=(10, 2))
-for count, (label, tx) in enumerate((
-    (r"$\tau_x$", lambda f: f["sxx"] * nx + f["sxy"] * ny),
-    (r"$\tau_y$", lambda f: f["sxy"] * nx + f["syy"] * ny),
-)):
-    plt.subplot(1, 2, count + 1)
-    plt.plot(x_obs, tx(fs), "o-", label="slip")
-    plt.plot(x_obs, tx(ff), ".-", label="force")
-    plt.xlabel("x", fontsize=10)
-    plt.ylabel(label, fontsize=10)
-    plt.xlim(xlimits)
-    if count == 0:
-        plt.legend()
+# %% Effect of Poisson's ratio on the surface displacement
+nus = [0.0, 0.1, 0.25, 0.4, 0.49]
+fig, axes = plt.subplots(1, 2, figsize=(12, 4), sharey=True)
+for ax, (name, m) in zip(axes, meshes.items()):
+    for nu_k in nus:
+        c = bemcs.solve(m, geometry=geometry, mu=mu, nu=nu_k)
+        f = bemcs.evaluate_fields(m, c, x_surf, y_surf, geometry=geometry, mu=mu, nu=nu_k)
+        ax.plot(x_surf, f["uy"], label=f"nu = {nu_k}")
+    ax.set_xlim(xlimits)
+    ax.set_xlabel("x")
+    ax.set_title(f"{name} basis: surface uy")
+axes[0].set_ylabel("uy")
+axes[0].legend()
 plt.show()
 
-# %%
+# %% Check against an exact solution for several Poisson's ratios
+# Impose on the same boundary the tractions (top) and displacements (sides, bottom) of a Kelvin point
+# force placed outside the domain; inside, the BEM solution must reproduce the Kelvin field.
+X, Y = np.meshgrid(np.linspace(-6, 6, 25), np.linspace(-4, 0, 9))
+keep = inside(X, Y)
+X, Y = X[keep], Y[keep]
+sources = {"above": (1.0, 3.0, 0.3, -1.0), "below": (0.0, -9.0, 1.0, 0.5)}  # x0, y0, fx, fy
+
+
+def kelvin(x, y, x0, y0, fx, fy, nu_k):
+    ux, uy = bemcs.kelvin_point_source_disp(x, y, x0, y0, fx, fy, mu, nu_k)
+    sxx, syy, sxy = bemcs.kelvin_point_source_stress(x, y, x0, y0, fx, fy, mu, nu_k)
+    return {k: np.ravel(v) for k, v in zip(("ux", "uy", "sxx", "syy", "sxy"), (ux, uy, sxx, syy, sxy))}
+
+
+print("relative max error inside the domain (displacement, stress)")
+for src_name, src in sources.items():
+    for nu_k in nus:
+        kb = kelvin(els.x_centers, els.y_centers, *src, nu_k)
+        tx = kb["sxx"] * els.x_normals + kb["sxy"] * els.y_normals
+        ty = kb["sxy"] * els.x_normals + kb["syy"] * els.y_normals
+        exact_bc = np.where(on_top[:, None], np.c_[tx, ty], np.c_[kb["ux"], kb["uy"]])
+        ke = kelvin(X, Y, *src, nu_k)
+        line = f"  source {src_name}, nu = {nu_k:.2f}:"
+        for name, m in meshes.items():
+            mk = bemcs.Mesh(els, labels=name, basis=m.basis, bc_type=np.where(on_top, "t", "u"),
+                            bc_value=exact_bc, mu_minus=mu, mu_plus=mu)
+            f = bemcs.evaluate_fields(mk, bemcs.solve(mk, geometry=geometry, mu=mu, nu=nu_k), X, Y,
+                                      geometry=geometry, mu=mu, nu=nu_k)
+            err_u = np.hypot(f["ux"] - ke["ux"], f["uy"] - ke["uy"]).max() / np.hypot(ke["ux"], ke["uy"]).max()
+            err_s = max(np.abs(f[k] - ke[k]).max() for k in ("sxx", "syy", "sxy"))
+            err_s /= max(np.abs(ke[k]).max() for k in ("sxx", "syy", "sxy"))
+            line += f"  {name}: {err_u:.1e}, {err_s:.1e}"
+        print(line)
