@@ -360,15 +360,19 @@ def laplacian_pointforce_disp(x, y, xs, ys, f=1, mu=1):
     """
     Calculate the displacement due to a point force.
 
-    Parameters:
+    Parameters
+    ----------
     x, y : float or numpy array
         Coordinates where the displacement is to be calculated.
     xs, ys : float
         Coordinates of the source point force.
     f : float
-        applied force
+        Applied force.
+    mu : float
+        Shear modulus.
 
-    Returns:
+    Returns
+    -------
     u : float or numpy array
         Displacement at the given coordinates.
     """
@@ -381,15 +385,17 @@ def laplacian_pointforce_sx(x, y, xs, ys, f=1):
     """
     Calculate the stress component sx due to a point force.
 
-    Parameters:
+    Parameters
+    ----------
     x, y : float or numpy array
         Coordinates where the stress is to be calculated.
     xs, ys : float
         Coordinates of the source point force.
     f : float
-        applied force
+        Applied force.
 
-    Returns:
+    Returns
+    -------
     sx : float or numpy array
         Stress component sx at the given coordinates.
     """
@@ -402,15 +408,17 @@ def laplacian_pointforce_sy(x, y, xs, ys, f=1):
     """
     Calculate the stress component sy due to a point force.
 
-    Parameters:
+    Parameters
+    ----------
     x, y : float or numpy array
         Coordinates where the stress is to be calculated.
     xs, ys : float
         Coordinates of the source point force.
     f : float
-        applied force
+        Applied force.
 
-    Returns:
+    Returns
+    -------
     sy : float or numpy array
         Stress component sy at the given coordinates.
     """

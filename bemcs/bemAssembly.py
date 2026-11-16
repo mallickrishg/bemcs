@@ -2006,7 +2006,7 @@ def get_slip_kernels(
     node (L = element length).
 
     Points on an element. Stresses (and, for slip, displacements) jump across
-    an element. For an observation point on an element (local |y| within
+    an element. For an observation point on an element (local ``|y|`` within
     rounding, <= 1e-12 of the element scale) the plane-strain kernels return the
     average of the two sides. To evaluate one side, offset the point along the
     element normal explicitly.
@@ -2240,12 +2240,14 @@ class Mesh:
         """Mesh from a CSV file, one row per element.
 
         Columns: x1, z1, x2, z2, mu_minus, mu_plus, and the boundary conditions as
+
         - plane strain, one type and value per component:
           BC_type_1, value_1, BC_type_2, value_2. Component 1/2 is x/y for global
           types ("u", "t") and t/n for local types ("s", "t_local"); "h" must be
           on both components;
         - antiplane (one component): BC_type, value;
         - shorthand, the same type on both components: BC_type, value[, value2].
+
         Coordinates are divided by length_scale (e.g. 1e3 for metres -> km).
         """
         import pandas as pd
@@ -2535,7 +2537,7 @@ def get_kernels(x_obs, y_obs, mesh, *, geometry, mu, nu=None, use_numba=None):
     node (L = element length).
 
     Points on an element. Stresses (and, for slip, displacements) jump across
-    an element. For an observation point on an element (local |y| within
+    an element. For an observation point on an element (local ``|y|`` within
     rounding, <= 1e-12 of the element scale) the plane-strain kernels return the
     average of the two sides. To evaluate one side, offset the point along the
     element normal explicitly.
@@ -2958,6 +2960,7 @@ def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None, retu
     """Solve a BEM problem defined by a Mesh with boundary conditions.
 
     The formulation follows the mesh bases:
+
     - slip "quadratic": the general form, element coefficients (3 per element and
       direction) with continuity rows (open nodes clamped) and one BC row per
       direction on every non-tip element;
@@ -3074,10 +3077,12 @@ def plot_mesh(mesh, ax=None, *, show_normals=True, show_moduli=True, offset=0.2,
 
     Slip elements are black, force (interface) elements red; arrows are unit normals.
     With show_moduli, on one colour scale:
+
     - interface ("h") elements, and any element whose two sides differ: a dot on the
       -n and the +n side, `offset` element lengths off the element;
     - traction ("t", "t_local") elements with equal sides: one square at the centre,
       the modulus of the material that boundary belongs to.
+
     Elements with "s" or "u" conditions are not marked (their rows do not use mu).
     Check that every closed polygon of "t" and "h" elements encloses one uniform
     modulus: a traction element's mu must equal the adjacent interface side.
