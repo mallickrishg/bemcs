@@ -2,7 +2,9 @@ name: bemcs
 channels:
   - conda-forge
 dependencies:
-  - numpy
+  - python=3.14
+  - numpy>=2.5
+  - ipykernel
   - scipy
   - matplotlib
   - jupyterlab
@@ -15,10 +17,11 @@ dependencies:
   - cmcrameri
   - rich
   - pandas
-  - quadpy
+  - quadpy  # 0.16.10: the last open-source release
   - shapely
   - geopandas
-  - numba
+  - numba>=0.68
   - pip
   - pip:
       - pygmsh
+      - -e .  # bemcs itself, editable

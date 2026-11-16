@@ -295,10 +295,10 @@ plt.plot(xplot, s_n, "g.-", label="$s_n$")
 plt.plot(els.x_centers[labels.interior], ts[labels.interior], "bo-", label="$t_s$")
 plt.plot(els.x_centers[labels.interior], tn[labels.interior], "go-", label="$t_n$")
 plt.plot(
-    els.x_centers[labels.interior], sxy_f[labels.interior], "b--", label="$\sigma_{xy}$"
+    els.x_centers[labels.interior], sxy_f[labels.interior], "b--", label=r"$\sigma_{xy}$"
 )
 plt.plot(
-    els.x_centers[labels.interior], syy_f[labels.interior], "g--", label="$\sigma_{yy}$"
+    els.x_centers[labels.interior], syy_f[labels.interior], "g--", label=r"$\sigma_{yy}$"
 )
 plt.xlabel("x")
 plt.ylabel("slip or stress")
@@ -336,7 +336,7 @@ plt.contour(
     colors="k",
     levels=np.linspace(-maxval, maxval, 21),
 )
-plt.colorbar(img, label="$\Delta\sigma_{xy}$")
+plt.colorbar(img, label=r"$\Delta\sigma_{xy}$")
 for i in range(n_els):
     plt.plot([els.x1[i], els.x2[i]], [els.y1[i], els.y2[i]], "k-")
 plt.xlim([np.min(x_obs), np.max(x_obs)])
@@ -375,7 +375,7 @@ plt.contour(
     colors="k",
     levels=np.linspace(-maxval, maxval, 21),
 )
-plt.colorbar(img, label="$\Delta$pressure")
+plt.colorbar(img, label=r"$\Delta$pressure")
 for i in range(n_els):
     plt.plot([els.x1[i], els.x2[i]], [els.y1[i], els.y2[i]], "k.-")
 plt.xlim([-2, 2])

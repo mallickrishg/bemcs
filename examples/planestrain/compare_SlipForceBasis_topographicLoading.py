@@ -50,6 +50,8 @@ n_els = len(els.x1)
 geometry = "planestrain"
 mu = 1.0  # reference shear modulus (stresses do not depend on it; displacements scale as 1/mu)
 nu = 0.25  # Poisson's ratio
+use_numba = True  # numba-jitted kernels (error if numba is missing; the first call compiles)
+kw = dict(geometry=geometry, mu=mu, use_numba=use_numba)  # passed to every kernel call
 
 # Topography: traction in the local (shear, normal) frame, a Gaussian normal traction (positive =
 # along the outward normal) with no shear. Sides and bottom: zero displacement (global x, y).
@@ -71,7 +73,7 @@ ax.set_title("mesh, outward normals")
 plt.show()
 
 # %% Solve with both bases
-coefs = {name: bemcs.solve(m, geometry=geometry, mu=mu, nu=nu) for name, m in meshes.items()}
+coefs = {name: bemcs.solve(m, nu=nu, **kw) for name, m in meshes.items()}
 
 # %% Fields on a grid: deviatoric stress, pressure and stress components
 xlimits = [-1.5 * abs(L_y), 1.5 * abs(L_y)]
@@ -90,7 +92,7 @@ derived = {
 grid = {}
 for name, m in meshes.items():
     fig, axes, grid[name] = bemcs.plot_fields(
-        m, coefs[name], geometry=geometry, mu=mu, nu=nu, xlim=xlimits, ylim=ylimits, n=(100, 100),
+        m, coefs[name], nu=nu, **kw, xlim=xlimits, ylim=ylimits, n=(100, 100),
         mask=inside, derived=derived, components=["deviatoric stress", "pressure", "sxx", "syy", "sxy"],
     )
     fig.suptitle(f"{name} basis")
@@ -105,7 +107,7 @@ y_surf = (els.y1[on_top, None] + t * (els.y2 - els.y1)[on_top, None] + dr * els.
 nx, ny = np.repeat(els.x_normals[on_top], n_per_el), np.repeat(els.y_normals[on_top], n_per_el)
 sx, sy = np.repeat(els.x_shears[on_top], n_per_el), np.repeat(els.y_shears[on_top], n_per_el)
 surf = {
-    name: bemcs.evaluate_fields(m, coefs[name], x_surf, y_surf, geometry=geometry, mu=mu, nu=nu)
+    name: bemcs.evaluate_fields(m, coefs[name], x_surf, y_surf, nu=nu, **kw)
     for name, m in meshes.items()
 }
 for f in surf.values():
@@ -129,8 +131,8 @@ nus = [0.0, 0.1, 0.25, 0.4, 0.49]
 fig, axes = plt.subplots(1, 2, figsize=(12, 4), sharey=True)
 for ax, (name, m) in zip(axes, meshes.items()):
     for nu_k in nus:
-        c = bemcs.solve(m, geometry=geometry, mu=mu, nu=nu_k)
-        f = bemcs.evaluate_fields(m, c, x_surf, y_surf, geometry=geometry, mu=mu, nu=nu_k)
+        c = bemcs.solve(m, nu=nu_k, **kw)
+        f = bemcs.evaluate_fields(m, c, x_surf, y_surf, nu=nu_k, **kw)
         ax.plot(x_surf, f["uy"], label=f"nu = {nu_k}")
     ax.set_xlim(xlimits)
     ax.set_xlabel("x")
@@ -166,8 +168,7 @@ for src_name, src in sources.items():
         for name, m in meshes.items():
             mk = bemcs.Mesh(els, labels=name, basis=m.basis, bc_type=np.where(on_top, "t", "u"),
                             bc_value=exact_bc, mu_minus=mu, mu_plus=mu)
-            f = bemcs.evaluate_fields(mk, bemcs.solve(mk, geometry=geometry, mu=mu, nu=nu_k), X, Y,
-                                      geometry=geometry, mu=mu, nu=nu_k)
+            f = bemcs.evaluate_fields(mk, bemcs.solve(mk, nu=nu_k, **kw), X, Y, nu=nu_k, **kw)
             err_u = np.hypot(f["ux"] - ke["ux"], f["uy"] - ke["uy"]).max() / np.hypot(ke["ux"], ke["uy"]).max()
             err_s = max(np.abs(f[k] - ke[k]).max() for k in ("sxx", "syy", "sxy"))
             err_s /= max(np.abs(ke[k]).max() for k in ("sxx", "syy", "sxy"))
