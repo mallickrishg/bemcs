@@ -384,7 +384,7 @@ def _circle(n=24, r=1.0):
     els = bemcs.initialize_els()
     # clockwise, so the normals point out of the disc
     els.x1, els.y1 = r * np.cos(-t[:-1]), r * np.sin(-t[:-1])
-    els.x2, els.y2 = r * np.cos(-t[1:]), r * np.sin(-t[1:])
+    els.x2, els.y2 = np.roll(els.x1, -1), np.roll(els.y1, -1)  # close the loop exactly
     bemcs.standardize_els_geometry(els, reorder=False)
     return els
 

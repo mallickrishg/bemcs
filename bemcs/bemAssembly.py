@@ -2197,6 +2197,19 @@ class Mesh:
                 raise ValueError(f"basis/connectivity given for {k!r} but no element is labelled {k[0]!r}")
         # nodes where a fault crosses a force chain: `solve` warns if a trapezoid spans one
         self.fault_crossings = fault_crossings(els, labels)
+        gaps = node_gaps(els)
+        if len(gaps):
+            shown = ", ".join(f"({p[0, 0]:.6g}, {p[0, 1]:.6g}) / ({p[1, 0]:.6g}, {p[1, 1]:.6g}) "
+                              f"[{np.hypot(*(p[0] - p[1])):.1e} apart]" for p in gaps[:5])
+            more = f", ... ({len(gaps)} pairs)" if len(gaps) > 5 else ""
+            warnings.warn(
+                f"element end points nearly coincide but are not identical: {shown}{more}. They are "
+                "treated as separate open tips (slip and force taper to zero there; a closed loop "
+                "becomes an open chain). If they should be one node, make the coordinates identical "
+                "in the mesh file.",
+                MeshGapWarning,
+                stacklevel=2,
+            )
         if bc_type is not None:
             for e in range(n_els):
                 kind = "slip" if labels[e] == "s" else "force"
@@ -2581,6 +2594,44 @@ def plane_strain_compliance(sxx, syy, sxy, mu, nu):
 # =============================================================================
 
 
+def uniform_background(stress, *, geometry, mu, nu=None, mu_medium=None):
+    """A uniform remote (background) field for `solve` / `evaluate_fields`.
+
+    stress : the true remote stress, (sxx, syy, sxy) in plane strain or (sxz, syz)
+        in antiplane, in the material with shear modulus mu_medium (default mu, the
+        reference modulus of the kernels).
+
+    Returns a callable bg(x, y) -> dict of reference-medium fields (displacement and
+    stress, keys as in `evaluate_fields`): the stress is stress * mu / mu_medium, so
+    that the true stress in mu_medium is `stress`, and the displacement is the
+    matching uniform strain times position (no rigid rotation). The total field of a
+    solve with this background is background + BEM.
+    """
+    _check_material(geometry, mu, nu)
+    m = mu if mu_medium is None else float(mu_medium)
+    S = np.asarray(stress, dtype=float) * mu / m
+    if geometry == "antiplane":
+        if S.shape != (2,):
+            raise ValueError("antiplane background stress is (sxz, syz)")
+
+        def bg(x, y):
+            x, y = np.asarray(x, float), np.asarray(y, float)
+            return {"uz": (S[0] * x + S[1] * y) / mu, "sxz": np.full(x.shape, S[0]),
+                    "syz": np.full(x.shape, S[1])}
+
+        return bg
+    if S.shape != (3,):
+        raise ValueError("plane-strain background stress is (sxx, syy, sxy)")
+    exx, eyy, exy = plane_strain_compliance(S[0], S[1], S[2], mu, nu)
+
+    def bg(x, y):
+        x, y = np.asarray(x, float), np.asarray(y, float)
+        return {"ux": exx * x + exy * y, "uy": exy * x + eyy * y, "sxx": np.full(x.shape, S[0]),
+                "syy": np.full(x.shape, S[1]), "sxy": np.full(x.shape, S[2])}
+
+    return bg
+
+
 def interface_kappa(mu_minus, mu_plus, side):
     """Exact interface coefficient kappa for a sharp jump in shear modulus.
 
@@ -2672,6 +2723,28 @@ def _collocation_elements(mesh):
     return np.array(colloc, dtype=int), parts
 
 
+class MeshGapWarning(UserWarning):
+    """Two element end points nearly coincide but are not identical. Topology (shared
+    nodes, chains, closed loops, hats, trapezoids, continuity) uses exact node
+    coordinates, so such a pair is treated as two open tips: slip and force taper to
+    zero there. On a closed interface this turns the loop into an open chain and
+    spoils the whole solution. Fix: make the coordinates identical in the mesh file
+    (e.g. close a loop with x2 = roll(x1, -1)), or move them clearly apart."""
+
+
+def node_gaps(els, rel_tol=1e-6):
+    """Pairs of distinct end points closer than rel_tol times the shortest element
+    length: (k, 2, 2) array of point pairs. Identical points (shared nodes) are fine."""
+    from scipy.spatial import cKDTree
+
+    pts = np.unique(np.r_[np.c_[els.x1, els.y1], np.c_[els.x2, els.y2]].astype(float), axis=0)
+    if len(pts) < 2:
+        return np.zeros((0, 2, 2))
+    lmin = 2 * np.min(np.asarray(els.half_lengths))
+    pairs = cKDTree(pts).query_pairs(rel_tol * lmin, output_type="ndarray")
+    return pts[pairs] if len(pairs) else np.zeros((0, 2, 2))
+
+
 class TrapezoidCrossingWarning(UserWarning):
     """A force trapezoid spans a node where a fault crosses the force chain. The
     stride then runs through the crossing and only one side of it gets a nearby
@@ -2738,7 +2811,7 @@ def _warn_close_collocation(mesh, colloc, tol, stacklevel=3):
 
 
 def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None,
-             proximity_tol=0.1, _stacklevel=3):
+             proximity_tol=0.1, background=None, _stacklevel=3):
     """Linear system A x = b for a mesh with boundary conditions (see `solve`).
 
     Returns (A, b, rows) with rows a dict of per-row arrays: element, component,
@@ -2795,6 +2868,19 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None,
     Tg = traction_kernels(S, nx, ny)  # reference traction, global
     Tl = traction_kernels(S, nx, ny, sx, sy) if pe == 2 else Tg
     mu_side = np.where(side < 0, mesh.mu_minus, mesh.mu_plus)[colloc]
+    # background (remote) field: its contribution to each row moves to the right-hand side
+    if background is not None:
+        bg = background(xo, yo)
+        names_u, names_s, _ = _COMPONENTS[geometry]
+        u_bg = np.stack([np.asarray(bg[n], float) for n in names_u], axis=1)  # (n_colloc, pe)
+        sb = [np.asarray(bg[n], float) for n in names_s]
+        if pe == 1:
+            t_bg = (sb[0] * nx + sb[1] * ny)[:, None]
+            tl_bg = t_bg
+        else:
+            tx, ty = sb[0] * nx + sb[2] * ny, sb[2] * nx + sb[1] * ny
+            t_bg = np.stack((tx, ty), axis=1)
+            tl_bg = np.stack((tx * sx + ty * sy, tx * nx + ty * ny), axis=1)
 
     def flat(K, i, c):
         return K[i, :, c].ravel() if pe == 1 else K[i, :, c, :].ravel()
@@ -2820,7 +2906,20 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None,
                     t_local_c = R[0, c] * flat(Tg, i, 0) + R[1, c] * flat(Tg, i, 1)  # (R^T T)_c
                     row = centre_ops[e][c] - kappa * t_local_c
             A.append(row)
-            b.append(0.0 if t == "h" else mesh.bc_value[e, c] if mesh.bc_value is not None else 0.0)
+            rhs = 0.0 if t == "h" else mesh.bc_value[e, c] if mesh.bc_value is not None else 0.0
+            if background is not None:
+                if t == "u":
+                    rhs -= u_bg[i, c]
+                elif t == "t":
+                    rhs -= mu_side[i] / mu * t_bg[i, c]
+                elif t == "t_local":
+                    rhs -= mu_side[i] / mu * tl_bg[i, c]
+                elif t == "h":
+                    if pe == 1:
+                        rhs -= kappa * t_bg[i, 0]
+                    else:
+                        rhs += kappa * (R[0, c] * t_bg[i, 0] + R[1, c] * t_bg[i, 1])
+            b.append(rhs)
             rows["element"].append(e)
             rows["component"].append(c)
             rows["type"].append(t)
@@ -2855,7 +2954,7 @@ def _linear_solve(A, b, solver):
 
 
 def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None, return_system=False,
-          return_info=False, proximity_tol=0.1, solver="auto"):
+          return_info=False, proximity_tol=0.1, solver="auto", background=None):
     """Solve a BEM problem defined by a Mesh with boundary conditions.
 
     The formulation follows the mesh bases:
@@ -2891,6 +2990,11 @@ def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None, retu
         (`TrapezoidCrossingWarning`) when a force trapezoid spans a node where a fault
         crosses the force chain; both warnings point to a fix in the mesh or
         connectivity, which remain the user's choice.
+    background : callable, optional
+        A known reference-medium field (e.g. `uniform_background` for a remote
+        stress). The total field is background + BEM: boundary conditions ("u", "t",
+        "t_local") and interface conditions ("h") apply to the total field. Pass the
+        same background to `evaluate_fields` to get total fields.
     solver : {"auto", "lu", "lstsq"}
         "auto" (default): LU factorisation for square systems, with a condition
         estimate; falls back to least squares (the minimum-norm solution) when the
@@ -2914,7 +3018,7 @@ def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None, retu
     give the minimum-norm solution (see `solver`).
     """
     A, b, rows = assemble(mesh, geometry=geometry, mu=mu, nu=nu, side=side, dr=dr, use_numba=use_numba,
-                          proximity_tol=proximity_tol, _stacklevel=4)
+                          proximity_tol=proximity_tol, background=background, _stacklevel=4)
     bad = ~np.isfinite(A).all(axis=1)
     if bad.any():
         raise FloatingPointError(
@@ -2937,13 +3041,15 @@ def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None, retu
 # =============================================================================
 
 
-def evaluate_fields(mesh, x, x_obs, y_obs, *, geometry, mu, nu=None, mu_field=None, use_numba=None):
+def evaluate_fields(mesh, x, x_obs, y_obs, *, geometry, mu, nu=None, mu_field=None, use_numba=None,
+                    background=None):
     """Displacement and stress components at observation points from a solution x.
 
     Returns a dict: antiplane "u", "sxz", "syz"; plane strain "ux", "uy", "sxx",
     "syy", "sxy" (arrays shaped like x_obs). Stresses are those of the reference
     medium (mu) unless mu_field(x, y) gives the true shear modulus, in which case
-    they are scaled to the true stress (uniform nu).
+    they are scaled to the true stress (uniform nu). background: the field passed
+    to `solve`, added to give total fields.
     """
     shape = np.shape(x_obs)
     xo, yo = _obs(x_obs, y_obs)
@@ -2952,11 +3058,14 @@ def evaluate_fields(mesh, x, x_obs, y_obs, *, geometry, mu, nu=None, mu_field=No
     names_u, names_s, _ = _COMPONENTS[geometry]
     names_s = tuple(n if geometry == "planestrain" else n for n in names_s)
     scale = 1.0 if mu_field is None else np.asarray(mu_field(xo, yo), dtype=float) / mu
+    bg = background(xo, yo) if background is not None else None
     out = {}
     for k, name in enumerate(names_u):
-        out[name] = (kernel_matrix(U[:, :, k : k + 1]) @ x).reshape(shape)
+        v = kernel_matrix(U[:, :, k : k + 1]) @ x
+        out[name] = (v + (bg[name] if bg is not None else 0.0)).reshape(shape)
     for k, name in enumerate(names_s):
-        out[name] = (scale * (kernel_matrix(S[:, :, k : k + 1]) @ x)).reshape(shape)
+        v = kernel_matrix(S[:, :, k : k + 1]) @ x + (bg[name] if bg is not None else 0.0)
+        out[name] = (scale * v).reshape(shape)
     return out
 
 

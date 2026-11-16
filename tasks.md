@@ -459,7 +459,24 @@ checked by:
 - general = hat forms.
 
 **Missing before plane-strain results can be trusted at a finite contrast:**
-- [ ] **P1. A finite-contrast exact solution in plane strain.** This is the plane-strain counterpart of the
+- [ ] **P1. A finite-contrast exact solution in plane strain.** (a) done 2026-11-16, (b) open.
+  - **(a) Circular inclusion: done** (`tests/test_circular_inclusion.py`, `tests/reference_solutions.py`).
+    - **Reference:** Muskhelishvili potentials, with the constants solved from continuity at boundary points
+      (residual 1e-15). It matches the closed-form inclusion stress, Kirsch for a hole, Hooke and equilibrium.
+    - **BEM results at 128 elements** (mu_i / mu_m = 4 and 1/4, nu = 0.27):
+      - stress inside: 7.6e-3 (stiff) and 7.6e-4 (soft);
+      - stress outside (>= 1.5 a): about 9e-4;
+      - displacement: about 6e-4.
+    - **Convergence:** at the centre (stiff) 1.6e-2, 5.5e-3, 2.1e-3 for 32, 64, 128 elements.
+    - **Needed a new feature:** a remote load had no way into the `'h'` rows. `uniform_background` plus
+      `solve(..., background=)` and `evaluate_fields(..., background=)` now handle it: the total field is
+      background + BEM. Tested against prescribing t = -sigma_inf . n.
+    - **Exposed a meshing trap:** a circle built with `linspace(0, 2 pi)` is not exactly closed
+      (sin(2 pi) = 2.4e-16). It is treated as an open chain with tapered tips, giving errors of 100% at
+      32 elements. `Mesh` now warns about end points that nearly coincide (`MeshGapWarning`, `node_gaps`).
+    - **Finding: first order on curved interfaces.** The default trapezoids converge at about first order on the
+      closed circle, in both geometries (the antiplane inclusion halves its error per refinement); the planar
+      antiplane bimaterial gave h^2. See the new item below. This is the plane-strain counterpart of the
   antiplane image series; today nothing checks the answer at, say, mu2/mu1 = 4. Two candidates, ideally both:
   - **(a) Circular inhomogeneity under a uniform remote stress.** Exact (Muskhelishvili; the stress inside is
     uniform). It also exercises a **closed, curved interface**, the normal and volumetric parts of the condition,
@@ -467,6 +484,14 @@ checked by:
   - **(b) Edge dislocation, or a short fault with smooth slip, near a planar bimaterial interface.** Dundurs image
     dislocations. This is the plane-strain analogue of the antiplane layered case, with fault-interface coupling
     through both shear and normal components.
+- [ ] **P1c. Order of the trapezoid force basis on curved interfaces.** First order on the circular inclusion in both
+  geometries (a uniform O(h) bias inside), versus h^2 on the planar antiplane bimaterial.
+  - **Candidates:**
+    - plateau errors (force constant on each middle element) that cancel on a straight line but not on a curve;
+    - the polygon approximation of the circle.
+  - **To do:** test a straight plane-strain bimaterial and a refined polygon to tell them apart. If it is the
+    basis, consider a linear-force basis with collocation at all element centres (needs a different null-mode
+    treatment) or a higher-order force basis.
 - [ ] **P2. A fault crossing an interface in plane strain.**
   - **Gap:** no exact solution, and no symmetry to rely on. The antiplane result (about 2.5e-5 once the trapezoids
     restart at the crossing) depended partly on antisymmetry. With a dipping fault, or mixed shear/opening, the step
