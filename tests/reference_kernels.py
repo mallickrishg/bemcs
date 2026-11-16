@@ -267,3 +267,98 @@ def laplacian_line_force_antiplane(els, e, xo, yo, shape, mu):
             ]
         )
     return out
+
+
+# ---------------------------------------------------------------------------
+# point dislocations, and quadratic slip on an element by dislocation quadrature
+# ---------------------------------------------------------------------------
+# Textbook solutions (Hirth & Lothe, Theory of Dislocations, ch. 3), independent of
+# the package. Dislocation at the origin with the cut along the negative x-axis:
+# u(x, 0+) - u(x, 0-) = b for x < 0, continuous for x > 0.
+
+
+def _edge_bx(x, y, theta, mu, nu):
+    """Unit edge dislocation, Burgers vector along +x; theta = polar angle (cut on -x)."""
+    r2 = x**2 + y**2
+    c = 1.0 / (2 * np.pi)
+    k = 1.0 / (4 * (1 - nu))
+    ux = c * (theta + 2 * k * x * y / r2)
+    uy = -c * ((1 - 2 * nu) * k * np.log(r2) + k * (x**2 - y**2) / r2)
+    d = mu / (2 * np.pi * (1 - nu))
+    sxx = -d * y * (3 * x**2 + y**2) / r2**2
+    syy = d * y * (x**2 - y**2) / r2**2
+    sxy = d * x * (x**2 - y**2) / r2**2
+    return np.array([ux, uy, sxx, syy, sxy])
+
+
+def edge_dislocation_planestrain(x, y, bx, by, mu, nu):
+    """ux, uy, sxx, syy, sxy of an edge dislocation (Burgers (bx, by)) at the origin,
+    cut along the negative x-axis. The by part is the bx solution rotated by +90
+    degrees, with its angle shifted so that the cut is also on the negative x-axis
+    (the shift is a rigid translation)."""
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    theta = np.arctan2(y, x)
+    out = bx * _edge_bx(x, y, theta, mu, nu)
+    # rotated frame: x' = R^T X = (y, -x); fields back with u = R u', sigma = R sigma' R^T
+    p = _edge_bx(y, -x, theta - np.pi / 2, mu, nu)
+    out += by * np.array([-p[1], p[0], p[3], p[2], -p[4]])
+    return out
+
+
+def screw_dislocation_antiplane(x, y, b, mu):
+    """uz, sxz, syz of a screw dislocation at the origin, cut along the negative x-axis."""
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    r2 = x**2 + y**2
+    return b * np.array([np.arctan2(y, x) / (2 * np.pi), -mu * y / (2 * np.pi * r2),
+                         mu * x / (2 * np.pi * r2)])
+
+
+# Lagrange basis of the quadratic slip element: node k is slip at s = (-2/3, 0, 2/3) a
+_QNODES = np.array([-2.0, 0.0, 2.0]) / 3
+
+
+def quadratic_lagrange(k, s, a):
+    """Value and derivative (d/ds) of the quadratic basis function of node k."""
+    z = np.asarray(s, float) / a
+    others = [m for m in range(3) if m != k]
+    zk, z1, z2 = _QNODES[k], _QNODES[others[0]], _QNODES[others[1]]
+    den = (zk - z1) * (zk - z2)
+    return (z - z1) * (z - z2) / den, ((z - z1) + (z - z2)) / den / a
+
+
+def quadratic_slip_by_dislocations(els, e, xo, yo, node, direction, geometry, mu, nu=None,
+                                   panels=64, order=16):
+    """Field of unit quadratic slip (basis function `node`, direction 0 = t, 1 = n in
+    plane strain) on element e, as a superposition of point dislocations.
+
+    A displacement jump s(xi) on [-a, a] equals dislocations of strength s(a) at a and
+    -s(-a) at -a, plus a density -s'(xi) in between (each dislocation's cut runs along
+    -x from it). The jump here is u(+n side) - u(-n side) = s. The density integral
+    uses composite Gauss-Legendre (`panels` x `order` points); observation points must
+    be off the element.
+
+    Returns plane strain (ux, uy, sxx, syy, sxy) or antiplane (uz, sxz, syz), global."""
+    a = els.half_lengths[e]
+    R = np.asarray(els.rot_mats[e])
+    dx, dy = np.asarray(xo, float) - els.x_centers[e], np.asarray(yo, float) - els.y_centers[e]
+    xl, yl = R[0, 0] * dx + R[1, 0] * dy, R[0, 1] * dx + R[1, 1] * dy  # local frame
+    if geometry == "planestrain":
+        b = np.eye(2)[direction]
+        point = lambda x, s: edge_dislocation_planestrain(x - s, yl, *b, mu, nu)  # noqa: E731
+    else:
+        point = lambda x, s: screw_dislocation_antiplane(x - s, yl, 1.0, mu)  # noqa: E731
+    phi = lambda s: quadratic_lagrange(node, s, a)  # noqa: E731
+    out = phi(a)[0] * point(xl, a) - phi(-a)[0] * point(xl, -a)
+    g, w = np.polynomial.legendre.leggauss(order)
+    edges = np.linspace(-a, a, panels + 1)
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        s = 0.5 * (hi + lo) + 0.5 * (hi - lo) * g
+        for si, wi in zip(s, 0.5 * (hi - lo) * w):
+            out = out - wi * phi(si)[1] * point(xl, si)
+    if geometry == "antiplane":  # uz is a scalar; (sxz, syz) rotates as a vector
+        return np.array([out[0], *np.einsum("ij,j...->i...", R, out[1:])])
+    ux, uy, sxx, syy, sxy = out
+    S = np.array([[sxx, sxy], [sxy, syy]])
+    u = np.einsum("ij,j...->i...", R, np.array([ux, uy]))
+    Sg = np.einsum("ij,jk...,lk->il...", R, S, R)
+    return np.array([u[0], u[1], Sg[0, 0], Sg[1, 1], Sg[0, 1]])

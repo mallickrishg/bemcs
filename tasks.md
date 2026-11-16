@@ -402,9 +402,16 @@ Updated 2026-11-16. Details are in T1/T2 and the issue list (section 4).
     - ~~linear and constant force (both geometries)~~ against point-force quadrature;
     - ~~hat-slip and trapezoid-force patches~~: smoothness, `A T = 0`, near field.
   - **Remaining:**
-    - the quadratic slip formula itself against quadrature of the point-dislocation solution, in both geometries
-      (today: Lagrange-node jumps, constant = sum of nodes vs the analytic kernel, and precision vs 50 digits of the
-      same formula);
+    - ~~the quadratic slip formula itself against quadrature of the point-dislocation solution, in both
+      geometries~~ **done (2026-11-16, `tests/test_slip_kernels_reference.py`):**
+      - **Reference:** textbook edge and screw dislocations (Hirth & Lothe), first checked against elasticity
+        (Hooke from the displacement gradient, equilibrium, jump b across the cut). Quadratic slip = end
+        dislocations ±s(±a) + density −s′, by composite Gauss–Legendre; no package code involved.
+      - **Agreement:** every node and direction, displacement and stress, 4 orientations, element level and
+        `get_slip_kernels` on a curved mesh: ~1e-14 in the near field (down to 0.05 a off the element and
+        1e-3 a off the line beyond the tips). The far field loses digits as ~eps (r/a)^3 (1e-9 at 47 a,
+        7e-8 at 180 a) from cancellation; the tolerance follows that. A change of 1e-6 in ν fails at every point.
+      - **Sign convention pinned:** slip = u(+n side) − u(−n side). The Lagrange-node test checked only |jump|.
     - the triangle-force kernels.
 - [x] Near-field tests of the singularity-free patch bases (`tests/test_near_field.py`, 2026-11-16):
   - **Setup:**
