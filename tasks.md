@@ -412,7 +412,8 @@ Updated 2026-11-16. Details are in T1/T2 and the issue list (section 4).
         1e-3 a off the line beyond the tips). The far field loses digits as ~eps (r/a)^3 (1e-9 at 47 a,
         7e-8 at 180 a) from cancellation; the tolerance follows that. A change of 1e-6 in ν fails at every point.
       - **Sign convention pinned:** slip = u(+n side) − u(−n side). The Lagrange-node test checked only |jump|.
-    - the triangle-force kernels.
+    - the triangle-force kernels, antiplane and plane strain: **open, lowest priority**. Tracked in T4
+      ("Triangle force sources").
 - [x] Near-field tests of the singularity-free patch bases (`tests/test_near_field.py`, 2026-11-16):
   - **Setup:**
     - hat slip and trapezoid force, in plane strain and antiplane, on a straight and a 30-degree kinked fault;
@@ -609,7 +610,13 @@ Updated 2026-11-16. Details are in T1/T2 and the issue list (section 4).
 - [ ] Spatially varying `nu` (currently assumed uniform).
 - [ ] Heterogeneous domains with topography/free surface, combining with existing non-planar fault tools.
 - [ ] Numba acceleration for the kernels that do not have it yet: ~~plane-strain slip~~ (done, generated kernels);
-  triangle forces remain.
+  triangle forces remain (see below).
+- [ ] **Triangle force sources (lowest priority).** Constant-force triangles, the area sources
+  `bemcs.displacements_stresses_triangle_force_{antiplane,planestrain}` with `_nearfield` / `_farfield`. Both
+  geometries are open:
+  - Reference tests: point-force (Kelvin / Laplace) quadrature over the triangle, near and far field, as for the
+    line forces.
+  - Numba acceleration.
 
 ---
 
