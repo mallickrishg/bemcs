@@ -1,386 +1,179 @@
-# %%
-# %load_ext autoreload  # (IPython magic, disabled in .py)
-# %autoreload 2  # (IPython magic, disabled in .py)
-# %config InlineBackend.figure_format = "retina"  # (IPython magic, disabled in .py)
+# %% [markdown]
+# # Wavy fault in a box, sliding at static friction
+# A toy version of a laboratory rock-friction experiment: a square elastic box (plane strain) cut by a
+# gently sinusoidal fault. The top and bottom are sheared past each other, and also pushed together so
+# that the fault is under compression. The fault slides at its frictional strength.
+#
+# **Boundary conditions**
+# - top: u_x = +1, u_y = -delta; bottom: u_x = -1, u_y = +delta (shear plus confinement)
+# - left and right sides: traction free
+# - fault: static friction (below) and no opening (s_n = 0)
+#
+# **Sign conventions** (bemcs, for every element)
+# - s is the unit tangent (from node 1 to node 2) and n the unit normal, s rotated by +90 degrees. On this
+#   fault, which runs from x = -L to x = +L, s points along +x and n along +y (up).
+# - slip = u(+n side) - u(-n side), in local (s, n) components: s_s > 0 means the upper block moved
+#   along +s relative to the lower block.
+# - traction t = sigma . n, the force per area that the +n (upper) block exerts on the -n (lower)
+#   block. The stress is tension-positive, so t_n < 0 is compression, and the effective normal stress
+#   is sigma_n = -t_n > 0.
+#
+# **Friction.** Friction drags the lower block along with the sliding upper block, so the shear
+# traction on the lower block points along the slip and has magnitude f sigma_n:
+#
+#     t_s = sign(s_s) f sigma_n + tau_0,   i.e.   t_s + sign(s_s) f t_n = tau_0
+#
+# with tau_0 an optional residual stress. The slip direction is not known in advance: the example
+# guesses it from the loading and repeats the solve until the guess and the slip agree. The law only
+# makes sense where the fault is in compression (t_n < 0) and slides (s_s != 0) along the assumed
+# direction; the checks at the end of the solve verify this. (With much stronger confinement parts of
+# the fault would stick, which this linear, everywhere-sliding model cannot represent.)
+#
+# **Assembly.** `bemcs.solve` has no friction boundary condition, so the friction rows are built from
+# two `bemcs.assemble` systems: the fault as ("t_local", "s") gives the shear-traction and no-opening
+# rows, and the fault as ("t_local", "t_local") gives the normal-traction rows that are added to them.
 
+# %%
 import numpy as np
 import matplotlib.pyplot as plt
-from importlib import reload
 
 import bemcs
+
 plt.rcParams.update({"font.size": 12})
 
-class els_labels:
-    def __init__(self, els, H, L):
-        xmid = np.copy(els.x_centers)
-        ymid = np.copy(els.y_centers)
-        self.top = ymid == H  # top
-        self.right = xmid == L  # right
-        self.bot = ymid == -H  # top
-        self.left = xmid == -L  # left
-        self.interior = (xmid > -L) & (xmid < L) & (ymid > -H) & (ymid < H)
-
-# %% [markdown]
-# # Wavy fault in a box
-# Below we consider a toy problem based on laboratory rock deformation experiments. A sinusoidal fault is embedded inside a rectangular uniform elastic rectangular box. 
-#
-# The boundary conditions for this problem are as follows:
-# - $u_x = 1, u_y = 0$ at the top
-# - $u_x = -1, u_y = 0$ at the bottom
-# - traction-free boundary conditions ($\tau_x,\tau_y = 0$) on the left & right boundaries 
-# - mixed: static friction ($\tau_s - f\tau_n= 0$) and no tensile slip ($s_n= 0$) at interior fault elements
-
-# %%
-# Elastic parameters
-mu = 1
-nu = 0.25
+# %% Parameters
+mu, nu = 1.0, 0.25
+geometry = "planestrain"
 friction_coeff = 0.2
+delta = 0.5  # confinement: top and bottom pushed together by delta each
+tau_0 = 0.0  # residual (pre-) stress on the fault: t_s + sign(s_s) f t_n = tau_0
+L, H = 4.0, 4.0  # box half-width and half-height
+n_per_unit = 1  # box elements per unit length
+n_fault = 19  # fault elements
 
-# %%
-# Create a box mesh with a sinusoidal fault in the middle
-L = 4.0
-H = 4.0
-ngrid = 4
+# %% Geometry: the box (clockwise from the top-left corner) and the fault across the middle
 corners = np.array([[-L, H], [L, H], [L, -H], [-L, -H], [-L, H]])
+pts = [
+    np.linspace(a, b, int(round(np.hypot(*(b - a)) * n_per_unit)), endpoint=False)
+    for a, b in zip(corners[:-1], corners[1:])
+]
+box = np.vstack(pts + [corners[:1]])
 
-# Create arrays of the x and y coordinates of the corners
-x, z = [], []
-for i in range(4):
-    lsegment = np.sqrt(
-        (corners[i, 0] - corners[(i + 1), 0]) ** 2
-        + (corners[i, 1] - corners[(i + 1), 1]) ** 2
-    )
-    xi = np.linspace(
-        corners[i][0],
-        corners[(i + 1) % 4][0],
-        num=round(lsegment * ngrid / H),
-        endpoint=False,
-    )
-    zi = np.linspace(
-        corners[i][1],
-        corners[(i + 1) % 4][1],
-        num=round(lsegment * ngrid / H),
-        endpoint=False,
-    )
-    x.append(xi)
-    z.append(zi)
-x.append(corners[0, 0])
-z.append(corners[0, 1])
-x = np.hstack(x)
-z = np.hstack(z)
-
-x1_box = x[0:-1]
-x2_box = x[1:]
-y1_box = z[0:-1]
-y2_box = z[1:]
-
-# %%
-# Across the middle: Create a sinusoidal fault centered around y=0
-ngridf = 10
-
-x = np.linspace(-1.0 * L, 1.0 * L, int(2 * ngridf))
-z = 0.1 * np.sin(2 * np.pi * x / 2 / 2)
-# Force the first and last z-values to be 0
-z[0] = 0
-z[-1] = 0
-x1_across = x[0:-1]
-x2_across = x[1:]
-y1_across = z[0:-1]
-y2_across = z[1:]
+xf = np.linspace(-L, L, n_fault + 1)
+yf = 0.1 * np.sin(np.pi * xf / 2)
+yf[[0, -1]] = 0.0  # the fault ends on box nodes (triple junctions)
 
 els = bemcs.initialize_els()
-els.x1 = np.concatenate([x1_box, x1_across])
-els.y1 = np.concatenate([y1_box, y1_across])
-els.x2 = np.concatenate([x2_box, x2_across])
-els.y2 = np.concatenate([y2_box, y2_across])
-
+els.x1 = np.r_[box[:-1, 0], xf[:-1]]
+els.y1 = np.r_[box[:-1, 1], yf[:-1]]
+els.x2 = np.r_[box[1:, 0], xf[1:]]
+els.y2 = np.r_[box[1:, 1], yf[1:]]
 bemcs.standardize_els_geometry(els, reorder=False)
 n_els = len(els.x1)
-bemcs.plot_els_geometry(els)
 
-# add labels for top,right,bot,left,interior
-labels = els_labels(els, H, L)
+top = np.isclose(els.y_centers, H)
+bot = np.isclose(els.y_centers, -H)
+sides = np.isclose(np.abs(els.x_centers), L)
+fault = ~(top | bot | sides)
+fe = np.flatnonzero(fault)
 
-# %% [markdown]
-# ## Mesh: quadratic slip on every element (general, element-DOF formulation)
-# Open nodes, overlapping interior nodes and triple junctions are identified automatically by
-# the continuity operator. Unknowns are interleaved [t0, n0, t1, n1, ...] per node.
-#
-# The interior fault obeys static friction (t_s - f t_n = 0, no normal slip), a linear combination
-# that `bemcs.solve` does not offer as a BC type, so this example assembles its system from the
-# building blocks (kernels, traction kernels, slip node matrices, continuity operator).
+# %% Boundary conditions
+bc_type = np.empty((n_els, 2), dtype=object)
+bc_type[top | bot] = "u"
+bc_type[sides] = "t"
+bc_value = np.zeros((n_els, 2))
+bc_value[top] = (1.0, -delta)
+bc_value[bot] = (-1.0, delta)
+bc_value[fault, 0] = tau_0
 
-# %%
-mesh = bemcs.Mesh(els, "slip")
-geometry = "planestrain"
+bc_friction = bc_type.copy()
+bc_friction[fault] = ("t_local", "s")  # rows: shear traction, normal slip (= 0)
+bc_normal = bc_type.copy()
+bc_normal[fault] = ("t_local", "t_local")  # only its normal-traction rows are used
 
-# %% [markdown]
-# # Boundary Conditions
-# Here we implement the various boundary conditions as a big vector that goes in the right hand side of the Integral equations. The convention we follow is:
-# - BCs at element centres (2 per element)
-# - continuity rows at open, 2-overlap and triple-junction nodes (RHS = 0)
+common = dict(labels="slip", bc_value=bc_value, mu_minus=mu, mu_plus=mu)
+mesh = bemcs.Mesh(els, bc_type=bc_friction.astype(str), **common)
+mesh_tn = bemcs.Mesh(els, bc_type=bc_normal.astype(str), **common)
 
-# %%
-# Boundary conditions are
-# top: ux = 1, uy = 0
-# right: traction-free
-# bot: ux = -1, uy = 0
-# left: traction-free
-# interior: static friction, no normal slip
-bc_x = np.zeros((n_els, 1))
-bc_y = np.zeros((n_els, 1))
-
-bc_x[labels.top] = 1.0
-bc_y[labels.top] = -0.0
-bc_x[labels.bot] = -1.0
-bc_y[labels.bot] = -0.0
-
-bc_x[labels.right] = -0.0
-bc_y[labels.right] = 0.0
-bc_x[labels.left] = 0.0
-bc_y[labels.left] = 0.0
-
-# traction BCs at interior fault centers
-# set t_s - f*t_n = 0, or t_s - f*t_n = residual_traction
-# s_n = 0
-bc_x[labels.interior] = 0.0  # residual or pre-stress level
-# bc_x[labels.interior] = np.random.normal(
-#     loc=0, scale=0.1, size=(len(x1_across), 1)
-# )  # random residual stress field
-bc_y[labels.interior] = 0.0
-
-BC_c = np.c_[bc_x, bc_y].reshape(-1, 1)  # [x0, y0, x1, y1, ...]
-
-# %% [markdown]
-# # Design Matrix System 
-# Here we implement various boundary conditions at the different types of nodes we have
-# - At element centers, we implement either displacement or traction boundary conditions
-# - At open nodes, we force slip to be 0
-# - At 2-overlap (interior) nodes we have continuity & smoothness of slip
-# - At triple junctions, we are currently implementing 2 equations for conservation of slip and 4 equations for smoothness (these choices are likely to change in the future)
-
-# %%
-# Patch center locations (need to be shifted an infinitesimal amount in -ve unit normal direction)
-obs_xy = (
-    np.vstack((els.x_centers, els.y_centers)).T
-    - np.vstack((els.x_normals, els.y_normals)).T * 1e-8
-)
-x_obs = obs_xy[:, 0]
-y_obs = obs_xy[:, 1]
-
-# Kernels evaluated ONLY at the element centres
-U, S, info = bemcs.get_kernels(x_obs, y_obs, mesh, geometry=geometry, mu=mu, nu=nu)
-
-# Traction kernels in local (shear, normal) coordinates of each element: [ts, tn]
-T = bemcs.traction_kernels(S, els.x_normals, els.y_normals, els.x_shears, els.y_shears)
-
-# slip at element nodes in local (t, n) coordinates
-matrix_slip, matrix_slip_gradient = bemcs.bemAssembly.slip_node_matrices(
-    els, geometry=geometry, reference="local"
-)
-
-# Linear operator for central node BCs: rows [x0, y0, x1, y1, ...]
-kerneleval_x = np.zeros((n_els, mesh.n_columns(geometry=geometry)))
-kerneleval_y = np.zeros_like(kerneleval_x)
-
-
-def rows(K, idx, c):
-    """Rows of kernel component c at the elements idx, interleaved columns."""
-    return K[idx, :, c, :].reshape(int(np.sum(idx)), -1)
-
-
-for i in range(5):
-    if i == 0:  # top: displacement
-        idx = labels.top.flatten()
-        kerneleval_x[idx], kerneleval_y[idx] = rows(U, idx, 0), rows(U, idx, 1)
-    elif i == 1:  # bottom: displacement
-        idx = labels.bot.flatten()
-        kerneleval_x[idx], kerneleval_y[idx] = rows(U, idx, 0), rows(U, idx, 1)
-    elif i == 2:  # left: traction
-        idx = labels.left.flatten()
-        kerneleval_x[idx], kerneleval_y[idx] = rows(T, idx, 0), rows(T, idx, 1)
-    elif i == 3:  # right: traction
-        idx = labels.right.flatten()
-        kerneleval_x[idx], kerneleval_y[idx] = rows(T, idx, 0), rows(T, idx, 1)
-    else:  # interior fault: t_s - f t_n = 0 and no normal slip at the centre node
-        idx = labels.interior.flatten()
-        kerneleval_x[idx] = rows(T, idx, 0) - friction_coeff * rows(T, idx, 1)
-        centre_normal = 2 * (3 * np.flatnonzero(idx) + 1) + 1
-        kerneleval_y[idx] = matrix_slip[centre_normal]
-
-# populate matrix_system for central nodes
-matrix_system_c = np.zeros((2 * n_els, mesh.n_columns(geometry=geometry)))
-matrix_system_c[0::2, :] = kerneleval_x
-matrix_system_c[1::2, :] = kerneleval_y
-
-# %%
-matrix_continuity, continuity_info = mesh.continuity_operator(geometry=geometry)
-
-# tip elements (with an open end node) are clamped tapers: they get no BC row
-keep = mesh.bc_elements("slip")
-matrix_system_c = matrix_system_c.reshape(n_els, 2, -1)[keep].reshape(2 * len(keep), -1)
-BC_c = BC_c.reshape(n_els, 2, -1)[keep].reshape(-1, 1)
-
-# stack the matrices and create the full linear operator
-matrix_system = np.vstack((matrix_system_c, matrix_continuity))
-BCvector = np.vstack((BC_c, np.zeros((len(matrix_continuity), 1))))
-
-# plot design matrix
-plt.figure(figsize=(15, 6))
-plt.imshow(matrix_system, cmap="coolwarm")
-plt.colorbar()
-plt.clim(-0.1, 0.1)
+fig, ax = plt.subplots(figsize=(6, 6))
+bemcs.plot_mesh(mesh, ax=ax, show_moduli=False)
+ax.set_title("mesh and unit normals")
 plt.show()
 
-# %% [markdown]
-# # Solve system
+# %% Friction system
+kw = dict(geometry=geometry, mu=mu, nu=nu)
+A0, b, rows = bemcs.assemble(mesh, **kw)
+A_tn, _, rows_tn = bemcs.assemble(mesh_tn, **kw)
 
-# %%
-# compute quadratic node coefficients (in local (s,n) coordinates)
-quadratic_coefs = np.linalg.inv(matrix_system) @ BCvector
-print("Linear Operator Condition Number:", np.linalg.cond(matrix_system))
 
-c = quadratic_coefs.ravel()
+def row_of(r, e, c):
+    """Index of the BC row of element e, component c (0: shear, 1: normal)."""
+    return np.flatnonzero((r["element"] == e) & (r["component"] == c))[0]
 
-# compute stress components exactly on the fault centers
-sxy_f = S[:, :, 2, :].reshape(n_els, -1) @ c
-syy_f = S[:, :, 1, :].reshape(n_els, -1) @ c
 
-# %% [markdown]
-# # Plot displacement and stress components in the medium
+i_shear = np.array([row_of(rows, e, 0) for e in fe])  # t_s rows of the friction system
+T_s = A_tn[[row_of(rows_tn, e, 0) for e in fe]]  # x -> t_s at the fault collocation points
+T_n = A_tn[[row_of(rows_tn, e, 1) for e in fe]]  # x -> t_n at the fault collocation points
+assert np.allclose(A0[i_shear], T_s)
 
-# %%
-# Displacement and stress fields on a grid (plane strain: ux, uy, sxx, syy, sxy)
-n_obs = 50
+
+def solve_friction(slip_sign):
+    """Solve with t_s + slip_sign f t_n = tau_0 on the fault."""
+    A = A0.copy()
+    A[i_shear] += friction_coeff * slip_sign[:, None] * T_n
+    return np.linalg.solve(A, b), np.linalg.cond(A)
+
+
+slip_sign = np.ones(len(fe))  # guess: the top moves along +x, which is +s on this fault
+for iteration in range(10):
+    x, cond = solve_friction(slip_sign)
+    slip_centre = mesh.node_values(x, "slip", geometry=geometry, frame="local")[fe, 1]  # (s_s, s_n)
+    if (np.sign(slip_centre[:, 0]) == slip_sign).all():
+        break
+    slip_sign = np.sign(slip_centre[:, 0])
+else:
+    raise RuntimeError("the slip direction did not settle: parts of the fault probably stick")
+
+t_s, t_n = T_s @ x, T_n @ x
+sigma_n = -t_n
+print(f"solved in {iteration + 1} iteration(s); condition number {cond:.3g}")
+print(f"  friction residual  max |t_s - sign(s_s) f sigma_n - tau_0| = "
+      f"{np.abs(t_s - slip_sign * friction_coeff * sigma_n - tau_0).max():.1e}")
+print(f"  no opening         max |s_n| = {np.abs(slip_centre[:, 1]).max():.1e}")
+print(f"  fault compressed   sigma_n in [{sigma_n.min():.3f}, {sigma_n.max():.3f}]: {(sigma_n > 0).all()}")
+print(f"  friction resists   t_s s_s >= 0 everywhere: {(t_s * slip_centre[:, 0] >= 0).all()}")
+if not (sigma_n > 0).all():
+    print("  WARNING: parts of the fault are in tension; friction is not meaningful there (raise delta)")
+
+# %% Slip and tractions along the fault
+xs_, ys_, slip = mesh.values_on_elements(x, "slip", geometry=geometry, n_eval=10, frame="local")
+on_fault = np.repeat(fault, 10)
+
+fig, ax = plt.subplots(figsize=(12, 6))
+ax.plot(xs_[on_fault], slip[on_fault, 0], "b-", label="$s_s$ (slip)")
+ax.plot(xs_[on_fault], slip[on_fault, 1], "g-", label="$s_n$ (opening)")
+ax.plot(els.x_centers[fe], t_s, "bo", label="$t_s$")
+ax.plot(els.x_centers[fe], sigma_n, "gs", label=r"$\sigma_n = -t_n$")
+ax.plot(els.x_centers[fe], friction_coeff * sigma_n + tau_0, "k--", lw=1,
+        label=r"$f\,\sigma_n + \tau_0$ (strength)")
+ax.axhline(0, color="0.5", lw=0.8)
+ax.set_xlabel("x")
+ax.set_ylabel("slip or traction")
+ax.set_xlim(-L, L)
+ax.legend()
+ax.grid(alpha=0.3)
+ax.set_title("fault: slip, and tractions at the collocation points")
+plt.show()
+
+# %% Shear stress and pressure in the box, with the displacement field
 width = 2.001
 fig, axes, fields = bemcs.plot_fields(
-    mesh, c, geometry=geometry, mu=mu, nu=nu,
-    xlim=(-width, width), ylim=(-width, width), n=(n_obs, n_obs),
+    mesh, x, **kw, xlim=(-width, width), ylim=(-1, 1), n=(80, 40),
+    derived={"pressure": lambda f: -0.5 * (f["sxx"] + f["syy"])},
+    components=["sxy", "pressure"], cmap="PiYG",
 )
-plt.show()
-x_obs, y_obs = fields["x"].ravel(), fields["y"].ravel()
-ux, uy = fields["ux"].ravel(), fields["uy"].ravel()
-sxx, syy, sxy = fields["sxx"].ravel(), fields["syy"].ravel(), fields["sxy"].ravel()
-
-# %% [markdown]
-# ## Plot slip on the wavy fault
-
-# %%
-# Extract slip at nodes from quadratic coefficients in the required coordinate system (global - x,y or local - s,n)
-slip_nodes = matrix_slip @ quadratic_coefs
-slip_nodes_x = slip_nodes[0::2]
-slip_nodes_y = slip_nodes[1::2]
-slip_vector = np.hstack((slip_nodes_x, slip_nodes_y))
-
-# compute traction components
-ts = T[:, :, 0, :].reshape(n_els, -1) @ c
-tn = T[:, :, 1, :].reshape(n_els, -1) @ c
-# ts = kerneleval_x @ quadratic_coefs
-# tn = kerneleval_y @ quadratic_coefs
-
-plt.figure(figsize=(12, 6))
-xplot = np.zeros([len(els.x_centers[labels.interior]) * 3, 1])
-s_s = np.zeros_like(xplot)
-s_n = np.zeros_like(xplot)
-
-xplot[0::3, 0] = els.x1[labels.interior]
-xplot[1::3, 0] = els.x_centers[labels.interior]
-xplot[2::3, 0] = els.x2[labels.interior]
-for i in range(0, 3):
-    s_s[i::3] = slip_nodes_x[i::3][labels.interior]
-    s_n[i::3] = slip_nodes_y[i::3][labels.interior]
-
-plt.plot(xplot, s_s, "b.-", label="$s_s$")
-plt.plot(xplot, s_n, "g.-", label="$s_n$")
-plt.plot(els.x_centers[labels.interior], ts[labels.interior], "bo-", label="$t_s$")
-plt.plot(els.x_centers[labels.interior], tn[labels.interior], "go-", label="$t_n$")
-plt.plot(
-    els.x_centers[labels.interior], sxy_f[labels.interior], "b--", label=r"$\sigma_{xy}$"
-)
-plt.plot(
-    els.x_centers[labels.interior], syy_f[labels.interior], "g--", label=r"$\sigma_{yy}$"
-)
-plt.xlabel("x")
-plt.ylabel("slip or stress")
-plt.ylim([-0.5, 2.2])
-plt.xlim([-2, 2])
-plt.legend()
-plt.grid()
-plt.show()
-
-# %% [markdown]
-# ## Plot shear stress in the medium
-
-# %%
-n_skip_plot = 9
-plt.figure(figsize=(12, 12))
-plt.subplot(2, 1, 1)
-toplot = sxy.reshape(n_obs, n_obs)
-maxval = 1  # np.max(np.abs(toplot))
-minval = -maxval
-img = plt.contourf(
-    x_obs.reshape(n_obs, n_obs),
-    y_obs.reshape(n_obs, n_obs),
-    toplot,
-    cmap="PiYG",
-    vmin=minval,
-    vmax=maxval,
-    levels=np.linspace(minval, maxval, 21),
-)
-plt.clim([-1, 1])
-plt.contour(
-    x_obs.reshape(n_obs, n_obs),
-    y_obs.reshape(n_obs, n_obs),
-    toplot,
-    linewidths=0.5,
-    colors="k",
-    levels=np.linspace(-maxval, maxval, 21),
-)
-plt.colorbar(img, label=r"$\Delta\sigma_{xy}$")
-for i in range(n_els):
-    plt.plot([els.x1[i], els.x2[i]], [els.y1[i], els.y2[i]], "k-")
-plt.xlim([np.min(x_obs), np.max(x_obs)])
-plt.ylim([np.min(y_obs), np.max(y_obs)])
-plt.gca().set_aspect("equal", adjustable="box")
-plt.quiver(
-    x_obs[0::n_skip_plot],
-    y_obs[0::n_skip_plot],
-    ux[0::n_skip_plot],
-    uy[0::n_skip_plot],
-    width=0.002,
-    scale=30,
-)
-plt.xlabel("x")
-plt.ylabel("y")
-plt.xlim([-2, 2])
-plt.ylim([-1, 1])
-
-plt.subplot(2, 1, 2)
-toplot = (sxx + syy).reshape(n_obs, n_obs) / 2
-img = plt.contourf(
-    x_obs.reshape(n_obs, n_obs),
-    y_obs.reshape(n_obs, n_obs),
-    toplot,
-    cmap="coolwarm",
-    vmin=minval,
-    vmax=maxval,
-    levels=np.linspace(minval, maxval, 21),
-)
-plt.clim([-1, 1])
-plt.contour(
-    x_obs.reshape(n_obs, n_obs),
-    y_obs.reshape(n_obs, n_obs),
-    toplot,
-    linewidths=1,
-    colors="k",
-    levels=np.linspace(-maxval, maxval, 21),
-)
-plt.colorbar(img, label=r"$\Delta$pressure")
-for i in range(n_els):
-    plt.plot([els.x1[i], els.x2[i]], [els.y1[i], els.y2[i]], "k.-")
-plt.xlim([-2, 2])
-plt.ylim([-1, 1])
-plt.gca().set_aspect("equal", adjustable="box")
-plt.xlabel("x")
-plt.ylabel("y")
+skip = (slice(None, None, 4), slice(None, None, 4))
+axes[0, 0].quiver(fields["x"][skip], fields["y"][skip], fields["ux"][skip], fields["uy"][skip],
+                  width=0.002, scale=30)
+fig.set_size_inches(12, 9)
 plt.show()
