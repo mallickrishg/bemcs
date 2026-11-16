@@ -508,6 +508,39 @@ checked by:
 - [ ] **P4. Rebuild `examples/planestrain/testing_HeterogeneousMaterialsPlanestrain.py`.** It is still a toy
   (3 slip and 3 force elements, a 3-element interface), like the old antiplane example. Rebuild it on the P1 case(s)
   with log-spaced lines and connectivity files, the same way as the antiplane example.
+- [ ] **P6. Fault on a material interface: slip and force meshes that overlap exactly** (antiplane and plane strain).
+  - **Why:** the natural setup for a bimaterial fault (the fault is the contact between two materials). Slip
+    elements and force (`'h'`) elements then share every node and every collocation point. Physically important:
+    in plane strain, slip on a bimaterial interface changes the normal stress (bimaterial coupling).
+  - **What the code does today** (probed 2026-11-16, straight fault on a straight interface):
+    - `Mesh` / `solve` accept it in both geometries and both slip forms (hat, quadratic), and the system is well
+      conditioned (cond 4 to 1.5e2).
+    - **`bemcs.label_nodes(els)` raises** ("overlapping nodes ... same circulation direction"): 2 slip + 2 force
+      elements at every node. `solve` works on per-type subsets, so it is not affected, but anything calling
+      `label_nodes` on the whole mesh is.
+    - **`TrapezoidCrossingWarning` fires at every interface node.** `fault_crossings` treats every node as a
+      crossing, which is a false positive for a coincident fault. Coincident (and partly coincident) slip and force
+      elements need their own detection: a different warning, or none.
+    - **Slip-force contact rule:** "a node shared by a slip and an interface element is open (tapered) for both".
+      Check what this does at the ends of the fault, where the interface continues.
+    - **Collocation:** `'h'` rows sample the traction at the same point where the fault's own kernels are
+      evaluated (offset `dr`, `side`). A displacement discontinuity has continuous traction, so this should be
+      fine, but in plane strain the in-plane stress parallel to the fault jumps across it. Check that the `side`
+      choice is consistent with the interface `kappa`.
+  - **First antiplane check:**
+    - **Exact reference:** slip s on an infinite straight bimaterial interface gives the homogeneous slip field
+      scaled by c+ = 2 mu- / (mu- + mu+) on the +n side and c- = 2 mu+ / (mu- + mu+) on the -n side.
+    - **Setup:** fault on [-2, 2], interface to +-200 (log-spaced), mu+/mu- = 3, hats + trapezoids.
+    - **Result:** off-fault displacement errors 5.5e-3, 3.5e-3, 3.2e-3 for 16, 32, 64 fault elements (|u| up to
+      0.57). It levels off, with the same error on both sides (a common offset?). Investigate: truncation of the
+      interface, the force taper where the fault ends on the interface, or the coincident collocation.
+    - **Pitfall:** an interface no longer than the fault is a different problem (a fault on a finite material
+      strip), not the bimaterial one.
+  - **Plane strain:** exact references for a dislocation, or a constant-slip segment, on a bimaterial interface
+    exist (Dundurs 1969; Comninou). Unlike cracks there are no oscillatory singularities for a prescribed smooth
+    slip. Compare the bimaterial normal-stress change on the fault.
+  - **Options if the overlap formulation stays awkward:** a combined "bimaterial fault" element (slip with
+    mu_minus != mu_plus that also carries the interface condition), instead of two coincident meshes.
 - [ ] **P5. Documentation of the heterogeneous formulation as implemented** (T3). Can follow P1-P4.
 
 **Not blockers:** triangle force sources (lowest priority), far-field kernel expansion (only for very long meshes),
