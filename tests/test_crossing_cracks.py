@@ -181,3 +181,62 @@ def test_default_collocation_offset_keeps_the_solve_stable():
         c = _node_near_collocation(d, 1e-9)
         assert np.isfinite(c).all()
         np.testing.assert_allclose(c, other_side, atol=1e-5 * np.abs(other_side).max())
+
+
+# ----------------------------------------------------------------------------
+# crack B passing exactly through a collocation point of crack A: only the mesh
+# of B changes (its tips are fixed, its node next to P slides along B)
+# ----------------------------------------------------------------------------
+
+
+def _crack_through_collocation(n, s, dr=1e-9):
+    """n elements per crack; A on [-1, 1]; P = centre of A's element n/2; B (length 1.76)
+    passes through P with fixed tips; node n/2 of B sits at P + s L DIR_B (L = A's element
+    length). Returns A's shear slip at its element centres and the condition number."""
+    L = 2.0 / n
+    p = np.array([-1 + (n // 2 + 0.5) * L, 0.0])
+    b0, b1, node = p - 0.88 * DIR_B, p + 0.88 * DIR_B, p + s * L * DIR_B
+    h = n // 2
+    b = np.r_[np.linspace(b0, node, h + 1)[:-1], np.linspace(node, b1, h + 1)]
+    a = np.linspace([-1.0, 0.0], [1.0, 0.0], n + 1)
+    els = bemcs.initialize_els()
+    els.x1, els.y1 = np.r_[a[:-1, 0], b[:-1, 0]], np.r_[a[:-1, 1], b[:-1, 1]]
+    els.x2, els.y2 = np.r_[a[1:, 0], b[1:, 0]], np.r_[a[1:, 1], b[1:, 1]]
+    bemcs.standardize_els_geometry(els, reorder=False)
+    mesh = _mesh(els, "planestrain", "hat")
+    x, (A, _, _) = bemcs.solve(mesh, geometry="planestrain", mu=1.0, nu=0.25, dr=dr,
+                               return_system=True)
+    c = mesh.element_coefficients(x, "slip", geometry="planestrain").reshape(2 * n, 3, 2)
+    return c[:n, 1, 0], np.linalg.cond(A)
+
+
+def _rel(a, b):
+    return np.abs(a - b).max() / np.abs(b).max()
+
+
+def test_crack_through_a_collocation_point_converges_and_stays_finite():
+    """B always passes through P, so the offset sampling point stays on one side of B:
+    no jump (unlike the approach in the tests above), finite down to node-on-P."""
+    c = [_crack_through_collocation(8, s)[0] for s in (1e-3, 1e-6, 1e-12, 0.0)]
+    assert all(np.isfinite(v).all() for v in c)
+    assert _rel(c[1], c[0]) < 1e-3  # measured 2.4e-4
+    assert _rel(c[3], c[1]) < 1e-5  # measured ~6e-7
+
+
+def test_remeshing_a_crack_through_a_collocation_point_is_discretization_error():
+    """The geometry is fixed, so the exact answer does not depend on where B's node sits.
+    The discrete one does (the collocation point is on B, where the in-plane stress
+    takes two values), but the dependence shrinks with refinement."""
+    change = {n: _rel(_crack_through_collocation(n, 0.2)[0], _crack_through_collocation(n, 0.0)[0])
+              for n in (8, 64)}
+    assert change[8] > 1e-2  # measured 3.1e-2
+    assert change[64] < 0.4 * change[8]  # measured 7.8e-3
+
+
+def test_collocation_point_on_another_crack_degrades_conditioning():
+    """At s = 0.44 n / (n - 1) the centre of B's element next to the sliding node lands
+    on A (at P itself): two traction conditions sampled at the crossing point."""
+    _, cond_ok = _crack_through_collocation(8, 0.2)
+    _, cond_bad = _crack_through_collocation(8, 0.44 * 8 / 7)
+    assert cond_ok < 1e3  # measured 50
+    assert cond_bad > 1e6 * cond_ok  # measured 4e10

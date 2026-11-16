@@ -510,6 +510,33 @@ Square system of `2(N_s + N_f)` equations.
       by ~40% to the limit reached from that side. The in-plane stress jumps across a slipping crack, so this is
       not round-off: it matches the `dr = 0` solution approached from the other side to 3e-7. (An earlier note
       blamed slip curvature; that was wrong.)
+  - **Crack B passing exactly through A's collocation point P (pure remesh):** B's tips are fixed and its node next
+    to P slides along B by s. The geometry is fixed, so the exact answer does not depend on s. Example panels (e)
+    and (f) show the results; the tests are `test_crack_through_a_collocation_point_*`,
+    `test_remeshing_*` and `test_collocation_point_on_another_crack_*`.
+    - **Stable as s -> 0:** B always passes through P, so the offset sampling point stays on one side of B. The
+      solution converges as s -> 0, stays finite down to s = 0, and shows no jump.
+    - **Not invariant:** A's slip changes with s by 3% (8 elements per crack) or 0.8% (64), so it is
+      discretization error that shrinks with refinement. The cause is that the true stress at P takes two values,
+      one on each side of B, so A's traction condition at P is ambiguous. The `dr = 0` average and the one-sided
+      default offset differ by ~3% at 8 elements.
+    - **Erratic band:** when one of *B's* collocation points comes within ~0.1 element lengths of crack A, the
+      answer is erratic (changes up to ~5x) and the condition number climbs from ~50 to 1e4. Exactly on A, where
+      the collocation points of A and B coincide at P, it reaches 4e10. The band width in element lengths does not
+      shrink with refinement.
+- [ ] **Warn when a collocation point lies on or close to another crack** (from the remesh test above).
+  - In `Mesh` or `solve`: for each collocation point, compute the distance to every element that is not its own
+    element or a topological neighbour. Warn (with the element indices) when it is below a fraction of the local
+    element length; ~0.1 is the measured onset of trouble. Possibly also warn when a node of one crack lies within
+    that distance of another crack's collocation point (the d -> 0 case).
+  - Cost: O(N^2) point-segment distances. This is cheap next to kernel assembly, but use a bounding-box or grid
+    prefilter for large meshes.
+  - Remedies to document or offer:
+    - nudge the mesh (move the nearby node);
+    - move the collocation point along its element, away from the crossing; this needs a per-element collocation
+      parameter in the assembly;
+    - put a node at the crossing, which turns it into a junction and needs the triple-junction machinery.
+  - Do not auto-fix silently.
 - [ ] Document heterogeneous elasticity (sections 2.1 and 2.2) in the README or wiki, plus a plane-strain tutorial.
 - [ ] (Low priority) Update the GitHub wiki pages and tutorials for the revamped API. The existing tutorials use
   removed functions. Cover:
@@ -532,7 +559,8 @@ Square system of `2(N_s + N_f)` equations.
   - **Lower-level API:** `get_kernels` / `get_slip_kernels` / `get_force_kernels`, `KernelInfo`, the kernel array
     layout, `traction_kernels`, `kernel_matrix`, `use_numba`.
   - **Known limitations:** singularity cancellation only for co-planar elements (kinks and junctions keep a log
-    singularity); crack tangles that enclose blocks; nodes on another fault's collocation point; first-order
+    singularity); crack tangles that enclose blocks; collocation points on or near another crack (and nodes on
+    another crack's collocation point); first-order
     accuracy of the trapezoid interface condition between collocation points.
 - [x] Tidy up: `environment.yml` gains `mpmath` (the tests evaluate 50-digit references with it), `pkg_resources`
   is replaced, and library debug prints are removed.

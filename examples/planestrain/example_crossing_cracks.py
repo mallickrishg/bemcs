@@ -10,8 +10,10 @@
 # crossings never close a loop: a closed loop of cracks would cut out a block bounded only by
 # traction-free faces, which is free to translate (a rigid-body mode), not a problem we study.
 #
-# The last part is a separate test with two cracks, A and B (panels c and d): a node of B moves
+# The last parts are separate tests with two cracks, A and B. Panels (c) and (d): a node of B moves
 # onto a collocation point (element centre) of A, to show when float64 round-off takes over.
+# Panels (e) and (f): B passes exactly through that collocation point and only B's mesh changes,
+# to show how sensitive the answer is to collocation points that sit on or near another crack.
 
 # %% imports
 import numpy as np
@@ -150,11 +152,50 @@ err = {
     for dr in (0.0, 1e-9)
 }
 
-# %% plot all four panels (one cell, so the figure is complete when it is shown)
-fig = plt.figure(figsize=(14, 12))
+# %% crack B passing exactly through P: the geometry is fixed, only B's mesh changes
+# B's tips stay put; its node next to P (node n/2) slides along B to P + s L DIR_B, with
+# L = A's element length. The exact solution does not depend on s; the discrete one does.
+
+
+def through_P(n, s):
+    """A's shear slip at its element centres; n elements per crack, P = centre of A's
+    element n/2, B (length 1.76) through P with node n/2 at P + s L DIR_B."""
+    Ln = 2.0 / n
+    p = np.array([-1 + (n // 2 + 0.5) * Ln, 0.0])
+    b0, b1, nd = p - 0.88 * DIR_B, p + 0.88 * DIR_B, p + s * Ln * DIR_B
+    h = n // 2
+    nodes_b = np.r_[np.linspace(b0, nd, h + 1)[:-1], np.linspace(nd, b1, h + 1)]
+    els_p = crack_mesh([(np.array([-1.0, 0.0]), np.array([1.0, 0.0]))], n_el=n)
+    e = bemcs.initialize_els()
+    e.x1 = np.r_[els_p.x1, nodes_b[:-1, 0]]
+    e.y1 = np.r_[els_p.y1, nodes_b[:-1, 1]]
+    e.x2 = np.r_[els_p.x2, nodes_b[1:, 0]]
+    e.y2 = np.r_[els_p.y2, nodes_b[1:, 1]]
+    bemcs.standardize_els_geometry(e, reorder=False)
+    m = traction_free_mesh(e, "hat")
+    x = bemcs.solve(m, geometry=geometry, mu=mu, nu=nu)
+    c = m.element_coefficients(x, "slip", geometry=geometry).reshape(2 * n, 3, 2)
+    return c[:n, 1, 0], e
+
+
+S_REMESH = np.linspace(0.01, 0.7, 70)
+remesh_change = {}
+for n in (8, 32, 64):
+    ref_n, _ = through_P(n, 0.0)
+    remesh_change[n] = [np.abs(through_P(n, s_)[0] - ref_n).max() / np.abs(ref_n).max()
+                        for s_ in S_REMESH]
+
+
+def s_star(n):
+    """s at which the centre of B's element next to the sliding node lands on A (at P)."""
+    return 0.44 * n / (n - 1)
+
+
+# %% plot all six panels (one cell, so the figure is complete when it is shown)
+fig = plt.figure(figsize=(14, 18))
 
 # (a) total maximum shear stress (remote + cracks)
-ax = fig.add_subplot(2, 2, 1)
+ax = fig.add_subplot(3, 2, 1)
 X, Y = np.meshgrid(np.linspace(-2.2, 2.2, 320), np.linspace(-2.2, 2.2, 320))
 f = bemcs.evaluate_fields(hat, x_hat, X, Y, geometry=geometry, mu=mu, nu=nu)
 sxx, syy, sxy = f["sxx"] + SIG[0, 0], f["syy"] + SIG[1, 1], f["sxy"] + SIG[0, 1]
@@ -205,7 +246,7 @@ ax.set_title(
 )
 
 # (b) slip along each crack: hats (lines) and general form (dots) agree
-ax = fig.add_subplot(2, 2, 2)
+ax = fig.add_subplot(3, 2, 2)
 n_eval = 20
 for mesh_k, x, style in ((hat, x_hat, "-"), (general, x_gen, ".")):
     _, _, v = mesh_k.values_on_elements(
@@ -236,7 +277,7 @@ ax.set_title(
 # (c) a separate two-crack test: crack A and crack B, with a node of B near a
 # collocation point P (element centre) of A; d is exaggerated here
 D_SKETCH = 0.08
-ax = fig.add_subplot(2, 2, 3)
+ax = fig.add_subplot(3, 2, 3)
 node = P + D_SKETCH * APPROACH
 els_ab = crack_mesh(
     [
@@ -288,7 +329,7 @@ ax.set_title(
 )
 
 # (d) how the solution behaves as d -> 0
-ax = fig.add_subplot(2, 2, 4)
+ax = fig.add_subplot(3, 2, 4)
 for dr, style, label in (
     (0.0, "o-", "collocation at the element centre (dr = 0)"),
     (1e-9, "s-", "default offset (dr = 1e-9 element lengths)"),
@@ -314,6 +355,57 @@ ax.set_title(
     "with the default offset the sampling point crosses to B's other side",
     fontsize=10,
 )
+
+# (e) crack B passing exactly through P; node 4 of B slides along B
+ax = fig.add_subplot(3, 2, 5)
+S_DRAW = 0.3
+_, e8 = through_P(8, S_DRAW)
+for k, (name, color) in enumerate((("A", "k"), ("B", "C3"))):
+    sl = slice(8 * k, 8 * (k + 1))
+    ax.plot(np.r_[e8.x1[sl], e8.x2[sl][-1]], np.r_[e8.y1[sl], e8.y2[sl][-1]], "-",
+            color=color, lw=2)
+    ax.plot(e8.x1[sl], e8.y1[sl], "o", color=color, ms=5)
+    ax.plot(e8.x_centers[sl], e8.y_centers[sl], "x", color=color, ms=7, mew=1.5)
+nd = P + S_DRAW * L * DIR_B
+ax.text(P[0] + 0.5, 0.03, "crack A", color="k", fontsize=11, fontweight="bold", ha="right")
+ax.text(*(P + 0.5 * DIR_B + np.array([0.04, 0.0])), "crack B", color="C3", fontsize=11,
+        fontweight="bold")
+ax.plot(*P, "*", color="C0", ms=16, zorder=5, label="P: collocation point of A (on B)")
+ax.plot(*nd, "o", color="C3", mec="w", ms=10, zorder=5, label="node 4 of B, slides to P")
+ax.annotate("", xy=P, xytext=nd, arrowprops=dict(arrowstyle="->", color="C3", lw=1.5))
+ax.text(*(0.5 * (P + nd) + np.array([0.04, -0.01])), "s", color="C3", fontsize=12)
+ax.plot([], [], "kx", label="collocation points (element centres)")
+ax.plot([], [], "ko", ms=5, label="nodes")
+ax.set_aspect("equal")
+ax.set_xlim(P[0] - 0.55, P[0] + 0.55)
+ax.set_ylim(-0.45, 0.6)
+ax.grid(alpha=0.3)
+ax.legend(fontsize=8, loc="lower right")
+ax.set_title(
+    "(e) separate test: B passes exactly through P, its tips fixed;\n"
+    f"node 4 of B slides along B (s = {S_DRAW} L drawn): same geometry, only the mesh changes",
+    fontsize=10,
+)
+
+# (f) dependence of A's slip on where B's node sits
+ax = fig.add_subplot(3, 2, 6)
+for i, n in enumerate((8, 32, 64)):
+    ax.semilogy(S_REMESH, remesh_change[n], "-", color=f"C{i}", lw=1.3,
+                label=f"{n} elements per crack")
+    ax.axvline(s_star(n), color=f"C{i}", lw=0.8, ls=":")
+ax.text(s_star(64) - 0.012, 3e-4, "a collocation point of B lands on A (at P)", fontsize=7,
+        rotation=90, ha="right", va="bottom", color="0.3")
+ax.set_xlabel("s, position of B's node 4 from P (element lengths of A)")
+ax.set_ylabel("change in A's slip from s = 0 (relative)")
+ax.set_ylim(1e-4, 1e1)
+ax.grid(alpha=0.3, which="both")
+ax.legend(fontsize=8, loc="upper left")
+ax.set_title(
+    "(f) setup (e): the answer should not depend on s; it does by a\n"
+    "discretization error that shrinks with refinement, and is erratic\n"
+    "where a collocation point of B comes close to crack A",
+    fontsize=10,
+)
 fig.tight_layout()
 plt.show()
 
@@ -326,3 +418,13 @@ plt.show()
 # 1e-9 element lengths off the element: below that distance it is on the other side of crack B's
 # line, where the in-plane stress differs by a jump proportional to the slip gradient, so the
 # solution switches to the limit reached from that side (dashed line) and stays finite.
+#
+# **Reading panel (f).** Crack B passes exactly through A's collocation point P, so the true
+# stress there takes two values (one on each side of B) and A's traction condition at P is
+# ambiguous. The discrete solution then depends on where B's nodes sit, even though the geometry
+# is fixed: by a few percent at 8 elements per crack, shrinking with refinement. Separately, when
+# one of *B's* collocation points comes within about 0.1 element lengths of crack A (dotted lines),
+# the system becomes ill-conditioned and the answer is erratic; exactly at the dotted line B's
+# collocation point coincides with P and the condition number reaches ~1e10. Random meshes avoid
+# both almost surely; meshes built by hand or by symmetry can hit them. A check that warns when a
+# collocation point lies close to another crack is in tasks.md.
