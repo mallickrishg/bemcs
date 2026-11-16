@@ -591,8 +591,10 @@ def test_force_chain_ending_on_slip_elements_has_an_open_end():
     iface = [((0.0, -float(i)), (0.0, -float(i + 1))) for i in range(5)]
     els = _line_els(surface + iface)
     labels = ["s"] * 6 + ["f"] * 5
-    np.testing.assert_allclose(GF.force_open_ends(els, labels), [[0.0, 0.0]], atol=1e-12)
-    mesh = bemcs.Mesh(els, labels=labels, basis={"slip": "hat", "force": "trapezoid"})
+    bc = ["t"] * 6 + ["h"] * 5  # the surface is a free surface (traction condition)
+    np.testing.assert_allclose(GF.force_open_ends(els, labels, bc), [[0.0, 0.0]], atol=1e-12)
+    assert len(GF.force_open_ends(els, labels)) == 0  # no boundary conditions: no open ends
+    mesh = bemcs.Mesh(els, bc_type=bc, basis={"slip": "hat", "force": "trapezoid"})
     np.testing.assert_array_equal(mesh.connectivity["force"], 6 + np.array([[0, 0, 0], [0, 1, 2], [2, 3, 4]]))
     T = mesh.transform("force", geometry="antiplane")  # (2 n_force, n_patches)
     # ramp 0 is the element's end node, ramp 1 its start node; element 0 starts at the surface
@@ -607,7 +609,7 @@ def test_force_chain_ending_on_slip_elements_has_an_open_end():
     np.testing.assert_allclose(Tp[0, :, 0, :], 0.0)
     # a force chain that does not end on a slip element is unchanged
     els2 = _line_els(surface + [((0.0, -1.0 - i), (0.0, -2.0 - i)) for i in range(5)])
-    mesh2 = bemcs.Mesh(els2, labels=labels, basis={"slip": "hat", "force": "trapezoid"})
+    mesh2 = bemcs.Mesh(els2, bc_type=bc, basis={"slip": "hat", "force": "trapezoid"})
     assert len(mesh2.force_open_ends) == 0 and mesh2.connectivity["force"] is None
 
 
@@ -615,3 +617,29 @@ def test_open_end_patch_needs_a_chain_tip():
     els = _line_els(_straight(5))
     with pytest.raises(ValueError, match="exactly one chain-tip node"):
         GF.trapezoid_coefficients(els, np.array([[2, 2, 2]]), geometry="antiplane")  # interior element
+
+
+def test_open_ends_only_at_the_free_surface_not_at_faults():
+    """Three ways a force chain (interface "h") meets slip elements:
+    - it ends on the free surface ("t"): open end, free force value;
+    - it ends on a prescribed-slip fault ("s"), e.g. a layer offset across a fault: tapered tip;
+    - a fault cuts through it (the chain passes through): a crossing, not an open end."""
+    fault = [((0.0, 0.0), (0.0, -1.0)), ((0.0, -1.0), (0.0, -2.0)), ((0.0, -2.0), (0.0, -3.0))]
+    # interface ending on the fault from the right: horizontal at y = -1.5, from x = 0 to 4
+    iface_end = [((float(i), -1.5), (float(i + 1), -1.5)) for i in range(4)]
+    els = _line_els(fault + iface_end)
+    mesh = bemcs.Mesh(els, bc_type=["s"] * 3 + ["h"] * 4, basis={"slip": "hat", "force": "trapezoid"})
+    assert len(mesh.force_open_ends) == 0 and len(mesh.fault_crossings) == 0
+    assert mesh.connectivity["force"] is None  # plain trapezoids, tapered at the fault
+    # the same interface passing through the fault: a crossing
+    iface_through = [((float(i), -1.0), (float(i + 1), -1.0)) for i in range(-4, 4)]
+    els = _line_els(fault + iface_through)
+    mesh = bemcs.Mesh(els, bc_type=["s"] * 3 + ["h"] * 8, basis={"slip": "hat", "force": "trapezoid"})
+    assert len(mesh.force_open_ends) == 0
+    np.testing.assert_allclose(mesh.fault_crossings, [[0.0, -1.0]])
+    # a fault breaking the free surface on a contact: the shared surface node is open
+    surface = _straight(6, x0=-3.0, y=0.0)
+    contact = [((0.0, -float(i)), (0.0, -float(i + 1))) for i in range(5)]
+    els = _line_els(fault + surface + contact)
+    mesh = bemcs.Mesh(els, bc_type=["s"] * 3 + ["t"] * 6 + ["h"] * 5, basis={"slip": "hat", "force": "trapezoid"})
+    np.testing.assert_allclose(mesh.force_open_ends, [[0.0, 0.0]], atol=1e-12)

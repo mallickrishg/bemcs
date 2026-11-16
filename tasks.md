@@ -527,9 +527,24 @@ checked by:
     - The proximity check now skips collinear overlaps, and works on collocation points (nodes included).
   - **`assemble`'s `rows`** gains "x" and "y" (the collocation point of each row).
   - **Tests:** `tests/test_nodal_force.py`.
-  - **Next:**
-    - make "nodal" the force basis of the examples and of the plane-strain example rebuild (P4);
-    - decide whether a user can set break points for the nodal basis (today they are automatic).
+  - **Decision (user, 2026-11-16): trapezoids stay the default force basis** for their simplicity; "nodal" (tents)
+    is an option for plane-strain cases that need second order on straight interfaces.
+    - **Tent apex:** on a straight interface the stress of a tent is finite at its apex (it tends to f/2); at a
+      geometric bend it is log-singular (measured: 0.50 at all distances when straight, but 0.49 -> 1.05 from
+      d = 1e-1 to 1e-9 when bent 20 degrees), hence `kink_offset`.
+    - **Side independence:** the tent solution does not depend on the sampled side (1e-9).
+- [x] **Open force ends only at the free surface (user, 2026-11-16).** `force_open_ends(els, labels, bc_type)`: a force
+  chain tip is open (free force value) only if a slip element with a traction condition ("t", "t_local") touches it.
+  The cases are told apart:
+
+  | the chain meets slip elements | treatment |
+  |---|---|
+  | its end lies on the free surface ("t"), incl. a node shared by the surface and a fault | open end |
+  | its end lies on a fault only ("s"), e.g. a layer offset across a fault | ordinary tapered tip |
+  | a fault cuts through it (an interior node of the chain lies on the fault) | crossing: `fault_crossings`, `TrapezoidCrossingWarning`, `split_force_trapezoids()` |
+
+  Without boundary conditions (a kernel-only mesh) there are no open ends.
+  Test: `test_open_ends_only_at_the_free_surface_not_at_faults`.
   - **Original note:** (b) Edge dislocation, or a short fault with smooth slip, near a planar bimaterial interface. Dundurs image
     dislocations. This is the plane-strain analogue of the antiplane layered case, with fault-interface coupling
     through both shear and normal components.

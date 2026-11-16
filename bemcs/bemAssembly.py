@@ -1531,13 +1531,30 @@ def trapezoid_connectivity(els, breaks=None, tol=1e-9):
     return np.array(rows, dtype=int).reshape(-1, 3)
 
 
-def force_open_ends(els, labels, tol=1e-9):
+def force_open_ends(els, labels, bc_type=None, tol=1e-9):
     """End points of force-element chains (a node used by one force element only) that lie
-    on a slip element, at its end or inside it: (k, 2) points. There the force basis is
-    open (non-tapering), e.g. where a material interface meets the free surface. The slip
-    elements are unaffected: their topology is that of the slip elements alone."""
+    on a free-surface element: a slip element with a traction condition ("t" or "t_local"),
+    at its end or inside it. (k, 2) points.
+
+    There the force basis is open: a free force value instead of tapering to zero, because
+    the interface reaches the free surface with non-zero force density. Only this case is
+    open:
+    - a chain that ends on a prescribed-slip fault ("s" elements only), e.g. a layer offset
+      across a fault, keeps the ordinary tapered tip;
+    - a fault that cuts through an interface (the chain passes through the fault) is a
+      crossing (`fault_crossings`, `TrapezoidCrossingWarning`), not an open end.
+    A node shared by the free surface and a fault (e.g. a fault on a contact, breaking the
+    surface) is open, since the free surface touches it. Without bc_type (a kernel-only
+    mesh) there are no open ends. The slip elements are unaffected: their topology is that
+    of the slip elements alone."""
     labels = np.asarray(labels).astype(str)
-    f, s = np.flatnonzero(labels == "f"), np.flatnonzero(labels == "s")
+    f = np.flatnonzero(labels == "f")
+    if bc_type is None:
+        return np.zeros((0, 2))
+    bc = np.asarray(bc_type).astype(str)
+    bc = bc[:, None] if bc.ndim == 1 else bc
+    traction = np.isin(bc, ("t", "t_local")).any(axis=1)
+    s = np.flatnonzero((labels == "s") & traction)
     if len(f) == 0 or len(s) == 0:
         return np.zeros((0, 2))
     ends = np.r_[np.c_[els.x1[f], els.y1[f]], np.c_[els.x2[f], els.y2[f]]].astype(float)
@@ -2409,7 +2426,7 @@ class Mesh:
         self.fault_crossings = fault_crossings(els, labels)
         # force-chain ends on a slip element (e.g. an interface meeting the free surface): open,
         # not tapered; the default trapezoid stride counts from them
-        self.force_open_ends = force_open_ends(els, labels)
+        self.force_open_ends = force_open_ends(els, labels, bc_type)
         if (self.basis.get("force") == "trapezoid" and self.connectivity.get("force") is None
                 and len(self.force_open_ends)):
             idx = np.flatnonzero(labels == "f")
@@ -3367,6 +3384,12 @@ def _linear_solve(A, b, solver):
 def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None, return_system=False,
           return_info=False, proximity_tol=0.1, solver="auto", background=None, kink_offset=0.5):
     """Solve a BEM problem defined by a Mesh with boundary conditions.
+
+    Force basis: trapezoids ("trapezoid", the default choice throughout bemcs) or the
+    continuous piecewise-linear "nodal" basis (tents, second order on straight interfaces
+    in plane strain; an option). A force chain that reaches the free surface has an open
+    end there (`Mesh.force_open_ends`); a fault cutting through an interface is a crossing
+    (`Mesh.fault_crossings`), handled by restarting the trapezoids.
 
     The formulation follows the mesh bases:
 
