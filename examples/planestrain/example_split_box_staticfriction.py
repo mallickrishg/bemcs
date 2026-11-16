@@ -169,7 +169,8 @@ plt.show()
 width = 2.001
 fig, axes, fields = bemcs.plot_fields(
     mesh, x, **kw, xlim=(-width, width), ylim=(-1, 1), n=(80, 40),
-    derived={"pressure": lambda f: -0.5 * (f["sxx"] + f["syy"])},
+    # mean stress, tension positive like every stress here: negative under confinement
+    derived={"pressure": lambda f: 0.5 * (f["sxx"] + f["syy"])},
     components=["sxy", "pressure"], cmap="PiYG",
 )
 skip = (slice(None, None, 4), slice(None, None, 4))
