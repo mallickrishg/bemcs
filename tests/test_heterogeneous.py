@@ -158,3 +158,115 @@ def test_traction_is_continuous_at_interface_collocation_points():
     above = bemcs.evaluate_fields(mesh, x, xk, np.full_like(xk, -H_LAYER + 1e-7), **kw)["syz"]
     below = bemcs.evaluate_fields(mesh, x, xk, np.full_like(xk, -H_LAYER - 1e-7), **kw)["syz"]
     assert np.abs(above - below).max() < 1e-4 * np.abs(above).max()
+
+
+# ----------------------------------------------------------------------------
+# strike-slip fault next to (or on) a vertical material contact (Rybicki 1971)
+# ----------------------------------------------------------------------------
+# Half-space y < 0; mu1 for x < d, mu2 for x > d; vertical fault at x = 0 from the surface to depth D_V.
+# With S the homogeneous half-space field of the fault (fault + free-surface image) and
+# k = (mu1 - mu2) / (mu1 + mu2), the exact solution is u = S(x) + k S(2d - x) for x < d and
+# (1 + k) S(x) for x > d: the contact mirror commutes with the surface mirror, so no series.
+# d = 0 is a fault on the contact (a bimaterial fault): u = 2 mu2/(mu1 + mu2) S on the mu1 side,
+# 2 mu1/(mu1 + mu2) S on the mu2 side.
+
+MU_V1, MU_V2, D_V = 1.0, 4.0, 1.0
+
+
+def _S_halfspace(x, y=0.0, n_quad=300):
+    """Homogeneous half-space displacement of the tapered fault at x = 0 (slip cos^2 profile, jump
+    +s across x = 0, the fault elements' -n side being x < 0)."""
+    g, w = np.polynomial.legendre.leggauss(n_quad)
+    d, wd = 0.5 * D_V * (g + 1), 0.5 * D_V * w
+    neg_ds = 0.5 * np.pi / D_V * np.sin(np.pi * d / D_V)
+    yp = -np.asarray(y, float)  # depth
+    return sum(wi * si * (np.arctan((di - yp) / x) + np.arctan((di + yp) / x)) / (2 * np.pi)
+               for di, wi, si in zip(d, wd, neg_ds))
+
+
+def _contact_exact(x, dist, y=0.0):
+    k = (MU_V1 - MU_V2) / (MU_V1 + MU_V2)
+    return np.where(x < dist, _S_halfspace(x, y) + k * _S_halfspace(2 * dist - x, y), (1 + k) * _S_halfspace(x, y))
+
+
+def _contact_mesh(dist, h, L=300.0, ratio=1.08, h_max=5.0):
+    """Fault at x = 0 (0..D_V), free surface on [-L, L], vertical contact at x = dist from the surface
+    to depth L; spacing h near the fault, log-spaced beyond (dist a multiple of h)."""
+    r, step = list(np.arange(0.0, 2.0 + 1e-12, h)), h
+    while r[-1] < L:
+        r.append(r[-1] + step)
+        step = min(step * ratio, h_max)
+    r = np.array(r)
+    xs, zi = np.r_[-r[:0:-1], r], -r
+    assert np.isclose(xs, dist).any()
+    n_f = int(round(D_V / h))
+    zf = np.linspace(0.0, -D_V, n_f + 1)
+    x1 = np.r_[np.zeros(n_f), xs[:-1], np.full(len(zi) - 1, dist)]
+    x2 = np.r_[np.zeros(n_f), xs[1:], np.full(len(zi) - 1, dist)]
+    y1 = np.r_[zf[:-1], np.zeros(len(xs) - 1), zi[:-1]]
+    y2 = np.r_[zf[1:], np.zeros(len(xs) - 1), zi[1:]]
+    els = bemcs.initialize_els()
+    els.x1, els.x2, els.y1, els.y2 = x1, x2, y1, y2
+    bemcs.standardize_els_geometry(els, reorder=False)
+    bc = np.array(["s"] * n_f + ["t"] * (len(xs) - 1) + ["h"] * (len(zi) - 1))
+    side = np.where(els.x_centers < dist, MU_V1, MU_V2)
+    # vertical elements run downward: unit normal +x, so -n is the mu1 side
+    mu_minus = np.where(bc == "t", side, MU_V1)
+    mu_plus = np.where(bc == "t", side, np.where(bc == "h", MU_V2, MU_V2 if dist == 0 else MU_V1))
+    value = np.where(bc == "s", np.cos(0.5 * np.pi * (-els.y_centers) / D_V) ** 2, 0.0)
+    return bemcs.Mesh(els, bc_type=bc, bc_value=value, mu_minus=mu_minus, mu_plus=mu_plus,
+                      basis={"slip": "hat", "force": "trapezoid"})
+
+
+_XV = np.r_[-np.geomspace(5, 0.02, 12), np.geomspace(0.02, 5, 12)]
+
+
+def _contact_error(dist, h):
+    import warnings
+
+    mesh = _contact_mesh(dist, h)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", bemcs.TrapezoidCrossingWarning)  # d = 0: false positive (tasks.md P6)
+        x = bemcs.solve(mesh, geometry="antiplane", mu=1.0)
+    u = bemcs.evaluate_fields(mesh, x, _XV, np.full_like(_XV, -1e-9), geometry="antiplane", mu=1.0)["uz"]
+    return np.abs(u - _contact_exact(_XV, dist)).max(), mesh, x
+
+
+@pytest.mark.parametrize("dist", [0.5, 0.0])
+def test_contact_reference_is_continuous_across_the_contact(dist):
+    """u and mu du/dx continuous at x = dist (at depth), and the jump across the fault is the slip."""
+    y, e = np.array([-0.3, -1.7]), 1e-7
+    k_l, k_r = _contact_exact(np.full(2, dist - e), dist, y), _contact_exact(np.full(2, dist + e), dist, y)
+    if dist > 0:
+        np.testing.assert_allclose(k_l, k_r, atol=1e-6)
+    h = 1e-5
+    grad_l = (_contact_exact(np.full(2, dist - e), dist, y) - _contact_exact(np.full(2, dist - e - h), dist, y)) / h
+    grad_r = (_contact_exact(np.full(2, dist + e + h), dist, y) - _contact_exact(np.full(2, dist + e), dist, y)) / h
+    np.testing.assert_allclose(MU_V1 * grad_l, MU_V2 * grad_r, rtol=1e-3)
+    jump = _contact_exact(np.array([1e-9]), dist) - _contact_exact(np.array([-1e-9]), dist)
+    np.testing.assert_allclose(jump, 1.0, atol=1e-6)  # surface slip = 1
+
+
+@pytest.mark.parametrize("dist, tol", [(0.5, 3e-2), (0.0, 1e-1)])
+def test_fault_near_and_on_a_vertical_contact_converges_at_first_order(dist, tol):
+    """Today: first order, ~2e-2 (d = 0.5) and ~7e-2 (d = 0) at h = 0.05. Cause (tasks.md P3): the contact
+    meets the free surface, where the force trapezoids taper to zero although the true force density
+    does not; the missing net force (~h) shifts the whole surface displacement."""
+    e1, *_ = _contact_error(dist, 0.1)
+    e2, mesh, x = _contact_error(dist, 0.05)
+    assert e2 < tol and 1.7 < e1 / e2 < 2.3  # measured 3.3e-2 -> 1.7e-2 and 1.3e-1 -> 6.8e-2
+
+
+def test_contact_force_is_exact_at_depth_and_halved_at_the_free_surface():
+    _, mesh, x = _contact_error(0.5, 0.05)
+    xe, ye, f = mesh.values_on_elements(x, "force", geometry="antiplane", n_eval=3)
+    ye, f = np.ravel(ye)[1::3], np.ravel(f)[1::3]
+    order = np.argsort(-ye)
+    ye, f = ye[order], f[order]
+    k = (MU_V1 - MU_V2) / (MU_V1 + MU_V2)
+    kappa = bemcs.interface_kappa(MU_V1, MU_V2, -1)
+    e = 1e-6
+    dudx = (1 - k) * (_S_halfspace(0.5 - e, ye) - _S_halfspace(0.5 - 3 * e, ye)) / (2 * e)  # mu1 side
+    f_exact = -kappa * dudx  # antiplane row f + kappa T = 0, T = mu0/mu1 * (mu1 du/dx), mu0 = mu1 = 1
+    np.testing.assert_allclose(f[1:8], f_exact[1:8], atol=3e-3)  # below the top element: as exact
+    assert 0.4 < f[0] / f_exact[0] < 0.6  # the top element (touching the surface): about half

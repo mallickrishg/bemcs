@@ -512,7 +512,19 @@ checked by:
   - **Plan:** a convergence study, plus a residual net-force or traction check on a dipping fault through a planar
     interface. If it converges only at first order with a visible far-field offset, do the step task (a half-trapezoid
     on each side of the crossing) before relying on such geometries.
-- [ ] **P3. An interface that meets the free surface** (outcropping or dipping layers, basins).
+- [ ] **P3. An interface that meets the free surface** (outcropping or dipping layers, basins). **Confirmed
+  2026-11-16** with the vertical-contact case (`examples/antiplane/BimaterialContact_Rybicki.py`,
+  `tests/test_heterogeneous.py`):
+  - **Exact reference:** a strike-slip fault at x = 0 in a half-space, contact at x = d, mu2/mu1 = 4.
+    u = S + k S(2d - x) for x < d and (1 + k) S for x > d (Rybicki 1971).
+  - **Result:** first order, 3.3e-2 -> 1.7e-2 (d = 0.5) at h = 0.1 -> 0.05. The force density is exact at the
+    collocation points at depth, but the top contact element, touching the free surface, carries about half the
+    exact force, because of the slip-force contact taper. The missing net force (O(h)) shifts the whole surface
+    displacement (a smooth, broad error) and grows slowly with the extent L, like log L.
+  - **Proposed remedy (needs the user's decision; it changes the "both taper" rule):** a non-tapering end basis
+    where a force chain meets a slip element (half-trapezoid: constant force up to the chain end). The same
+    building block would serve P2 (a step at fault crossings).
+  - **Original note:**
   - **Gap:** where a force chain meets a slip (free-surface) element, the force tapers to zero ("slip-force contact:
     both taper"). The true force density there is generally nonzero, so expect a local, first-order error. Untested
     in either geometry.
@@ -549,6 +561,10 @@ checked by:
       interface, the force taper where the fault ends on the interface, or the coincident collocation.
     - **Pitfall:** an interface no longer than the fault is a different problem (a fault on a finite material
       strip), not the bimaterial one.
+  - **Vertical bimaterial fault (d = 0 in the Rybicki case):** the exact solution scales the half-space field by
+    2 mu2/(mu1 + mu2) on the mu1 side and 2 mu1/(mu1 + mu2) on the mu2 side. Today: 1.3e-1 -> 6.8e-2 (first
+    order), dominated by the P3 taper at the free surface, plus the false-positive `TrapezoidCrossingWarning`.
+    Revisit after P3.
   - **Plane strain:** exact references for a dislocation, or a constant-slip segment, on a bimaterial interface
     exist (Dundurs 1969; Comninou). Unlike cracks there are no oscillatory singularities for a prescribed smooth
     slip. Compare the bimaterial normal-stress change on the fault.
