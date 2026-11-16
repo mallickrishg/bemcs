@@ -137,8 +137,8 @@ DIR_B = np.array([np.cos(1.1), np.sin(1.1)])
 APPROACH = np.array([np.cos(0.3), np.sin(0.3)])
 
 
-def _node_near_collocation(d, dr):
-    node = P + d * APPROACH  # node 4 of crack B
+def _node_near_collocation(d, dr, approach=APPROACH):
+    node = P + d * approach  # node 4 of crack B
     els = _cracks([(np.array([-1.0, 0.0]), np.array([1.0, 0.0])),
                    (node - 4 * 0.22 * DIR_B, node + 4 * 0.22 * DIR_B)], n_el=8)
     mesh = _mesh(els, "planestrain", "hat")
@@ -164,16 +164,20 @@ def test_node_approaching_a_collocation_point_converges_then_hits_the_float64_fl
 
 
 def test_default_collocation_offset_keeps_the_solve_stable():
-    """With the default offset (1e-9 element lengths along the normal) the sampling
-    point never gets closer than ~2e-10 to B's node: finite and converged for all d,
-    including a node exactly at the element centre."""
-    c_far = _node_near_collocation(1e-8, 1e-9)
+    """With the default offset (1e-9 element lengths along A's normal) the sampling point
+    never gets closer than ~2e-10 to B's node: the solve stays finite for all d,
+    including a node exactly at the element centre.
+
+    Below d ~ dr L the offset, not d, sets where the sampling point is: here it ends up
+    on the other side of crack B's line. The in-plane stress jumps across a slipping
+    crack (in proportion to the slip gradient), so the solution switches to the limit
+    reached from that side: it matches the dr = 0 solution with B's node approaching
+    from the opposite direction.
+    """
+    other_side = _node_near_collocation(1e-8, 0.0, approach=-APPROACH)
+    same_side = _node_near_collocation(1e-8, 0.0)
+    assert np.abs(other_side - same_side).max() > 0.1 * np.abs(same_side).max()  # a real jump
     for d in (1e-12, 1e-15, 0.0):
         c = _node_near_collocation(d, 1e-9)
         assert np.isfinite(c).all()
-        # the limit depends on the approach direction (the stress at a node is bounded
-        # but direction dependent: slip curvature jumps there); below d ~ dr L the
-        # sampling offset sets that direction, so compare loosely
-        assert np.abs(c - c_far).max() < 0.5 * np.abs(c_far).max()
-    np.testing.assert_allclose(_node_near_collocation(1e-15, 1e-9), _node_near_collocation(0.0, 1e-9),
-                               rtol=1e-4)
+        np.testing.assert_allclose(c, other_side, atol=1e-5 * np.abs(other_side).max())

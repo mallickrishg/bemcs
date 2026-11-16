@@ -505,8 +505,11 @@ Square system of `2(N_s + N_f)` equations.
   - **Node near another crack's collocation point:**
     - with `dr = 0`: converges down to d ~ 1e-10 L, loses precision near 1e-13 L, and blows up at 1e-16 L;
     - `dr = 0, d = 0` raises a clear `FloatingPointError`;
-    - with the default `dr = 1e-9` the solve stays finite for all d. The limit depends on the approach
-      direction, because slip curvature jumps at nodes.
+    - with the default `dr = 1e-9` the solve stays finite for all d.
+    - Below d ~ dr L the offset puts the sampling point on the other side of crack B's line, and the solution jumps
+      by ~40% to the limit reached from that side. The in-plane stress jumps across a slipping crack, so this is
+      not round-off: it matches the `dr = 0` solution approached from the other side to 3e-7. (An earlier note
+      blamed slip curvature; that was wrong.)
 - [ ] Document heterogeneous elasticity (sections 2.1 and 2.2) in the README or wiki, plus a plane-strain tutorial.
 - [ ] (Low priority) Update the GitHub wiki pages and tutorials for the revamped API. The existing tutorials use
   removed functions. Cover:
