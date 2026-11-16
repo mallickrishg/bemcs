@@ -837,11 +837,28 @@ spatially varying nu (T4), wiki updates.
     O(1) off on those two elements. In the symmetric example the error stays local, but without the symmetry the
     local error carries a net force.
   - **Option:** split the chain at the crossing with a non-tapering end basis (a half-trapezoid) on each side.
-- [ ] **Far-field cancellation in very long meshes.** Kernels of small elements evaluated far away lose accuracy as
-  roughly eps (r/a)^2 in absolute terms. In the layered example, extending the lines to 1e4-1e5 H with elements of
-  0.0125-0.05 H near the fault ruins the solution (errors 8e-3 to 1). Up to about r/a ~ 1e5 it is harmless. A
-  far-field (multipole) expansion of the slip and force kernels for r >> a would remove the limit; until then,
-  keep r_max / a_min below about 1e5.
+- [ ] **Far-field quadrature for r/a > 100 (later stage).**
+  - **Problem:** the closed-form element kernels are differences of endpoint terms (log r1 - log r2, polynomial x
+    log terms). Far away these terms are large while their difference, the kernel, is small, so float64 cancellation
+    costs accuracy. Measured against 60-digit evaluation of the same formulas (element half-length a, point at
+    distance r), as relative error of the final kernels:
+
+    | r/a | 1e2 | 1e3 | 1e4 | 1e5 |
+    |---|---|---|---|---|
+    | quadratic slip (U and S) | 4e-9 | 3e-6 | 4e-3 | O(1) |
+    | linear force | 5e-13 | 3e-11 | 4e-9 | 5e-7 |
+
+    This is about (r/a)^3 relative, (r/a)^2 absolute.
+  - **Planned fix:** keep the numba / numpy element kernels exactly as they are. After building the BEM matrix (or a
+    field evaluation), recompute only the entries whose source element is far from the observation point
+    (r/a > 100) by a few-point Gauss quadrature of the point dislocation (slip) or point force (force), and swap them
+    in. Far away the integrand is smooth, so 4-8 points reach machine precision with no cancellation. This leaves the
+    jitted kernels untouched.
+  - **Does it matter today?** Only for long meshes that also contain small elements (r/a >~ 1e4).
+  - **Earlier claim to revisit:** the earlier observation that the layered example fails at L = 1e4-1e5 is not yet
+    attributed. Those runs also had uncapped log-spaced elements (hundreds of H long, the free surface and interface
+    only H apart; proximity warnings fired), which may have been the real cause. A rerun with elements capped at 5 H
+    is pending.
 - [x] One-ring hats (section 7.4), 2026-11-16:
   - **API:** `basis="hat"` *without* connectivity builds one hat per non-tip element from the mesh topology
     (`one_ring_hat_coefficients`, `hat_elements`), at level 2 and in `Mesh`. An explicit 3-element connectivity still
