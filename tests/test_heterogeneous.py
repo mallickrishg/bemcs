@@ -247,18 +247,19 @@ def test_contact_reference_is_continuous_across_the_contact(dist):
     np.testing.assert_allclose(jump, 1.0, atol=1e-6)  # surface slip = 1
 
 
-@pytest.mark.parametrize("dist, tol", [(0.5, 3e-2), (0.0, 1e-1)])
-def test_fault_near_and_on_a_vertical_contact_converges_at_first_order(dist, tol):
-    """Today: first order, ~2e-2 (d = 0.5) and ~7e-2 (d = 0) at h = 0.05. Cause (tasks.md P3): the contact
-    meets the free surface, where the force trapezoids taper to zero although the true force density
-    does not; the missing net force (~h) shifts the whole surface displacement."""
+@pytest.mark.parametrize("dist, tol", [(0.5, 1e-2), (0.0, 4e-2)])
+def test_fault_near_and_on_a_vertical_contact_converges(dist, tol):
+    """The contact meets the free surface, where the force chain has an open (non-tapering) end.
+    First order: 1.3e-2 -> 6.4e-3 (d = 0.5) and 6.0e-2 -> 2.5e-2 (d = 0) for h = 0.1 -> 0.05.
+    With a tapered end it was 3.3e-2 -> 1.7e-2 and 1.3e-1 -> 6.8e-2 (tasks.md P3)."""
     e1, *_ = _contact_error(dist, 0.1)
     e2, mesh, x = _contact_error(dist, 0.05)
-    assert e2 < tol and 1.7 < e1 / e2 < 2.3  # measured 3.3e-2 -> 1.7e-2 and 1.3e-1 -> 6.8e-2
+    assert e2 < tol and 1.7 < e1 / e2 < 2.8
 
 
-def test_contact_force_is_exact_at_depth_and_halved_at_the_free_surface():
+def test_contact_force_is_exact_at_depth_and_open_at_the_free_surface():
     _, mesh, x = _contact_error(0.5, 0.05)
+    np.testing.assert_allclose(mesh.force_open_ends, [[0.5, 0.0]], atol=1e-12)
     xe, ye, f = mesh.values_on_elements(x, "force", geometry="antiplane", n_eval=3)
     ye, f = np.ravel(ye)[1::3], np.ravel(f)[1::3]
     order = np.argsort(-ye)
@@ -268,5 +269,4 @@ def test_contact_force_is_exact_at_depth_and_halved_at_the_free_surface():
     e = 1e-6
     dudx = (1 - k) * (_S_halfspace(0.5 - e, ye) - _S_halfspace(0.5 - 3 * e, ye)) / (2 * e)  # mu1 side
     f_exact = -kappa * dudx  # antiplane row f + kappa T = 0, T = mu0/mu1 * (mu1 du/dx), mu0 = mu1 = 1
-    np.testing.assert_allclose(f[1:8], f_exact[1:8], atol=3e-3)  # below the top element: as exact
-    assert 0.4 < f[0] / f_exact[0] < 0.6  # the top element (touching the surface): about half
+    np.testing.assert_allclose(f[:8], f_exact[:8], atol=6e-3)  # including the top element (was ~half)

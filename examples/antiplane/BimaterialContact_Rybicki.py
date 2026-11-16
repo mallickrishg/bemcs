@@ -175,16 +175,21 @@ ax.set_ylabel("depth / D")
 ax.grid(alpha=0.3)
 ax.legend(fontsize=8)
 ax.set_title("(d) fault near the contact: force density along the contact.\n"
-             "Exact at depth; tapered to zero at the free surface", fontsize=10)
+             "The chain end at the free surface is open (not tapered)", fontsize=10)
 fig.tight_layout()
 plt.show()
 
 # %% [markdown]
-# **Reading the figure.** The BEM matches the exact solution for both faults to about 2% (d = 0.5)
-# and 7% (d = 0) at the default element length, converging at first order. That is much slower than
-# the horizontal layered half-space (about 2.5e-5), for one reason (panel d). Where a force chain
-# meets a slip element, here the contact meeting the free surface, the force trapezoids taper to zero.
-# The true force density there is not zero, so the top contact element carries about half the force
-# it should. The missing net force, of order h, has a far field that shifts the whole surface
-# displacement (b). This is task P3 in tasks.md; a non-tapering end basis where a force chain meets a
-# free surface would remove it. For d = 0 the slip and force elements also coincide (task P6).
+# **Reading the figure.** The BEM matches the exact solution for both faults: 6e-3 (d = 0.5) and
+# 2.5e-2 (d = 0) at the default element length, converging at first order.
+#
+# Where the contact meets the free surface, the force chain ends on slip elements. Its end is open
+# (`mesh.force_open_ends`): the force is constant over the top element instead of tapering to zero,
+# because the true force density there is not zero (panel d). The free surface stays an ordinary
+# slip mesh, with the fault-surface triple junction handled by the slip elements alone. With a
+# tapered end, the missing net force made the error 2.6x larger.
+#
+# The remaining first-order error comes from the corner. A force layer with non-zero density at its
+# end has a log-singular stress there, which in the true half-space solution is cancelled at the
+# free surface; the hat-function surface slip cancels it only to O(h) (tasks.md P3). For d = 0 the
+# slip and force elements also coincide (tasks.md P6).

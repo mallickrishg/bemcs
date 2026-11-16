@@ -521,9 +521,21 @@ checked by:
     collocation points at depth, but the top contact element, touching the free surface, carries about half the
     exact force, because of the slip-force contact taper. The missing net force (O(h)) shifts the whole surface
     displacement (a smooth, broad error) and grows slowly with the extent L, like log L.
-  - **Proposed remedy (needs the user's decision; it changes the "both taper" rule):** a non-tapering end basis
-    where a force chain meets a slip element (half-trapezoid: constant force up to the chain end). The same
-    building block would serve P2 (a step at fault crossings).
+  - **Remedy done (user's decision, 2026-11-16): open force ends.**
+    - **Slip side unchanged:** the slip elements are treated as regular elements. Slip topology is that of the
+      slip elements alone, so a free surface meeting a fault is an ordinary slip triple junction, with no taper.
+      The earlier "both taper" wording was wrong for slip.
+    - **Force side:** a force chain that ends on a slip element has an open end
+      (`force_open_ends(els, labels)`, `mesh.force_open_ends`). The end trapezoid is constant over the end
+      element instead of tapering (`trapezoid_coefficients(..., open_ends=...)`), and the default stride counts
+      from the open end (`trapezoid_connectivity(..., breaks=...)` at chain tips).
+    - **Result:** the top contact force is now about exact (0.3355 vs 0.3407; it was 0 -> 0.34 ramped). The
+      surface error falls 2.6x: d = 0.5: 1.3e-2, 6.4e-3, 3.5e-3; d = 0: 6.0e-2, 2.5e-2, 1.1e-2 for
+      h = 0.1, 0.05, 0.025.
+    - **Still first order. Likely cause:** a force layer with non-zero density at its end has a log-singular
+      stress there. In the true half-space solution it is cancelled at the free surface; the hat-function surface
+      slip cancels it only to O(h). Options: refine the free surface towards the corner, or a corner correction.
+      To be investigated.
   - **Original note:**
   - **Gap:** where a force chain meets a slip (free-surface) element, the force tapers to zero ("slip-force contact:
     both taper"). The true force density there is generally nonzero, so expect a local, first-order error. Untested
