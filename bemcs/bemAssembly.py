@@ -2008,8 +2008,9 @@ class Mesh:
         indices. Optional for "hat" and "trapezoid"; defaults from the mesh
         topology: one-ring hats on every non-tip slip element, and trapezoids
         centred on every other element along each chain of force elements.
-    bc_type : sequence of str, or (n_els, 2) for per-component types (plane strain)
-        Boundary condition of each element, used by `solve`:
+    bc_type : sequence of str (same type on all components), or (n_els, 2) with one
+        type per component in plane strain (component 1/2: x/y for global types,
+        t/n for local types). Boundary condition of each element, used by `solve`:
         "s": slip (local t, n) at the element centre (slip elements);
         "u": displacement (global x, y; antiplane z);
         "t": traction (global x, y; antiplane sigma.n);
@@ -2037,7 +2038,7 @@ class Mesh:
         if labels is None:
             if bc_type is None:
                 raise TypeError("Mesh needs labels or bc_type")
-            labels = np.where(bc_type[:, 0] == "h", "f", "s")
+            labels = np.where((bc_type == "h").any(axis=1), "f", "s")
         if isinstance(labels, str):
             if labels not in _KINDS:
                 raise ValueError(f"labels must be 'slip', 'force' or per-element 's'/'f', got {labels!r}")
@@ -2102,24 +2103,44 @@ class Mesh:
 
     @classmethod
     def from_csv(cls, path, *, basis=None, connectivity=None, reorder=False, length_scale=1.0):
-        """Mesh from a CSV file with columns x1, z1, x2, z2, BC_type, value
-        [, value2], mu_minus, mu_plus (one row per element). Coordinates are
-        divided by length_scale (e.g. 1e3 for metres -> km)."""
+        """Mesh from a CSV file, one row per element.
+
+        Columns: x1, z1, x2, z2, mu_minus, mu_plus, and the boundary conditions as
+        - plane strain, one type and value per component:
+          BC_type_1, value_1, BC_type_2, value_2. Component 1/2 is x/y for global
+          types ("u", "t") and t/n for local types ("s", "t_local"); "h" must be
+          on both components;
+        - antiplane (one component): BC_type, value;
+        - shorthand, the same type on both components: BC_type, value[, value2].
+        Coordinates are divided by length_scale (e.g. 1e3 for metres -> km).
+        """
         import pandas as pd
 
         d = pd.read_csv(path)
-        missing = {"x1", "z1", "x2", "z2", "BC_type", "value", "mu_minus", "mu_plus"} - set(d.columns)
+        missing = {"x1", "z1", "x2", "z2", "mu_minus", "mu_plus"} - set(d.columns)
+        per_component = {"BC_type_1", "BC_type_2", "value_1", "value_2"}
+        if per_component & set(d.columns):
+            missing |= per_component - set(d.columns)
+            if "BC_type" in d.columns:
+                raise ValueError(f"{path}: give either BC_type or BC_type_1 / BC_type_2, not both")
+        else:
+            missing |= {"BC_type", "value"} - set(d.columns)
         if missing:
             raise ValueError(f"{path}: missing columns {sorted(missing)}")
         els = _core.initialize_els()
         els.x1, els.y1 = d["x1"].to_numpy(float) / length_scale, d["z1"].to_numpy(float) / length_scale
         els.x2, els.y2 = d["x2"].to_numpy(float) / length_scale, d["z2"].to_numpy(float) / length_scale
         _core.standardize_els_geometry(els, reorder=reorder)
-        value = d["value"].to_numpy(float)
-        if "value2" in d.columns:
-            value = np.stack((value, d["value2"].to_numpy(float)), axis=1)
+        if "BC_type_1" in d.columns:
+            bc_type = np.stack((d["BC_type_1"].to_numpy(str), d["BC_type_2"].to_numpy(str)), axis=1)
+            value = np.stack((d["value_1"].to_numpy(float), d["value_2"].to_numpy(float)), axis=1)
+        else:
+            bc_type = d["BC_type"].to_numpy(str)
+            value = d["value"].to_numpy(float)
+            if "value2" in d.columns:
+                value = np.stack((value, d["value2"].to_numpy(float)), axis=1)
         return cls(
-            els, basis=basis, connectivity=connectivity, bc_type=d["BC_type"].to_numpy(str),
+            els, basis=basis, connectivity=connectivity, bc_type=bc_type,
             bc_value=value, mu_minus=d["mu_minus"].to_numpy(float), mu_plus=d["mu_plus"].to_numpy(float),
         )
 

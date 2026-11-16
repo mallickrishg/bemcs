@@ -418,7 +418,9 @@ Square system of `2(N_s + N_f)` equations.
 ### T2. Package integration
 - [x] Move `solve_planestrain_heterogeneous` into `bemcs/bemAssembly.py` (mirroring `solveAntiplaneBEM`). It uses the new
   kernel API, has exact `'s'` rows, and prints the condition number only when `verbose=True`.
-- [x] Mesh/connectivity interface: `Mesh.from_csv` reads `x1, z1, x2, z2, BC_type, value[, value2], mu_minus, mu_plus`
+- [x] Mesh/connectivity interface: `Mesh.from_csv` reads `x1, z1, x2, z2, mu_minus, mu_plus` and the BCs as
+  `BC_type, value` (antiplane), `BC_type_1, value_1, BC_type_2, value_2` (plane strain, one type per component;
+  x/y for global types, t/n for local ones, `h` on both), or the shorthand `BC_type, value[, value2]`
   (`length_scale=`). Patches default from the topology:
   - one-ring hats for slip;
   - trapezoids centred on every other element along each force chain, as in the original design.

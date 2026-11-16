@@ -301,3 +301,48 @@ def test_layout_and_helpers(geometry, slip_basis):
 
 def core_slip(t):
     return bemcs.slip_functions(np.array([t]), 1.0)[0]
+
+
+def test_mesh_from_csv_per_component(tmp_path):
+    """Plane strain: one BC type and value per component; mixed frames are allowed."""
+    rows = pd.DataFrame({
+        "x1": [0.0, 1.0, 2.0], "z1": [0.0, 0.0, 0.0], "x2": [1.0, 2.0, 3.0], "z2": [0.0, 0.0, 0.0],
+        "BC_type_1": ["s", "t", "h"], "value_1": [1.0, 0.0, 0.0],
+        "BC_type_2": ["s", "s", "h"], "value_2": [0.2, 0.0, 0.0],
+        "mu_minus": [1.0, 1.0, 2.0], "mu_plus": [1.0, 1.0, 3.0],
+    })
+    path = tmp_path / "mesh.csv"
+    rows.to_csv(path, index=False)
+    mesh = bemcs.Mesh.from_csv(path)
+    np.testing.assert_array_equal(mesh.bc_type, [["s", "s"], ["t", "s"], ["h", "h"]])
+    np.testing.assert_allclose(mesh.bc_value, [[1.0, 0.2], [0.0, 0.0], [0.0, 0.0]])
+    np.testing.assert_array_equal(mesh.labels, ["s", "s", "f"])
+    bad = rows.copy()
+    bad.loc[2, "BC_type_2"] = "t"  # 'h' on one component only
+    bad.to_csv(path, index=False)
+    with pytest.raises(ValueError, match="'h' applies to both components"):
+        bemcs.Mesh.from_csv(path)
+    both = rows.assign(BC_type=["s", "s", "h"])
+    both.to_csv(path, index=False)
+    with pytest.raises(ValueError, match="not both"):
+        bemcs.Mesh.from_csv(path)
+
+
+def test_mixed_component_bcs_solve():
+    """Per-component types in plane strain: traction-free in x and zero normal slip in y
+    on a free surface element gives the same answer as setting each row by hand."""
+    els, n_f, n_i = _fault_and_interface(n_int=20, L=2.0)
+    n = n_f + n_i
+    bc_type = np.array([["s", "s"]] * n_f + [["t", "s"]] * n_i)
+    value = np.zeros((n, 2))
+    value[:n_f, 0] = 1.0
+    mesh = bemcs.Mesh(els, bc_type=bc_type, bc_value=value, mu_minus=1.0, mu_plus=1.0,
+                      basis={"slip": "hat"})
+    x, (A, b, rows) = bemcs.solve(mesh, geometry="planestrain", mu=1.0, nu=NU, return_system=True)
+    np.testing.assert_allclose(A @ x, b, atol=1e-12)
+    surf = rows["element"] >= n_f
+    assert set(rows["type"][surf & (rows["component"] == 0)]) == {"t"}
+    assert set(rows["type"][surf & (rows["component"] == 1)]) == {"s"}
+    # the normal slip on the surface elements is zero at their centres (non-tip elements)
+    nv = mesh.node_values(x, "slip", geometry="planestrain")
+    np.testing.assert_allclose(nv[n_f + 1 : n - 1, 1, 1], 0, atol=1e-10)
