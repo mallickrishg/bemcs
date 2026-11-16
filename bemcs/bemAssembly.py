@@ -1,3 +1,4 @@
+import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -2267,6 +2268,16 @@ class Mesh:
         boundary-condition row: all except the tip elements."""
         return np.setdiff1d(self.elements(kind), self.tip_elements(kind))
 
+    def close_collocation_points(self, tol=0.1):
+        """Collocation points of `solve` that lie within tol element lengths of another
+        (non-neighbouring) element; see `close_collocation_points`. Only rows that
+        sample the kernels are checked (not slip "s" rows). Returns a dict of arrays
+        "element", "other", "distance" (in lengths of "element")."""
+        colloc, _ = _collocation_elements(self)
+        if self.bc_type is not None:
+            colloc = colloc[(self.bc_type[colloc] != "s").any(axis=1)]
+        return close_collocation_points(self.els, colloc, tol=tol)
+
     def continuity_operator(self, *, geometry):
         """Continuity rows A (A x = 0, or = prescribed values at open nodes) for the mesh.
 
@@ -2454,7 +2465,110 @@ def _patch_operator(sub, kind, basis, conn, geometry):
     return T if geometry == "antiplane" else T.reshape(T.shape[0] * 2, -1)
 
 
-def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False):
+class CollocationProximityWarning(UserWarning):
+    """A collocation point lies on or close to another element (not its own and not a
+    neighbour sharing a node). The boundary condition is then sampled where that
+    element's stress varies sharply, or takes two values (one on each side) when the
+    point is on it: accuracy and conditioning degrade, and the answer depends on the
+    mesh (tasks.md, crossing cracks). Remedies: move a nearby node, or refine."""
+
+
+def close_collocation_points(els, elements=None, *, tol=0.1, chunk=512):
+    """Collocation points (element centres) within tol element lengths of another element.
+
+    Parameters
+    ----------
+    els : standardized element geometry.
+    elements : int array, optional
+        Elements whose centre is a collocation point (default: all).
+    tol : float
+        Threshold as a fraction of the length L_i of the collocation element i.
+        Measured: trouble starts at ~0.1 (tests/test_crossing_cracks.py).
+
+    Returns
+    -------
+    dict of arrays, one entry per close pair, sorted by distance:
+    "element" (i, the collocation element), "other" (j, the element it is close to),
+    "distance" (distance from i's centre to segment j, divided by L_i).
+    Elements sharing a node with i (neighbours along a fault, at kinks or at
+    junctions) and i itself are not reported.
+    """
+    x1, y1 = np.asarray(els.x1, float), np.asarray(els.y1, float)
+    x2, y2 = np.asarray(els.x2, float), np.asarray(els.y2, float)
+    L = np.hypot(x2 - x1, y2 - y1)
+    idx = np.arange(len(x1)) if elements is None else np.asarray(elements, dtype=int).ravel()
+    eps = 1e-9 * (L.max() if len(L) else 1.0)  # coincident end points: shared node
+    dx, dy = x2 - x1, y2 - y1
+    out_i, out_j, out_d = [], [], []
+    for start in range(0, len(idx), chunk):
+        i = idx[start : start + chunk]
+        px = 0.5 * (x1[i] + x2[i])[:, None]
+        py = 0.5 * (y1[i] + y2[i])[:, None]
+        t = np.clip(((px - x1) * dx + (py - y1) * dy) / np.maximum(L**2, 1e-300), 0.0, 1.0)
+        d = np.hypot(px - x1 - t * dx, py - y1 - t * dy) / L[i][:, None]
+        ends_i = ((x1[i], y1[i]), (x2[i], y2[i]))
+        ends_j = ((x1, y1), (x2, y2))
+        share = np.zeros(d.shape, dtype=bool)
+        for xa, ya in ends_i:
+            for xb, yb in ends_j:
+                share |= np.hypot(xa[:, None] - xb, ya[:, None] - yb) < eps
+        share[np.arange(len(i)), i] = True
+        r, c = np.nonzero((d < tol) & ~share)
+        out_i.append(i[r])
+        out_j.append(c)
+        out_d.append(d[r, c])
+    cat = lambda v, dt: np.concatenate(v).astype(dt) if v else np.zeros(0, dt)  # noqa: E731
+    res = {"element": cat(out_i, int), "other": cat(out_j, int), "distance": cat(out_d, float)}
+    order = np.argsort(res["distance"], kind="stable")
+    return {k: v[order] for k, v in res.items()}
+
+
+def _collocation_elements(mesh):
+    """Collocation elements of `assemble` (global indices, in row order) and, per kind,
+    (sub-mesh, global indices, connectivity, local collocation indices)."""
+    colloc, parts = [], {}
+    for k in mesh.kinds:
+        sub, idx, conn = mesh.subset(k)
+        b = mesh.basis[k]
+        if b == "quadratic":
+            local = np.setdiff1d(np.arange(len(idx)), tip_elements(sub))  # tips: clamped tapers
+        elif b == "constant":
+            local = np.arange(len(idx))
+        else:
+            local = patch_elements(sub, b, conn)
+        parts[k] = (sub, idx, conn, local)
+        colloc.extend(int(idx[le]) for le in local)
+    return np.array(colloc, dtype=int), parts
+
+
+def _warn_close_collocation(mesh, colloc, tol):
+    """Warn about collocation points close to other elements (rows that sample kernels)."""
+    if tol is None or tol <= 0 or len(colloc) == 0:
+        return
+    sampled = colloc if mesh.bc_type is None else colloc[(mesh.bc_type[colloc] != "s").any(axis=1)]
+    close = close_collocation_points(mesh.els, sampled, tol=tol)
+    n = len(close["element"])
+    if n == 0:
+        return
+    shown = ", ".join(
+        f"{i} -> {j} ({d:.2g} L)"
+        for i, j, d in list(zip(close["element"], close["other"], close["distance"]))[:8]
+    )
+    more = f", ... ({n} pairs)" if n > 8 else ""
+    warnings.warn(
+        f"collocation point(s) within {tol:g} element lengths of another element "
+        f"(element -> other, distance): {shown}{more}. The boundary condition is sampled where "
+        "the other element's stress varies sharply (or is two-valued, on it), so accuracy and "
+        "conditioning degrade. Move a nearby node or refine; list all with "
+        "bemcs.bemAssembly.close_collocation_points(mesh.els, ...) or "
+        "mesh.close_collocation_points(). Silence with proximity_tol=None.",
+        CollocationProximityWarning,
+        stacklevel=3,
+    )
+
+
+def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False,
+             proximity_tol=0.1):
     """Linear system A x = b for a mesh with boundary conditions (see `solve`).
 
     Returns (A, b, rows) with rows a dict of per-row arrays: element, component,
@@ -2480,16 +2594,11 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False):
         raise ValueError("solve uses trapezoids for force sources: Mesh(basis={'force': 'trapezoid'})")
 
     # collocation elements and the operators giving slip / force density at their centres
-    colloc, centre_ops = [], {}
-    for k in mesh.kinds:
-        sub, idx, conn = mesh.subset(k)
+    colloc, parts = _collocation_elements(mesh)
+    _warn_close_collocation(mesh, colloc, proximity_tol)
+    centre_ops = {}
+    for k, (sub, idx, conn, local) in parts.items():
         b = mesh.basis[k]
-        if b == "quadratic":
-            local = np.setdiff1d(np.arange(len(idx)), tip_elements(sub))  # tips: clamped tapers
-        elif b == "constant":
-            local = np.arange(len(idx))
-        else:
-            local = patch_elements(sub, b, conn)
         T = _patch_operator(sub, k, b, conn, geometry)
         if k == "slip":
             M, _ = slip_node_matrices(sub, geometry=geometry, reference="local")
@@ -2502,8 +2611,6 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False):
             op = np.zeros((pe, n_cols))
             op[:, cols] = node_rows(le) @ T  # local-frame slip / force density at the centre
             centre_ops[int(idx[le])] = op
-            colloc.append(int(idx[le]))
-    colloc = np.array(colloc, dtype=int)
 
     # kernels at the collocation points, offset to the sampled side of each element
     L = 2 * np.asarray(els.half_lengths)[colloc]
@@ -2555,7 +2662,7 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False):
 
 
 def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False, return_system=False,
-          return_info=False):
+          return_info=False, proximity_tol=0.1):
     """Solve a BEM problem defined by a Mesh with boundary conditions.
 
     The formulation follows the mesh bases:
@@ -2582,6 +2689,12 @@ def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False, ret
         Reference shear modulus of the kernels.
     nu : float
         Uniform Poisson's ratio (plane strain).
+    proximity_tol : float or None
+        Warn (`CollocationProximityWarning`) when a collocation point that samples the
+        kernels lies within proximity_tol element lengths of another element that is
+        not a neighbour (e.g. one crack crossing another next to its element centre).
+        The condition there is ambiguous or poorly resolved; see
+        `close_collocation_points`. None disables the check.
 
     Returns
     -------
@@ -2597,7 +2710,8 @@ def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False, ret
     The system is solved by least squares, so rigid-body null spaces (e.g. a
     domain with traction conditions only) give the minimum-norm solution.
     """
-    A, b, rows = assemble(mesh, geometry=geometry, mu=mu, nu=nu, side=side, dr=dr, use_numba=use_numba)
+    A, b, rows = assemble(mesh, geometry=geometry, mu=mu, nu=nu, side=side, dr=dr, use_numba=use_numba,
+                          proximity_tol=proximity_tol)
     bad = ~np.isfinite(A).all(axis=1)
     if bad.any():
         raise FloatingPointError(

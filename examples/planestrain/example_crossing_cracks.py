@@ -116,6 +116,11 @@ x_hat, (A_hat, _, _) = bemcs.solve(
 )
 x_gen = bemcs.solve(general, geometry=geometry, mu=mu, nu=nu)
 print("condition number (hats): %.1f" % np.linalg.cond(A_hat))
+# collocation points within 0.1 element lengths of another crack (solve warns about these)
+close = hat.close_collocation_points()
+print("collocation points close to another crack:",
+      [f"{i} -> {j} ({d:.2g} L)" for i, j, d in zip(close["element"], close["other"], close["distance"])]
+      or "none")
 
 # %% a node of crack B approaching a collocation point (element centre) of crack A
 P = np.array([0.125, 0.0])  # centre of element 4 of crack A (8 elements on [-1, 1])
@@ -135,7 +140,9 @@ def node_near_collocation(d, dr, approach=APPROACH):
         n_el=8,
     )
     mesh_ab = traction_free_mesh(els_ab, "hat")
-    x = bemcs.solve(mesh_ab, geometry=geometry, mu=mu, nu=nu, dr=dr)
+    # proximity_tol=None: this test puts B close to A's collocation point on purpose, so
+    # silence the CollocationProximityWarning that solve would otherwise issue
+    x = bemcs.solve(mesh_ab, geometry=geometry, mu=mu, nu=nu, dr=dr, proximity_tol=None)
     return mesh_ab.element_coefficients(x, "slip", geometry=geometry)
 
 
@@ -173,7 +180,8 @@ def through_P(n, s):
     e.y2 = np.r_[els_p.y2, nodes_b[1:, 1]]
     bemcs.standardize_els_geometry(e, reorder=False)
     m = traction_free_mesh(e, "hat")
-    x = bemcs.solve(m, geometry=geometry, mu=mu, nu=nu)
+    # P is on B on purpose: silence the CollocationProximityWarning
+    x = bemcs.solve(m, geometry=geometry, mu=mu, nu=nu, proximity_tol=None)
     c = m.element_coefficients(x, "slip", geometry=geometry).reshape(2 * n, 3, 2)
     return c[:n, 1, 0], e
 
@@ -182,8 +190,10 @@ S_REMESH = np.linspace(0.01, 0.7, 70)
 remesh_change = {}
 for n in (8, 32, 64):
     ref_n, _ = through_P(n, 0.0)
-    remesh_change[n] = [np.abs(through_P(n, s_)[0] - ref_n).max() / np.abs(ref_n).max()
-                        for s_ in S_REMESH]
+    remesh_change[n] = [
+        np.abs(through_P(n, s_)[0] - ref_n).max() / np.abs(ref_n).max()
+        for s_ in S_REMESH
+    ]
 
 
 def s_star(n):
@@ -288,17 +298,49 @@ els_ab = crack_mesh(
 )
 for k, (name, color) in enumerate((("A", "k"), ("B", "C3"))):
     e = slice(8 * k, 8 * (k + 1))
-    ax.plot(np.r_[els_ab.x1[e], els_ab.x2[e][-1]], np.r_[els_ab.y1[e], els_ab.y2[e][-1]],
-            "-", color=color, lw=2, marker="|", ms=10, mew=1.5)
-    ax.quiver(els_ab.x_centers[e], els_ab.y_centers[e], els_ab.x_normals[e],
-              els_ab.y_normals[e], color=color, angles="xy", scale_units="xy",
-              scale=6, width=0.005)
-    ax.text(els_ab.x2[e][-1] + 0.06, els_ab.y2[e][-1], f"crack {name}", color=color,
-            fontsize=11, fontweight="bold", va="center")
+    ax.plot(
+        np.r_[els_ab.x1[e], els_ab.x2[e][-1]],
+        np.r_[els_ab.y1[e], els_ab.y2[e][-1]],
+        "-",
+        color=color,
+        lw=2,
+        marker="|",
+        ms=10,
+        mew=1.5,
+    )
+    ax.quiver(
+        els_ab.x_centers[e],
+        els_ab.y_centers[e],
+        els_ab.x_normals[e],
+        els_ab.y_normals[e],
+        color=color,
+        angles="xy",
+        scale_units="xy",
+        scale=6,
+        width=0.005,
+    )
+    ax.text(
+        els_ab.x2[e][-1] + 0.06,
+        els_ab.y2[e][-1],
+        f"crack {name}",
+        color=color,
+        fontsize=11,
+        fontweight="bold",
+        va="center",
+    )
 ax.plot(els_ab.x_centers[:8], els_ab.y_centers[:8], "k.", ms=5)
-ax.plot(*P, "*", color="C0", ms=14, zorder=5, label="P: collocation point (centre of A's element 4)")
+ax.plot(
+    *P,
+    "*",
+    color="C0",
+    ms=14,
+    zorder=5,
+    label="P: collocation point (centre of A's element 4)",
+)
 ax.plot(*node, "o", color="C3", mec="w", ms=9, zorder=5, label="node 4 of B")
-ax.annotate("", xy=node, xytext=P, arrowprops=dict(arrowstyle="<->", color="C0", lw=1.2))
+ax.annotate(
+    "", xy=node, xytext=P, arrowprops=dict(arrowstyle="<->", color="C0", lw=1.2)
+)
 ax.set_aspect("equal")
 ax.set_xlim(-1.15, 1.35)
 ax.set_ylim(-0.95, 1.0)
@@ -309,12 +351,27 @@ axz = ax.inset_axes([0.03, 0.55, 0.4, 0.42])
 w = 1.6 * D_SKETCH
 for k, color in enumerate(("k", "C3")):
     e = slice(8 * k, 8 * (k + 1))
-    axz.plot(np.r_[els_ab.x1[e], els_ab.x2[e][-1]], np.r_[els_ab.y1[e], els_ab.y2[e][-1]],
-             "-", color=color, lw=2, marker="|", ms=14, mew=1.5)
+    axz.plot(
+        np.r_[els_ab.x1[e], els_ab.x2[e][-1]],
+        np.r_[els_ab.y1[e], els_ab.y2[e][-1]],
+        "-",
+        color=color,
+        lw=2,
+        marker="|",
+        ms=14,
+        mew=1.5,
+    )
 axz.plot(*P, "*", color="C0", ms=16, zorder=5)
 axz.plot(*node, "o", color="C3", mec="w", ms=10, zorder=5)
-axz.annotate("", xy=node, xytext=P, arrowprops=dict(arrowstyle="<->", color="C0", lw=1.5))
-axz.text(*(P + 0.5 * D_SKETCH * APPROACH + np.array([0.0, -0.025])), "d", color="C0", fontsize=12)
+axz.annotate(
+    "", xy=node, xytext=P, arrowprops=dict(arrowstyle="<->", color="C0", lw=1.5)
+)
+axz.text(
+    *(P + 0.5 * D_SKETCH * APPROACH + np.array([0.0, -0.025])),
+    "d",
+    color="C0",
+    fontsize=12,
+)
 axz.set_xlim(P[0] - w, P[0] + w)
 axz.set_ylim(P[1] - w, P[1] + w)
 axz.set_aspect("equal")
@@ -345,7 +402,9 @@ ax.axhline(jump, color="C1", lw=0.8, ls="--")
 ax.text(
     1e-2, jump * 1.6, "limit from the other side of crack B", fontsize=7, color="C1"
 )
-ax.set_xlabel("distance d from B's node to A's collocation point (element lengths of A)")
+ax.set_xlabel(
+    "distance d from B's node to A's collocation point (element lengths of A)"
+)
 ax.set_ylabel("relative distance from the converged solution")
 ax.set_ylim(1e-12, 1e3)
 ax.invert_xaxis()
@@ -362,16 +421,30 @@ S_DRAW = 0.3
 _, e8 = through_P(8, S_DRAW)
 for k, (name, color) in enumerate((("A", "k"), ("B", "C3"))):
     sl = slice(8 * k, 8 * (k + 1))
-    ax.plot(np.r_[e8.x1[sl], e8.x2[sl][-1]], np.r_[e8.y1[sl], e8.y2[sl][-1]], "-",
-            color=color, lw=2)
+    ax.plot(
+        np.r_[e8.x1[sl], e8.x2[sl][-1]],
+        np.r_[e8.y1[sl], e8.y2[sl][-1]],
+        "-",
+        color=color,
+        lw=2,
+    )
     ax.plot(e8.x1[sl], e8.y1[sl], "o", color=color, ms=5)
     ax.plot(e8.x_centers[sl], e8.y_centers[sl], "x", color=color, ms=7, mew=1.5)
 nd = P + S_DRAW * L * DIR_B
-ax.text(P[0] + 0.5, 0.03, "crack A", color="k", fontsize=11, fontweight="bold", ha="right")
-ax.text(*(P + 0.5 * DIR_B + np.array([0.04, 0.0])), "crack B", color="C3", fontsize=11,
-        fontweight="bold")
+ax.text(
+    P[0] + 0.5, 0.03, "crack A", color="k", fontsize=11, fontweight="bold", ha="right"
+)
+ax.text(
+    *(P + 0.5 * DIR_B + np.array([0.04, 0.0])),
+    "crack B",
+    color="C3",
+    fontsize=11,
+    fontweight="bold",
+)
 ax.plot(*P, "*", color="C0", ms=16, zorder=5, label="P: collocation point of A (on B)")
-ax.plot(*nd, "o", color="C3", mec="w", ms=10, zorder=5, label="node 4 of B, slides to P")
+ax.plot(
+    *nd, "o", color="C3", mec="w", ms=10, zorder=5, label="node 4 of B, slides to P"
+)
 ax.annotate("", xy=P, xytext=nd, arrowprops=dict(arrowstyle="->", color="C3", lw=1.5))
 ax.text(*(0.5 * (P + nd) + np.array([0.04, -0.01])), "s", color="C3", fontsize=12)
 ax.plot([], [], "kx", label="collocation points (element centres)")
@@ -390,11 +463,25 @@ ax.set_title(
 # (f) dependence of A's slip on where B's node sits
 ax = fig.add_subplot(3, 2, 6)
 for i, n in enumerate((8, 32, 64)):
-    ax.semilogy(S_REMESH, remesh_change[n], "-", color=f"C{i}", lw=1.3,
-                label=f"{n} elements per crack")
+    ax.semilogy(
+        S_REMESH,
+        remesh_change[n],
+        "-",
+        color=f"C{i}",
+        lw=1.3,
+        label=f"{n} elements per crack",
+    )
     ax.axvline(s_star(n), color=f"C{i}", lw=0.8, ls=":")
-ax.text(s_star(64) - 0.012, 3e-4, "a collocation point of B lands on A (at P)", fontsize=7,
-        rotation=90, ha="right", va="bottom", color="0.3")
+ax.text(
+    s_star(64) - 0.012,
+    3e-4,
+    "a collocation point of B lands on A (at P)",
+    fontsize=7,
+    rotation=90,
+    ha="right",
+    va="bottom",
+    color="0.3",
+)
 ax.set_xlabel("s, position of B's node 4 from P (element lengths of A)")
 ax.set_ylabel("change in A's slip from s = 0 (relative)")
 ax.set_ylim(1e-4, 1e1)

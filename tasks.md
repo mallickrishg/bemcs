@@ -524,19 +524,23 @@ Square system of `2(N_s + N_f)` equations.
       answer is erratic (changes up to ~5x) and the condition number climbs from ~50 to 1e4. Exactly on A, where
       the collocation points of A and B coincide at P, it reaches 4e10. The band width in element lengths does not
       shrink with refinement.
-- [ ] **Warn when a collocation point lies on or close to another crack** (from the remesh test above).
-  - In `Mesh` or `solve`: for each collocation point, compute the distance to every element that is not its own
-    element or a topological neighbour. Warn (with the element indices) when it is below a fraction of the local
-    element length; ~0.1 is the measured onset of trouble. Possibly also warn when a node of one crack lies within
-    that distance of another crack's collocation point (the d -> 0 case).
-  - Cost: O(N^2) point-segment distances. This is cheap next to kernel assembly, but use a bounding-box or grid
-    prefilter for large meshes.
-  - Remedies to document or offer:
-    - nudge the mesh (move the nearby node);
-    - move the collocation point along its element, away from the crossing; this needs a per-element collocation
-      parameter in the assembly;
-    - put a node at the crossing, which turns it into a junction and needs the triple-junction machinery.
-  - Do not auto-fix silently.
+- [x] **Warn when a collocation point lies on or close to another crack** (from the remesh test above).
+  - **Function:** `bemcs.close_collocation_points(els, elements=None, tol=0.1)`. It returns the close pairs (`element`,
+    `other`, `distance` in lengths of `element`), sorted by distance. The point-segment distances run vectorized
+    in chunks: 0.4 s for 4000 elements, so no prefilter is needed yet.
+  - **What is skipped:** the element itself and elements sharing a node with it, i.e. neighbours, kinks and
+    junctions. Slip `"s"` rows are not checked because they do not sample the kernels.
+  - **Covers both cases:** a node of one crack near another crack's collocation point is the same check, because
+    the segment includes its end points.
+  - **`Mesh.close_collocation_points(tol)`:** checks exactly the collocation points that `solve` uses.
+  - **`assemble` / `solve(..., proximity_tol=0.1)`:** issue `bemcs.CollocationProximityWarning` listing the first
+    pairs. `proximity_tol=None` silences it.
+  - **No auto-fix.** The message points to moving a node or refining.
+  - **Where it fires:** of the tests and examples, only the crossing-cracks cases warn. Random tangle seed 7 has a
+    real pair at 0.078 L. Fault-in-box, split box, free surface and non-planar meshes are silent.
+  - **Tests:** `test_proximity_check_*` in `tests/test_crossing_cracks.py`.
+  - **Remedies still open:** move the collocation point along its element (needs a per-element collocation
+    parameter in the assembly), or put a node at the crossing (turns it into a junction).
 - [ ] Document heterogeneous elasticity (sections 2.1 and 2.2) in the README or wiki, plus a plane-strain tutorial.
 - [ ] (Low priority) Update the GitHub wiki pages and tutorials for the revamped API. The existing tutorials use
   removed functions. Cover:

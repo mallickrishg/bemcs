@@ -82,7 +82,7 @@ def _solve_both(segs, geometry):
     els = _cracks(segs, n_el=6)
     _, _, triple = bemcs.label_nodes(els)
     assert not triple  # crossings are not meshed: no junctions
-    kw = dict(geometry=geometry, mu=1.0, nu=0.25)
+    kw = dict(geometry=geometry, mu=1.0, nu=0.25, proximity_tol=None)  # checked separately
     hat, general = _mesh(els, geometry, "hat"), _mesh(els, geometry, "quadratic")
     xh, (Ah, bh, _) = bemcs.solve(hat, return_system=True, **kw)
     xg = bemcs.solve(general, **kw)
@@ -142,7 +142,7 @@ def _node_near_collocation(d, dr, approach=APPROACH):
     els = _cracks([(np.array([-1.0, 0.0]), np.array([1.0, 0.0])),
                    (node - 4 * 0.22 * DIR_B, node + 4 * 0.22 * DIR_B)], n_el=8)
     mesh = _mesh(els, "planestrain", "hat")
-    x = bemcs.solve(mesh, geometry="planestrain", mu=1.0, nu=0.25, dr=dr)
+    x = bemcs.solve(mesh, geometry="planestrain", mu=1.0, nu=0.25, dr=dr, proximity_tol=None)
     return mesh.element_coefficients(x, "slip", geometry="planestrain")
 
 
@@ -205,7 +205,7 @@ def _crack_through_collocation(n, s, dr=1e-9):
     bemcs.standardize_els_geometry(els, reorder=False)
     mesh = _mesh(els, "planestrain", "hat")
     x, (A, _, _) = bemcs.solve(mesh, geometry="planestrain", mu=1.0, nu=0.25, dr=dr,
-                               return_system=True)
+                               return_system=True, proximity_tol=None)
     c = mesh.element_coefficients(x, "slip", geometry="planestrain").reshape(2 * n, 3, 2)
     return c[:n, 1, 0], np.linalg.cond(A)
 
@@ -240,3 +240,71 @@ def test_collocation_point_on_another_crack_degrades_conditioning():
     _, cond_bad = _crack_through_collocation(8, 0.44 * 8 / 7)
     assert cond_ok < 1e3  # measured 50
     assert cond_bad > 1e6 * cond_ok  # measured 4e10
+
+
+# ----------------------------------------------------------------------------
+# the proximity check behind CollocationProximityWarning
+# ----------------------------------------------------------------------------
+
+
+def test_proximity_check_flags_close_collocation_points_in_random_tangles():
+    """Seed 7: one crossing lies 0.078 element lengths from a collocation point of
+    another crack; seed 37: none closer than 0.1. solve warns accordingly."""
+    m7 = _mesh(_cracks(_random_segments(7), n_el=6), "planestrain", "hat")
+    close = m7.close_collocation_points()
+    assert close["element"].tolist() == [26] and close["other"].tolist() == [17]
+    assert 0.07 < close["distance"][0] < 0.09
+    with pytest.warns(bemcs.CollocationProximityWarning, match=r"26 -> 17"):
+        bemcs.solve(m7, geometry="planestrain", mu=1.0, nu=0.25)
+    m37 = _mesh(_cracks(_random_segments(37), n_el=6), "planestrain", "hat")
+    assert len(m37.close_collocation_points()["element"]) == 0
+    assert len(m7.close_collocation_points(tol=0.05)["element"]) == 0
+
+
+def test_proximity_check_flags_both_measured_trouble_spots():
+    """A crack through a collocation point (distance 0) and a node of B next to A's
+    collocation point are both reported; proximity_tol=None silences solve."""
+    import warnings
+
+    # B through P, its node 0.2 L away along B: A's element 4 is on B
+    n, L = 8, 0.25
+    p = np.array([0.125, 0.0])
+    b = np.r_[np.linspace(p - 0.88 * DIR_B, p + 0.2 * L * DIR_B, 5)[:-1],
+              np.linspace(p + 0.2 * L * DIR_B, p + 0.88 * DIR_B, 5)]
+    a = np.linspace([-1.0, 0.0], [1.0, 0.0], n + 1)
+    els = bemcs.initialize_els()
+    els.x1, els.y1 = np.r_[a[:-1, 0], b[:-1, 0]], np.r_[a[:-1, 1], b[:-1, 1]]
+    els.x2, els.y2 = np.r_[a[1:, 0], b[1:, 0]], np.r_[a[1:, 1], b[1:, 1]]
+    bemcs.standardize_els_geometry(els, reorder=False)
+    mesh = _mesh(els, "planestrain", "hat")
+    close = mesh.close_collocation_points()
+    pairs = set(zip(close["element"].tolist(), close["other"].tolist()))
+    assert (4, 11) in pairs and close["distance"].min() < 1e-12
+    with pytest.warns(bemcs.CollocationProximityWarning):
+        bemcs.solve(mesh, geometry="planestrain", mu=1.0, nu=0.25)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", bemcs.CollocationProximityWarning)
+        bemcs.solve(mesh, geometry="planestrain", mu=1.0, nu=0.25, proximity_tol=None)
+
+
+def test_proximity_check_ignores_neighbours_kinks_and_junctions():
+    """Elements sharing a node are never reported: a sharply kinked fault, a triple
+    junction, and a fault ending on a free surface at a shared node."""
+    def els_from(segments):
+        e = bemcs.initialize_els()
+        e.x1, e.y1 = np.array([s[0][0] for s in segments]), np.array([s[0][1] for s in segments])
+        e.x2, e.y2 = np.array([s[1][0] for s in segments]), np.array([s[1][1] for s in segments])
+        bemcs.standardize_els_geometry(e, reorder=False)
+        return e
+
+    o = np.array([0.0, 0.0])
+    kink = [(np.array([-1.0, 0.0]), o), (o, np.array([-0.98, 0.2]))]  # ~170 degree kink
+    junction = [(np.array([-1.0, 0.0]), o), (o, np.array([1.0, 0.0])), (o, np.array([0.99, 0.12]))]
+    surface = [(np.array([-1.0, 0.0]), o), (o, np.array([1.0, 0.0])), (np.array([0.05, -1.0]), o)]
+    for segs in (kink, junction, surface):
+        close = bemcs.close_collocation_points(els_from(segs))
+        assert len(close["element"]) == 0
+    # but a fault tip in the middle of a surface element is reported
+    tip_mid = [(np.array([-1.0, 0.0]), np.array([1.0, 0.0])), (np.array([0.0, -1.0]), np.array([0.0, -1e-3]))]
+    close = bemcs.close_collocation_points(els_from(tip_mid))
+    assert close["element"].tolist() == [0] and close["other"].tolist() == [1]
