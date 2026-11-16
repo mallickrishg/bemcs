@@ -88,12 +88,41 @@ Square system of `2(N_s + N_f)` equations.
 
 ## 3. Current state of the plane-strain implementation
 
-- `examples/utilfunctions.py::solve_planestrain_heterogeneous` (uncommitted) assembles and solves
-  the system above with hat-slip + trapezoidal-force patches. It lives in `examples/`, not in the package.
-- `examples/testing_HeterogeneousMaterialsPlanestrain.py` (uncommitted): 3 slip + 3 force
-  elements, one patch each, uniform shear slip, `alpha = 0.5`.
-- Not yet done: any validation against an independent solution, a `'t'`-type test, multi-patch
-  meshes, non-planar interfaces, a user-facing mesh/CSV interface like the antiplane one.
+Updated 2026-11-16. Details are in T1/T2 and the issue list (section 4).
+
+- **Solver in the package.** `bemcs.solve(mesh, geometry=, mu=, nu=)` (and `bemcs.assemble`) solves both geometries
+  in either form:
+  - general: quadratic slip plus continuity rows;
+  - reduced: one-ring hats.
+
+  Force is always trapezoids, by default centred on every other element along each force chain. The old
+  `examples/utilfunctions.py::solve_planestrain_heterogeneous` and `solveAntiplaneBEM` are gone.
+- **Formulation as implemented** (it differs from section 2.2 in three places):
+  - `'h'` rows use the exact sharp-interface factor `kappa` from (`mu_minus`, `mu_plus`) (`bemcs.interface_kappa`),
+    not `alpha = mu_,n/mu`;
+  - `'t'` rows prescribe the true traction (mu_side / mu0) S.n, not a projected strain;
+  - the compliance uses `nu` (issue 1).
+- **Input.**
+  - Every element carries `mu_minus` / `mu_plus`.
+  - BC types are `s`, `u`, `t`, `t_local`, `h`, per element or per component.
+  - `Mesh.from_csv` reads `x1, z1, x2, z2, mu_minus, mu_plus` plus BC columns.
+  - Fault tips are clamped and carry no BC row.
+- **Example.** `examples/planestrain/testing_HeterogeneousMaterialsPlanestrain.py` runs on `Mesh` / `solve`.
+- **Validated** (`tests/test_solve.py`, `tests/test_validation.py`):
+  - no contrast gives no interface force;
+  - high-contrast limits match a rigid boundary and a free surface;
+  - plane-strain true traction is continuous across the interface;
+  - the solution does not depend on the sampled side;
+  - reversing the interface elements, or mirroring the problem, gives identical or mirrored fields;
+  - the general and one-ring forms agree;
+  - in antiplane only, the bimaterial image solution (h^2 convergence).
+- **Not yet done:**
+  - a plane-strain analytic check (e.g. Dundurs bimaterial dislocation, or a circular inclusion);
+  - curved or closed interfaces in the tests;
+  - a meaningful fault-crossing-an-interface case (rebuild of `HeterogeneousElasticity_forces.py`, T2);
+  - the collocation-proximity warning (T3);
+  - documentation (T3).
+- **Accuracy:** the interface condition is exact at collocation points and first order in h between them.
 
 ---
 
