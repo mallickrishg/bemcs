@@ -41,6 +41,7 @@ from . import bemAssembly
 from .bemAssembly import (
     Mesh,
     KernelInfo,
+    CoefficientLayout,
     get_kernels,
     get_slip_kernels,
     get_force_kernels,
@@ -63,6 +64,7 @@ __all__ = [
     "bemAssembly",
     "Mesh",
     "KernelInfo",
+    "CoefficientLayout",
     "get_kernels",
     "get_slip_kernels",
     "get_force_kernels",

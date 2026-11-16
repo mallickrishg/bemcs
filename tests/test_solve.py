@@ -252,3 +252,52 @@ def test_plots_run(geometry):
     expected = {"antiplane": {"uz", "sxz", "syz"}, "planestrain": {"ux", "uy", "sxx", "syy", "sxy"}}[geometry]
     assert expected <= set(fields) and len(axes) == len(expected)
     plt.close("all")
+
+
+# ----------------------------------------------------------------------------
+# coefficient layout and helpers
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("slip_basis", ["quadratic", "hat"])
+@pytest.mark.parametrize("geometry", ["antiplane", "planestrain"])
+def test_layout_and_helpers(geometry, slip_basis):
+    els, n_f, n_i = _fault_and_interface(n_int=20, L=2.0)
+    pe = 1 if geometry == "antiplane" else 2
+    mesh = bemcs.Mesh(
+        els, bc_type=["s"] * n_f + ["h"] * n_i, bc_value=np.r_[np.ones(n_f), np.zeros(n_i)],
+        mu_minus=2.0, mu_plus=np.r_[np.full(n_f, 2.0), np.full(n_i, 1.0)],
+        basis={"slip": slip_basis, "force": "trapezoid"},
+    )
+    x, layout = bemcs.solve(mesh, geometry=geometry, mu=MU0, nu=NU, return_info=True)
+    assert layout.n == x.size == mesh.n_columns(geometry=geometry)
+    blocks = layout.split(x)
+    assert blocks["slip"].shape == (mesh.n_src("slip"), pe)
+    assert blocks["force"].shape == (mesh.n_src("force"), pe)
+    np.testing.assert_array_equal(np.r_[blocks["slip"].ravel(), blocks["force"].ravel()], x)
+    assert set(layout.kind[layout.columns["slip"]]) == {"slip"}
+    assert set(layout.direction) == ({"z"} if pe == 1 else {"t", "n"})
+    if slip_basis == "quadratic":
+        np.testing.assert_array_equal(layout.node[layout.columns["slip"]][::pe], np.tile([0, 1, 2], n_f))
+        np.testing.assert_array_equal(layout.element[layout.columns["slip"]][::pe], np.repeat(np.arange(n_f), 3))
+    else:  # hats sit on the non-tip fault elements
+        np.testing.assert_array_equal(layout.element[layout.columns["slip"]][::pe], np.arange(1, n_f - 1))
+    assert "x[0:" in str(layout)
+    # node values: slip at s = -w, 0, +w equals evaluation along the element at those points
+    nv = mesh.node_values(x, "slip", geometry=geometry)
+    assert nv.shape == (n_f, 3, pe)
+    np.testing.assert_allclose(nv[1:-1, 1, 0], 1.0, atol=1e-10)  # prescribed slip at non-tip centres
+    c = mesh.element_coefficients(x, "slip", geometry=geometry).reshape(n_f, 3, pe)
+    w = els.half_lengths[:n_f]
+    ends = np.array([core_slip(-1.0), core_slip(1.0)])  # Lagrange basis at s = -w, +w
+    np.testing.assert_allclose(nv[:, 0], np.einsum("k,ekc->ec", ends[0], c), atol=1e-12)
+    np.testing.assert_allclose(nv[:, 2], np.einsum("k,ekc->ec", ends[1], c), atol=1e-12)
+    # clamped tips: zero slip at the open ends of the fault
+    np.testing.assert_allclose(nv[0, 0], 0, atol=1e-10)
+    np.testing.assert_allclose(nv[-1, 2], 0, atol=1e-10)
+    fv = mesh.node_values(x, "force", geometry=geometry)
+    assert fv.shape == (n_i, 2, pe)
+
+
+def core_slip(t):
+    return bemcs.slip_functions(np.array([t]), 1.0)[0]

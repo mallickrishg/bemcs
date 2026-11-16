@@ -1936,6 +1936,59 @@ def get_force_kernels(
 # ----------------------------------------------------------------------------
 
 
+@dataclass
+class CoefficientLayout:
+    """Meaning of every entry of a solution vector x (from `solve`) or of the source
+    axis of the kernels, for a mesh and geometry.
+
+    Order: slip block, then force block; within each, source coefficient
+    (element or patch, then basis node), then direction ("t", "n" in plane
+    strain, local frame; "z" in antiplane). Per-entry arrays (length n):
+    kind ("slip"/"force"), basis, element (global index of the element, or of the
+    centre element of a hat/trapezoid patch), node (basis node: 0, 1, 2 for
+    quadratic slip at s = -2w/3, 0, +2w/3; 0, 1 for the linear-force ramps
+    (w+s)/2w, (w-s)/2w; -1 for constant and patch bases), direction.
+    """
+
+    geometry: str
+    basis: dict
+    columns: dict
+    kind: np.ndarray = field(repr=False)
+    element: np.ndarray = field(repr=False)
+    node: np.ndarray = field(repr=False)
+    direction: np.ndarray = field(repr=False)
+
+    @property
+    def n(self):
+        return len(self.kind)
+
+    def split(self, x):
+        """{"slip": (n_src_slip, n_dir), "force": (n_src_force, n_dir)} from a solution x."""
+        x = np.asarray(x, dtype=float).ravel()
+        if x.size != self.n:
+            raise ValueError(f"x has {x.size} entries, the layout has {self.n}")
+        pe = 1 if self.geometry == "antiplane" else 2
+        return {k: x[c].reshape(-1, pe) for k, c in self.columns.items()}
+
+    def __str__(self):
+        pe = 1 if self.geometry == "antiplane" else 2
+        dirs = "z" if pe == 1 else "t, n (local)"
+        lines = [f"CoefficientLayout: {self.geometry}, {self.n} coefficients (direction {dirs})"]
+        for k, c in self.columns.items():
+            b = self.basis[k]
+            what = {
+                "quadratic": "3 per element: slip at s = -2w/3, 0, +2w/3",
+                "constant": "1 per element: constant value",
+                "linear": "2 per element: ramps (w+s)/2w, (w-s)/2w",
+                "hat": "1 per hat: amplitude of the hat with unit slip at its element's centre "
+                "(neighbouring hats also contribute there)",
+                "trapezoid": "1 per trapezoid: force on its middle element (only that trapezoid covers it)",
+            }[b]
+            n_src = (c.stop - c.start) // pe
+            lines.append(f"  x[{c.start}:{c.stop}] {k}, {b} basis, {n_src} source coefficients ({what})")
+        return "\n".join(lines)
+
+
 class Mesh:
     """A boundary mesh: elements, their source type, and the basis used for each type.
 
@@ -2120,6 +2173,53 @@ class Mesh:
     def n_columns(self, *, geometry):
         pe = 1 if geometry == "antiplane" else 2
         return pe * sum(self.n_src(k) for k in self.kinds)
+
+    def layout(self, *, geometry):
+        """`CoefficientLayout` of the solution vector / kernel source axis."""
+        if geometry not in _GEOMETRIES:
+            raise ValueError(f"geometry must be one of {_GEOMETRIES}, got {geometry!r}")
+        pe = 1 if geometry == "antiplane" else 2
+        dirs = ("z",) if pe == 1 else ("t", "n")
+        kind, element, node, columns = [], [], [], {}
+        for k in self.kinds:
+            sub, idx, conn = self.subset(k)
+            b = self.basis[k]
+            if b == _ELEMENT_BASIS[k]:
+                nn = _NODES[k]
+                el, nd = np.repeat(idx, nn), np.tile(np.arange(nn), len(idx))
+            elif b == "constant":
+                el, nd = idx, np.full(len(idx), -1)
+            else:
+                el = idx[patch_elements(sub, b, conn)]
+                nd = np.full(len(el), -1)
+            columns[k] = self.columns(k, geometry=geometry)
+            kind += [k] * (len(el) * pe)
+            element.append(np.repeat(el, pe))
+            node.append(np.repeat(nd, pe))
+        n = len(kind)
+        return CoefficientLayout(
+            geometry=geometry, basis=dict(self.basis), columns=columns, kind=np.array(kind),
+            element=np.concatenate(element), node=np.concatenate(node),
+            direction=np.array(dirs * (n // pe)),
+        )
+
+    def split(self, x, *, geometry):
+        """{"slip": (n_src, n_dir), "force": ...} blocks of a solution vector x."""
+        return self.layout(geometry=geometry).split(x)
+
+    def node_values(self, x, kind, *, geometry, frame="local"):
+        """Slip at s = -w, 0, +w of every element of that type, shape (n, 3, n_dir), or
+        force at the start and end node, shape (n, 2, n_dir), from a solution x in any
+        basis (quadratic, constant, hat; linear, trapezoid). frame: "local" (t, n) or
+        "global" (x, y); antiplane has n_dir = 1."""
+        sub, _, _ = self.subset(kind)
+        c = self.element_coefficients(x, kind, geometry=geometry)
+        if kind == "slip":
+            M, _ = slip_node_matrices(sub, geometry=geometry, reference=frame)
+        else:
+            M = force_node_matrix(sub, geometry=geometry, reference=frame)
+        pe = 1 if geometry == "antiplane" else 2
+        return (M @ c).reshape(len(sub.x_centers), _NODES[kind], pe)
 
     # --- continuity (general, element-DOF formulation) ------------------------------
 
@@ -2421,7 +2521,8 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False):
     return np.array(A), np.array(b), {k: np.array(v) for k, v in rows.items()}
 
 
-def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False, return_system=False):
+def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False, return_system=False,
+          return_info=False):
     """Solve a BEM problem defined by a Mesh with boundary conditions.
 
     The formulation follows the mesh bases:
@@ -2457,13 +2558,28 @@ def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False, ret
         strain). Fields: `evaluate_fields(mesh, x, ...)`; slip/force along the
         elements: `mesh.values_on_elements(x, kind, geometry=...)`.
     (A, b, rows) : if return_system=True, also the linear system.
+    layout : if return_info=True, also the `CoefficientLayout` (what each entry of x
+        means; `layout.split(x)` gives the slip and force blocks).
 
     The system is solved by least squares, so rigid-body null spaces (e.g. a
     domain with traction conditions only) give the minimum-norm solution.
     """
     A, b, rows = assemble(mesh, geometry=geometry, mu=mu, nu=nu, side=side, dr=dr, use_numba=use_numba)
+    bad = ~np.isfinite(A).all(axis=1)
+    if bad.any():
+        raise FloatingPointError(
+            "kernels are not finite at the collocation point(s) of element(s) "
+            f"{sorted(set(rows['element'][bad].tolist()))}: an element end point (node) of another "
+            "fault lies on a collocation point. Use an offset dr > 0 (default 1e-9 element lengths) "
+            "or move the node."
+        )
     x = np.linalg.lstsq(A, b, rcond=None)[0]
-    return (x, (A, b, rows)) if return_system else x
+    out = (x,)
+    if return_system:
+        out += ((A, b, rows),)
+    if return_info:
+        out += (mesh.layout(geometry=geometry),)
+    return out[0] if len(out) == 1 else out
 
 
 # =============================================================================
