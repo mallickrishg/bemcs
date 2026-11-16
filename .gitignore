@@ -31,3 +31,6 @@ heterogeneous_theory.md
 notebooks/
 point_source/
 examples/hrf/
+
+# documentation (local only until the codebase settles)
+docs/
