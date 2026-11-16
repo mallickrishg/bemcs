@@ -854,11 +854,17 @@ spatially varying nu (T4), wiki updates.
     (r/a > 100) by a few-point Gauss quadrature of the point dislocation (slip) or point force (force), and swap them
     in. Far away the integrand is smooth, so 4-8 points reach machine precision with no cancellation. This leaves the
     jitted kernels untouched.
-  - **Does it matter today?** Only for long meshes that also contain small elements (r/a >~ 1e4).
-  - **Earlier claim to revisit:** the earlier observation that the layered example fails at L = 1e4-1e5 is not yet
-    attributed. Those runs also had uncapped log-spaced elements (hundreds of H long, the free surface and interface
-    only H apart; proximity warnings fired), which may have been the real cause. A rerun with elements capped at 5 H
-    is pending.
+  - **Does it matter today? Barely.** Homogeneous half-space (fault plus free surface only, no parallel lines),
+    uncapped log-spaced surface, error vs the exact solution (L = 1e3, 1e4, 1e5):
+    - fault elements 0.05 (max r/a 4e4 to 4e6): 2.5e-5 at every L;
+    - fault elements 0.0125 (max r/a 2e5 to 2e7): 3.7e-7, 3.8e-6, 5.2e-5.
+
+    The cancellation is visible but small, even at r/a = 2e7.
+  - **Correction (2026-11-17):** the earlier claim that the layered example "fails" at L = 1e4-1e5 (errors 8e-3 to 1)
+    blamed far-field cancellation. It came mostly from the uncapped log-spaced elements: hundreds of H long, with the
+    free surface and the interface only H apart (the proximity warning fired). Capping elements at ~5 H, as the
+    examples do, avoids it. (A capped run out to 1e5 is too large for a dense solve, so the half-space test above
+    was used to separate the two causes.)
 - [x] One-ring hats (section 7.4), 2026-11-16:
   - **API:** `basis="hat"` *without* connectivity builds one hat per non-tip element from the mesh topology
     (`one_ring_hat_coefficients`, `hat_elements`), at level 2 and in `Mesh`. An explicit 3-element connectivity still
