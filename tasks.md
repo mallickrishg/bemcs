@@ -484,14 +484,27 @@ checked by:
   - **(b) Edge dislocation, or a short fault with smooth slip, near a planar bimaterial interface.** Dundurs image
     dislocations. This is the plane-strain analogue of the antiplane layered case, with fault-interface coupling
     through both shear and normal components.
-- [ ] **P1c. Order of the trapezoid force basis on curved interfaces.** First order on the circular inclusion in both
-  geometries (a uniform O(h) bias inside), versus h^2 on the planar antiplane bimaterial.
-  - **Candidates:**
-    - plateau errors (force constant on each middle element) that cancel on a straight line but not on a curve;
-    - the polygon approximation of the circle.
-  - **To do:** test a straight plane-strain bimaterial and a refined polygon to tell them apart. If it is the
-    basis, consider a linear-force basis with collocation at all element centres (needs a different null-mode
-    treatment) or a higher-order force basis.
+- [ ] **P1c. First-order convergence on curved interfaces: diagnosed (2026-11-16), remedy open.**
+  - **Basis is not the bottleneck.** On the circular inclusion (antiplane), representing the *exact* force density
+    in the trapezoid space, without solving, gives interior errors 1.2e-2, 3.1e-3, 7.7e-4, 1.9e-4 for n = 32 to
+    256: second order. That equals plain linear interpolation on half as many elements, as expected from half the
+    unknowns. The solved trapezoids give 5.9e-2 to 6.4e-3: first order, and 5-30x worse.
+  - **The equations are first-order consistent on a polygon.** Plugging the exact force density into the discrete
+    `'h'` rows leaves a residual of 7.1e-2, 3.6e-2, 1.8e-2, 9.2e-3: O(h). It is the same with element-linear
+    interpolation of the exact density, so the trapezoid shape is not the cause.
+  - **On a straight line the same equations are second-order consistent:** 6.1e-2, 1.6e-2, 3.9e-3, 9.8e-4.
+  - **Cause:** the polygonal (C0) interface has a kink of 2 pi / n at every node. The traction of the neighbouring
+    elements, evaluated at the collocation points, picks up an error proportional to the kink angle, which is O(h).
+    This is the same mechanism as the slip-kink limitation in the README (cancellation only for co-planar
+    elements), here for force elements.
+  - **Remedies to consider:**
+    - curved (higher-order geometry) elements;
+    - an analytic kink or curvature correction to the traction at collocation points;
+    - accept first order on curved interfaces and document it. Planar interfaces keep h^2.
+- **Note on background fields (user, 2026-11-16):** remote loading (`background=`) is an edge case, used here
+  because the inclusion is the cleanest exact solution. The typical heterogeneous problem is an imposed slip source
+  with prescribed tractions elsewhere (a free surface), so the remaining checks (P1b, P2, P3, P6) should use that
+  setup, without a background.
 - [ ] **P2. A fault crossing an interface in plane strain.**
   - **Gap:** no exact solution, and no symmetry to rely on. The antiplane result (about 2.5e-5 once the trapezoids
     restart at the crossing) depended partly on antisymmetry. With a dipping fault, or mixed shear/opening, the step
