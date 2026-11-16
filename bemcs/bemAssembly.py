@@ -1079,7 +1079,7 @@ _ELEMENT_BASIS = {"slip": "quadratic", "force": "linear"}
 _NODES = {"slip": 3, "force": 2}  # nodes per element of the element basis
 _BASES = {
     "slip": ("quadratic", "constant", "hat"),
-    "force": ("linear", "constant", "trapezoid"),
+    "force": ("linear", "constant", "trapezoid", "nodal"),
 }
 _PATCH_BASES = ("hat", "trapezoid")
 _BC_TYPES = ("s", "u", "t", "t_local", "h")
@@ -1636,10 +1636,113 @@ def _check_trapezoid_overlap(conn):
         )
 
 
+def _shared_point(els, a, b):
+    """The end point shared by elements a and b: ((x, y), ramp index in a, ramp index in b).
+    Ramp 0 is 1 at an element's end node (x2, y2), ramp 1 at its start node (x1, y1)."""
+    pa = (((float(els.x1[a]), float(els.y1[a])), 1), ((float(els.x2[a]), float(els.y2[a])), 0))
+    pb = (((float(els.x1[b]), float(els.y1[b])), 1), ((float(els.x2[b]), float(els.y2[b])), 0))
+    for p, ra in pa:
+        for q, rb in pb:
+            if p == q:
+                return p, ra, rb
+    raise ValueError(f"elements {a} and {b} share no end point")
+
+
+def nodal_force_layout(els, breaks=None, tol=1e-9):
+    """Degrees of freedom of the nodal (continuous piecewise-linear) force basis on the
+    force elements `els`.
+
+    - Every chain node gets a hat (unit force at the node, linear to zero at the two
+      neighbouring nodes), collocated at the node.
+    - At a break point (`breaks`: fault crossings, open force ends, ends of slip/force
+      overlaps; see `Mesh.trapezoid_restart_points`) the force may differ on the two
+      sides. An interior break node gets one half-hat on each adjacent element; a chain
+      tip at a break (an open end) gets one half-hat. A half-hat is collocated at its
+      element's centre, since the break point itself lies on a slip element.
+    - Other chain tips are tapered: zero force, no unknown.
+
+    Returns a dict of arrays, one entry per unknown: "kind" ("node" / "end"), "owner"
+    (an element of the unknown, for boundary-condition data), "x", "y" (collocation
+    point), "nx", "ny" (unit normal there), "L" (local element length), and "support"
+    (a list of (element, ramp) pairs where the unknown's value is 1).
+    """
+    breaks = np.zeros((0, 2)) if breaks is None else np.asarray(breaks, float).reshape(-1, 2)
+    L_max = 2 * np.max(np.asarray(els.half_lengths)) if len(els.x_centers) else 1.0
+
+    def is_break(p):
+        return len(breaks) > 0 and np.hypot(breaks[:, 0] - p[0], breaks[:, 1] - p[1]).min() < tol * L_max
+
+    out = {k: [] for k in ("kind", "owner", "x", "y", "nx", "ny", "L", "support", "kink")}
+
+    def add(kind, owner, x, y, nx, ny, L, support, kink=0.0):
+        for k, v in zip(out, (kind, owner, x, y, nx, ny, L, support, kink)):
+            out[k].append(v)
+
+    def add_end(e, ramp):
+        add("end", e, float(els.x_centers[e]), float(els.y_centers[e]), float(els.x_normals[e]),
+            float(els.y_normals[e]), 2 * float(els.half_lengths[e]), [(e, ramp)])
+
+    for chain, closed in _chains(els):
+        n = len(chain)
+        pairs = [(chain[i - 1], chain[i]) for i in range(1, n)] + ([(chain[-1], chain[0])] if closed else [])
+        for a, b in pairs:
+            p, ra, rb = _shared_point(els, a, b)
+            if is_break(p):
+                add_end(a, ra)
+                add_end(b, rb)
+                continue
+            nx = els.x_normals[a] + els.x_normals[b]
+            ny = els.y_normals[a] + els.y_normals[b]
+            nn = np.hypot(nx, ny)
+            cosang = np.clip(els.x_normals[a] * els.x_normals[b] + els.y_normals[a] * els.y_normals[b], -1, 1)
+            add("node", b, p[0], p[1], float(nx / nn), float(ny / nn),
+                float(els.half_lengths[a] + els.half_lengths[b]), [(a, ra), (b, rb)], float(np.arccos(cosang)))
+        if not closed:
+
+            def ends_of(e):
+                return [((float(els.x1[e]), float(els.y1[e])), 1), ((float(els.x2[e]), float(els.y2[e])), 0)]
+
+            if n == 1:
+                tips = [(chain[0], p, r) for p, r in ends_of(chain[0])]
+            else:
+                s0, _, _ = _shared_point(els, chain[0], chain[1])
+                s1, _, _ = _shared_point(els, chain[-1], chain[-2])
+                tips = [(chain[0], p, r) for p, r in ends_of(chain[0]) if p != s0]
+                tips += [(chain[-1], p, r) for p, r in ends_of(chain[-1]) if p != s1]
+            for e, p, r in tips:
+                if is_break(p):
+                    add_end(e, r)
+    res = {k: np.array(v) if k != "support" else v for k, v in out.items()}
+    # an element collocated twice (two half-hats on one element) cannot be resolved
+    ends = res["owner"][res["kind"] == "end"] if len(res["owner"]) else np.zeros(0, dtype=int)
+    u, c = np.unique(ends, return_counts=True)
+    dup = u[c > 1]
+    if len(dup):
+        raise ValueError(f"force element(s) {list(dup)} carry two half-hats (break points at both ends): "
+                         "refine the force mesh so that at least two elements lie between break points")
+    return res
+
+
+def nodal_force_coefficients(els, layout, *, geometry):
+    """Transform from linear-force element DOFs to the nodal basis: (2 n_els, n_dof) in
+    antiplane; (2 n_els, 2, n_dof, 2) [element dof, local direction, unknown, global
+    direction] in plane strain (the unknowns are global force components x, y)."""
+    n_els, n_d = len(els.x_centers), len(layout["owner"])
+    pe = 1 if geometry == "antiplane" else 2
+    T = np.zeros((n_els * 2, pe, n_d, pe))
+    for j, support in enumerate(layout["support"]):
+        for e, r in support:
+            R = np.asarray(els.rot_mats[e])
+            T[2 * e + r, :, j, :] = R.T if pe == 2 else 1.0  # local = R^T global
+    return T[:, 0, :, 0] if geometry == "antiplane" else T
+
+
 def patch_elements(els, basis, connectivity=None):
     """Element at the centre of each patch: the middle element of each connectivity
     row; by default every non-tip element for hats (one-ring) and every other
     element along each chain for trapezoids (`trapezoid_connectivity`)."""
+    if basis == "nodal":
+        return nodal_force_layout(els)["owner"]
     if connectivity is not None:
         return _check_connectivity(connectivity, len(els.x_centers))[:, 1]
     if basis == "hat":
@@ -1727,7 +1830,7 @@ def trapezoid_coefficients(els, connectivity=None, *, geometry):
     return T[:, 0, :, 0] if geometry == "antiplane" else T
 
 
-def basis_transform(els, *, kind, basis, geometry, connectivity=None):
+def basis_transform(els, *, kind, basis, geometry, connectivity=None, breaks=None):
     """Transform T from element-basis DOFs to the requested basis (see tasks.md 7.2)."""
     n_els = len(els.x_centers)
     n_nodes = _NODES[kind]
@@ -1737,6 +1840,8 @@ def basis_transform(els, *, kind, basis, geometry, connectivity=None):
         return _per_element_transform(n_els, n_nodes, np.ones(n_nodes), geometry)
     if basis == "hat":
         return hat_coefficients(els, connectivity, geometry=geometry)
+    if basis == "nodal":
+        return nodal_force_coefficients(els, nodal_force_layout(els, breaks), geometry=geometry)
     return trapezoid_coefficients(els, connectivity, geometry=geometry)
 
 
@@ -2008,7 +2113,7 @@ def values_on_elements(els, coefs, *, kind, geometry, n_eval=10, frame="global")
 
 
 def _source_kernels(kind, x_obs, y_obs, els, geometry, mu, nu, basis, connectivity, use_numba,
-                    transform=None):
+                    transform=None, index=None):
     _check_material(geometry, mu, nu)
     if basis not in _BASES[kind]:
         raise ValueError(f"basis {basis!r} is not available for {kind}; choose from {_BASES[kind]}")
@@ -2036,6 +2141,8 @@ def _source_kernels(kind, x_obs, y_obs, els, geometry, mu, nu, basis, connectivi
         index, node = np.repeat(np.arange(n_els), n_nodes), np.tile(np.arange(n_nodes), n_els)
     elif basis == "constant":
         index, node = np.arange(n_els), np.full(n_els, -1)
+    elif index is not None:  # given by the caller (a Mesh's nodal force layout)
+        node = np.full(len(index), -1)
     else:  # patch bases: connectivity row, or the element of a one-ring patch
         index = patch_elements(els, basis, connectivity)
         index = np.arange(len(index)) if connectivity is not None else index
@@ -2308,6 +2415,18 @@ class Mesh:
             idx = np.flatnonzero(labels == "f")
             self.connectivity["force"] = idx[trapezoid_connectivity(_subset_els(els, idx),
                                                                     breaks=self.force_open_ends)]
+        bad = overlap_refinement_issues(els, labels)
+        if len(bad):
+            shown = ", ".join(f"({p[0]:.6g}, {p[1]:.6g})" for p in bad[:5])
+            more = f", ... ({len(bad)} nodes)" if len(bad) > 5 else ""
+            warnings.warn(
+                f"slip and force elements overlap, but slip node(s) {shown}{more} are not force nodes: a slip "
+                "element does not hold an integer number of force elements. Recommended: M >= 1 force "
+                "elements per slip element (every slip node in the overlap also a force node), to avoid "
+                "oscillatory or singular behaviour.",
+                OverlapRefinementWarning,
+                stacklevel=2,
+            )
         gaps = node_gaps(els)
         if len(gaps):
             shown = ", ".join(f"({p[0, 0]:.6g}, {p[0, 1]:.6g}) / ({p[1, 0]:.6g}, {p[1, 1]:.6g}) "
@@ -2440,14 +2559,26 @@ class Mesh:
         pts = self.trapezoid_restart_points(tol) if points is None else points
         return idx[trapezoid_connectivity(sub, breaks=pts, tol=tol)]
 
+    def nodal_layout(self):
+        """`nodal_force_layout` of the force elements (local element indices), with breaks at
+        `trapezoid_restart_points()`. Cached."""
+        key = ("nodal",)
+        if key not in self._cache:
+            sub, _, _ = self.subset("force")
+            self._cache[key] = nodal_force_layout(sub, breaks=self.trapezoid_restart_points())
+        return self._cache[key]
+
     def transform(self, kind, *, geometry):
         """Basis transform of one source type (`basis_transform`; the identity for the
         element basis). Cached."""
         key = ("transform", kind, geometry)
         if key not in self._cache:
             sub, _, conn = self.subset(kind)
-            self._cache[key] = basis_transform(sub, kind=kind, basis=self.basis[kind], geometry=geometry,
-                                               connectivity=conn)
+            if self.basis[kind] == "nodal":
+                self._cache[key] = nodal_force_coefficients(sub, self.nodal_layout(), geometry=geometry)
+            else:
+                self._cache[key] = basis_transform(sub, kind=kind, basis=self.basis[kind], geometry=geometry,
+                                                   connectivity=conn)
         return self._cache[key]
 
     def _subset(self, kind):
@@ -2470,6 +2601,8 @@ class Mesh:
         """Number of source coefficients of one type (axis 1 of the kernels)."""
         b = self.basis[kind]
         n = len(self.elements(kind))
+        if b == "nodal":
+            return len(self.nodal_layout()["owner"])
         if b in _PATCH_BASES and self.connectivity[kind] is None:  # default patches
             sub, _, _ = self.subset(kind)
             return len(patch_elements(sub, b))
@@ -2507,6 +2640,9 @@ class Mesh:
                 el, nd = np.repeat(idx, nn), np.tile(np.arange(nn), len(idx))
             elif b == "constant":
                 el, nd = idx, np.full(len(idx), -1)
+            elif b == "nodal":
+                el = idx[self.nodal_layout()["owner"]]
+                nd = np.full(len(el), -1)
             else:
                 el = idx[patch_elements(sub, b, conn)]
                 nd = np.full(len(el), -1)
@@ -2557,10 +2693,7 @@ class Mesh:
         (non-neighbouring) element; see `close_collocation_points`. Only rows that
         sample the kernels are checked (not slip "s" rows). Returns a dict of arrays
         "element", "other", "distance" (in lengths of "element")."""
-        colloc, _ = _collocation_elements(self)
-        if self.bc_type is not None:
-            colloc = colloc[(self.bc_type[colloc] != "s").any(axis=1)]
-        return close_collocation_points(self.els, colloc, tol=tol)
+        return _close_collocation_records(self, _collocation_points(self), tol)
 
     def continuity_operator(self, *, geometry):
         """Continuity rows A (A x = 0, or = prescribed values at open nodes) for the mesh.
@@ -2697,6 +2830,7 @@ def get_kernels(x_obs, y_obs, mesh, *, geometry, mu, nu=None, use_numba=None):
         U, S, info = _source_kernels(
             k, x_obs, y_obs, sub, geometry, mu, nu, mesh.basis[k], conn, use_numba,
             transform=mesh.transform(k, geometry=geometry),
+            index=mesh.nodal_layout()["owner"] if mesh.basis[k] == "nodal" else None,
         )
         if mesh.basis[k] not in _PATCH_BASES or conn is None:
             info.src_index = idx[info.src_index]  # subset -> global element index
@@ -2795,6 +2929,55 @@ class CollocationProximityWarning(UserWarning):
     mesh (tasks.md, crossing cracks). Remedies: move a nearby node, or refine."""
 
 
+def _overlapping_elements(els, rel_tol=1e-9):
+    """Boolean (n, n): elements i and j overlap collinearly (both end points of one lie on
+    the other's segment), e.g. a fault or crack on a material interface."""
+    x1, y1 = np.asarray(els.x1, float), np.asarray(els.y1, float)
+    x2, y2 = np.asarray(els.x2, float), np.asarray(els.y2, float)
+    dx, dy = x2 - x1, y2 - y1
+    L = np.hypot(dx, dy)
+
+    def on(px, py):  # (n_points, n_segments): point on segment
+        t = np.clip(((px[:, None] - x1) * dx + (py[:, None] - y1) * dy) / np.maximum(L**2, 1e-300), 0, 1)
+        return np.hypot(px[:, None] - x1 - t * dx, py[:, None] - y1 - t * dy) < rel_tol * L
+
+    both = on(x1, y1) & on(x2, y2)  # [i, j]: i lies on j
+    out = both | both.T
+    np.fill_diagonal(out, False)
+    return out
+
+
+def _close_points(els, px, py, own, Lref, tol, chunk=512):
+    """Points within tol * Lref of an element that is not one of the point's own elements,
+    does not share an end point with them, and does not overlap them collinearly.
+    Returns (point index, other element, distance / Lref) arrays."""
+    x1, y1 = np.asarray(els.x1, float), np.asarray(els.y1, float)
+    x2, y2 = np.asarray(els.x2, float), np.asarray(els.y2, float)
+    dx, dy = x2 - x1, y2 - y1
+    L = np.hypot(dx, dy)
+    eps = 1e-9 * (L.max() if len(L) else 1.0)
+    overlap = _overlapping_elements(els)
+    excluded = np.zeros((len(px), len(x1)), dtype=bool)
+    for r, es in enumerate(own):
+        for e in es:
+            excluded[r, e] = True
+            excluded[r] |= overlap[e]
+            for xa, ya in ((x1[e], y1[e]), (x2[e], y2[e])):
+                excluded[r] |= (np.hypot(x1 - xa, y1 - ya) < eps) | (np.hypot(x2 - xa, y2 - ya) < eps)
+    out_r, out_j, out_d = [], [], []
+    for start in range(0, len(px), chunk):
+        sl = slice(start, start + chunk)
+        qx, qy = np.asarray(px[sl])[:, None], np.asarray(py[sl])[:, None]
+        t = np.clip(((qx - x1) * dx + (qy - y1) * dy) / np.maximum(L**2, 1e-300), 0.0, 1.0)
+        d = np.hypot(qx - x1 - t * dx, qy - y1 - t * dy) / np.asarray(Lref[sl])[:, None]
+        r, c = np.nonzero((d < tol) & ~excluded[sl])
+        out_r.append(r + start)
+        out_j.append(c)
+        out_d.append(d[r, c])
+    cat = lambda v, dt: np.concatenate(v).astype(dt) if v else np.zeros(0, dt)  # noqa: E731
+    return cat(out_r, int), cat(out_j, int), cat(out_d, float)
+
+
 def close_collocation_points(els, elements=None, *, tol=0.1, chunk=512):
     """Collocation points (element centres) within tol element lengths of another element.
 
@@ -2813,54 +2996,95 @@ def close_collocation_points(els, elements=None, *, tol=0.1, chunk=512):
     "element" (i, the collocation element), "other" (j, the element it is close to),
     "distance" (distance from i's centre to segment j, divided by L_i).
     Elements sharing a node with i (neighbours along a fault, at kinks or at
-    junctions) and i itself are not reported.
+    junctions), elements overlapping i collinearly (a fault or crack on an interface)
+    and i itself are not reported.
     """
-    x1, y1 = np.asarray(els.x1, float), np.asarray(els.y1, float)
-    x2, y2 = np.asarray(els.x2, float), np.asarray(els.y2, float)
-    L = np.hypot(x2 - x1, y2 - y1)
-    idx = np.arange(len(x1)) if elements is None else np.asarray(elements, dtype=int).ravel()
-    eps = 1e-9 * (L.max() if len(L) else 1.0)  # coincident end points: shared node
-    dx, dy = x2 - x1, y2 - y1
-    out_i, out_j, out_d = [], [], []
-    for start in range(0, len(idx), chunk):
-        i = idx[start : start + chunk]
-        px = 0.5 * (x1[i] + x2[i])[:, None]
-        py = 0.5 * (y1[i] + y2[i])[:, None]
-        t = np.clip(((px - x1) * dx + (py - y1) * dy) / np.maximum(L**2, 1e-300), 0.0, 1.0)
-        d = np.hypot(px - x1 - t * dx, py - y1 - t * dy) / L[i][:, None]
-        ends_i = ((x1[i], y1[i]), (x2[i], y2[i]))
-        ends_j = ((x1, y1), (x2, y2))
-        share = np.zeros(d.shape, dtype=bool)
-        for xa, ya in ends_i:
-            for xb, yb in ends_j:
-                share |= np.hypot(xa[:, None] - xb, ya[:, None] - yb) < eps
-        share[np.arange(len(i)), i] = True
-        r, c = np.nonzero((d < tol) & ~share)
-        out_i.append(i[r])
-        out_j.append(c)
-        out_d.append(d[r, c])
-    cat = lambda v, dt: np.concatenate(v).astype(dt) if v else np.zeros(0, dt)  # noqa: E731
-    res = {"element": cat(out_i, int), "other": cat(out_j, int), "distance": cat(out_d, float)}
+    idx = np.arange(len(els.x1)) if elements is None else np.asarray(elements, dtype=int).ravel()
+    L = 2 * np.asarray(els.half_lengths, float)
+    r, j, d = _close_points(els, np.asarray(els.x_centers)[idx], np.asarray(els.y_centers)[idx],
+                            [[int(e)] for e in idx], L[idx], tol, chunk)
+    res = {"element": idx[r], "other": j, "distance": d}
     order = np.argsort(res["distance"], kind="stable")
     return {k: v[order] for k, v in res.items()}
 
 
-def _collocation_elements(mesh):
-    """Collocation elements of `assemble` (global indices, in row order) and, per kind,
-    (sub-mesh, global indices, connectivity, local collocation indices)."""
-    colloc, parts = [], {}
+_KINK_TOL = 1e-6  # radians: a nodal collocation node where the interface bends more is a kink
+
+
+def _collocation_points(mesh):
+    """The collocation points of `assemble`, in row order: dict of arrays "owner" (the
+    element whose boundary condition and moduli the row uses), "x", "y", "nx", "ny",
+    "sx", "sy" (unit normal and tangent), "L" (length scale for the offset), "kind",
+    "nodal" (index into `Mesh.nodal_layout`, -1 if not nodal), "local" (index of the
+    owner within its kind's subset), and "own" (list of the point's own elements)."""
+    rec = {k: [] for k in ("owner", "x", "y", "nx", "ny", "sx", "sy", "L", "kind", "nodal", "local", "own", "kink")}
+    els = mesh.els
     for k in mesh.kinds:
         sub, idx, conn = mesh.subset(k)
         b = mesh.basis[k]
+        if b == "nodal":
+            lay = mesh.nodal_layout()
+            for jj in range(len(lay["owner"])):
+                e = int(idx[lay["owner"][jj]])
+                nx, ny = lay["nx"][jj], lay["ny"][jj]
+                for key, v in (("owner", e), ("x", lay["x"][jj]), ("y", lay["y"][jj]), ("nx", nx), ("ny", ny),
+                               ("sx", ny), ("sy", -nx), ("L", lay["L"][jj]), ("kind", k), ("nodal", jj),
+                               ("local", int(lay["owner"][jj])), ("kink", lay["kink"][jj]),
+                               ("own", [int(idx[ee]) for ee, _ in lay["support"][jj]])):
+                    rec[key].append(v)
+            continue
         if b == "quadratic":
             local = np.setdiff1d(np.arange(len(idx)), tip_elements(sub))  # tips: clamped tapers
         elif b == "constant":
             local = np.arange(len(idx))
         else:
             local = patch_elements(sub, b, conn)
-        parts[k] = (sub, idx, conn, local)
-        colloc.extend(int(idx[le]) for le in local)
-    return np.array(colloc, dtype=int), parts
+        for le in local:
+            e = int(idx[le])
+            for key, v in (("owner", e), ("x", els.x_centers[e]), ("y", els.y_centers[e]),
+                           ("nx", els.x_normals[e]), ("ny", els.y_normals[e]), ("sx", els.x_shears[e]),
+                           ("sy", els.y_shears[e]), ("L", 2 * els.half_lengths[e]), ("kind", k),
+                           ("nodal", -1), ("local", int(le)), ("kink", 0.0), ("own", [e])):
+                rec[key].append(v)
+    return {key: (np.array(v) if key != "own" else v) for key, v in rec.items()}
+
+
+def _collocation_elements(mesh):
+    """Owner elements of the collocation points of `assemble` (global indices, in row
+    order) and, per kind, (sub-mesh, global indices, connectivity, local owner indices)."""
+    rec = _collocation_points(mesh)
+    parts = {}
+    for k in mesh.kinds:
+        sub, idx, conn = mesh.subset(k)
+        parts[k] = (sub, idx, conn, rec["local"][rec["kind"] == k] if len(rec["kind"]) else np.zeros(0, int))
+    return rec["owner"].astype(int) if len(rec["owner"]) else np.zeros(0, int), parts
+
+
+class OverlapRefinementWarning(UserWarning):
+    """Where slip and force elements overlap (a fault or crack on a material interface),
+    a slip node inside the overlap is not a force node, i.e. a slip element does not
+    hold an integer number of force elements. Recommended: M >= 1 force elements per
+    slip element, so that every slip node in the overlap is also a force node;
+    otherwise oscillations or singular behaviour can creep into the solution. Not
+    enforced."""
+
+
+def overlap_refinement_issues(els, labels, tol=1e-9):
+    """Slip nodes inside a slip/force overlap that are not force nodes: (k, 2) points."""
+    labels = np.asarray(labels).astype(str)
+    s, f = np.flatnonzero(labels == "s"), np.flatnonzero(labels == "f")
+    co = coincident_force_elements(els, labels, tol)
+    if len(co) == 0:
+        return np.zeros((0, 2))
+    fnodes = np.unique(np.r_[np.c_[els.x1[f], els.y1[f]], np.c_[els.x2[f], els.y2[f]]].astype(float), axis=0)
+    L_max = 2 * np.max(np.asarray(els.half_lengths))
+    snodes = np.unique(np.r_[np.c_[els.x1[s], els.y1[s]], np.c_[els.x2[s], els.y2[s]]].astype(float), axis=0)
+    on_overlap = _on_slip(snodes, els, co, tol)  # slip nodes lying on an overlapping force element
+    bad = []
+    for p, inside in zip(snodes, on_overlap):
+        if inside and np.hypot(fnodes[:, 0] - p[0], fnodes[:, 1] - p[1]).min() > tol * L_max:
+            bad.append(p)
+    return np.array(bad, dtype=float).reshape(-1, 2)
 
 
 class MeshGapWarning(UserWarning):
@@ -2926,12 +3150,26 @@ def _warn_trapezoids_across_crossings(mesh, tol=1e-9, stacklevel=3):
         )
 
 
-def _warn_close_collocation(mesh, colloc, tol, stacklevel=3):
+def _close_collocation_records(mesh, rec, tol):
+    """Close pairs for the kernel-sampling collocation points `rec` (`_collocation_points`)."""
+    if len(rec["owner"]) == 0:
+        return {"element": np.zeros(0, int), "other": np.zeros(0, int), "distance": np.zeros(0),
+                "x": np.zeros(0), "y": np.zeros(0)}
+    owner = rec["owner"].astype(int)
+    keep = np.ones(len(owner), bool) if mesh.bc_type is None else (mesh.bc_type[owner] != "s").any(axis=1)
+    sel = np.flatnonzero(keep)
+    r, j, d = _close_points(mesh.els, rec["x"][sel], rec["y"][sel], [rec["own"][q] for q in sel],
+                            rec["L"][sel], tol)
+    res = {"element": owner[sel][r], "other": j, "distance": d, "x": rec["x"][sel][r], "y": rec["y"][sel][r]}
+    order = np.argsort(res["distance"], kind="stable")
+    return {k: v[order] for k, v in res.items()}
+
+
+def _warn_close_collocation(mesh, rec, tol, stacklevel=3):
     """Warn about collocation points close to other elements (rows that sample kernels)."""
-    if tol is None or tol <= 0 or len(colloc) == 0:
+    if tol is None or tol <= 0 or len(rec["owner"]) == 0:
         return
-    sampled = colloc if mesh.bc_type is None else colloc[(mesh.bc_type[colloc] != "s").any(axis=1)]
-    close = close_collocation_points(mesh.els, sampled, tol=tol)
+    close = _close_collocation_records(mesh, rec, tol)
     n = len(close["element"])
     if n == 0:
         return
@@ -2953,7 +3191,7 @@ def _warn_close_collocation(mesh, colloc, tol, stacklevel=3):
 
 
 def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None,
-             proximity_tol=0.1, background=None, _stacklevel=3):
+             proximity_tol=0.1, background=None, kink_offset=0.5, _stacklevel=3):
     """Linear system A x = b for a mesh with boundary conditions (see `solve`).
 
     Returns (A, b, rows) with rows a dict of per-row arrays: element, component,
@@ -2975,37 +3213,59 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None,
     n_cols = mesh.n_columns(geometry=geometry)
     if "slip" in mesh.kinds and mesh.basis["slip"] not in ("quadratic", "hat", "constant"):
         raise ValueError(f"slip basis {mesh.basis['slip']!r} is not supported by solve")
-    if "force" in mesh.kinds and mesh.basis["force"] != "trapezoid":
-        raise ValueError("solve uses trapezoids for force sources: Mesh(basis={'force': 'trapezoid'})")
+    if "force" in mesh.kinds and mesh.basis["force"] not in ("nodal", "trapezoid"):
+        raise ValueError("solve uses the nodal or the trapezoid force basis: "
+                         "Mesh(basis={'force': 'nodal'}) (recommended) or {'force': 'trapezoid'}")
 
-    # collocation elements and the operators giving slip / force density at their centres
-    colloc, parts = _collocation_elements(mesh)
+    # collocation points and the operators giving slip / force density there
+    rec = _collocation_points(mesh)
+    colloc = rec["owner"].astype(int) if len(rec["owner"]) else np.zeros(0, int)
     # warnings point at the caller of assemble, or of solve (_stacklevel=4)
-    _warn_close_collocation(mesh, colloc, proximity_tol, stacklevel=_stacklevel)
+    _warn_close_collocation(mesh, rec, proximity_tol, stacklevel=_stacklevel)
     _warn_trapezoids_across_crossings(mesh, stacklevel=_stacklevel)
-    centre_ops = {}
-    for k, (sub, idx, conn, local) in parts.items():
-        b = mesh.basis[k]
-        T = mesh.transform(k, geometry=geometry)
-        T = T if geometry == "antiplane" else T.reshape(T.shape[0] * 2, -1)
+    ops = []  # per collocation point: (pe, n_cols) slip / force density, local frame (global for nodal)
+    cache = {}
+    for i_pt in range(len(colloc)):
+        k, le = rec["kind"][i_pt], int(rec["local"][i_pt])
+        if k not in cache:
+            sub, idx, conn = mesh.subset(k)
+            T = mesh.transform(k, geometry=geometry)
+            T = T if geometry == "antiplane" else T.reshape(T.shape[0] * 2, -1)
+            if k == "slip":
+                M, _ = slip_node_matrices(sub, geometry=geometry, reference="local")
+            else:
+                M = force_node_matrix(sub, geometry=geometry, reference="local")
+            cache[k] = (sub, T, M, mesh.columns(k, geometry=geometry))
+        sub, T, M, cols = cache[k]
+        op = np.zeros((pe, n_cols))
         if k == "slip":
-            M, _ = slip_node_matrices(sub, geometry=geometry, reference="local")
-            node_rows = lambda le: M[pe * (3 * le + 1) : pe * (3 * le + 2)]  # noqa: E731  centre node
-        else:
-            M = force_node_matrix(sub, geometry=geometry, reference="local")
-            node_rows = lambda le: 0.5 * (M[pe * 2 * le : pe * (2 * le + 1)] + M[pe * (2 * le + 1) : pe * (2 * le + 2)])  # noqa: E731
-        cols = mesh.columns(k, geometry=geometry)
-        for le in local:
-            op = np.zeros((pe, n_cols))
-            op[:, cols] = node_rows(le) @ T  # local-frame slip / force density at the centre
-            centre_ops[int(idx[le])] = op
+            op[:, cols] = M[pe * (3 * le + 1) : pe * (3 * le + 2)] @ T  # centre node, local frame
+        elif rec["nodal"][i_pt] < 0:  # trapezoids: force density at the element centre, local frame
+            op[:, cols] = 0.5 * (M[pe * 2 * le : pe * (2 * le + 1)] + M[pe * (2 * le + 1) : pe * (2 * le + 2)]) @ T
+        else:  # nodal: force density at the collocation point, global frame
+            jj = int(rec["nodal"][i_pt])
+            lay = mesh.nodal_layout()
+            if lay["kind"][jj] == "node":
+                e_loc, r = lay["support"][jj][0]
+                nd = 2 * e_loc + (1 - r)  # node rows are (start, end); ramp 0 is the end node
+                local = M[pe * nd : pe * (nd + 1)] @ T
+            else:
+                e_loc = lay["support"][jj][0][0]
+                local = 0.5 * (M[pe * 2 * e_loc : pe * (2 * e_loc + 1)] + M[pe * (2 * e_loc + 1) : pe * (2 * e_loc + 2)]) @ T
+            op[:, cols] = local if pe == 1 else np.asarray(sub.rot_mats[e_loc]) @ local
+        ops.append(op)
 
-    # kernels at the collocation points, offset to the sampled side of each element
-    L = 2 * np.asarray(els.half_lengths)[colloc]
-    nx, ny = np.asarray(els.x_normals)[colloc], np.asarray(els.y_normals)[colloc]
-    sx, sy = np.asarray(els.x_shears)[colloc], np.asarray(els.y_shears)[colloc]
-    xo = np.asarray(els.x_centers)[colloc] + side * dr * L * nx
-    yo = np.asarray(els.y_centers)[colloc] + side * dr * L * ny
+    # kernels at the collocation points, offset to the sampled side
+    L = rec["L"] if len(colloc) else np.zeros(0)
+    nx, ny = (rec["nx"], rec["ny"]) if len(colloc) else (np.zeros(0), np.zeros(0))
+    sx, sy = (rec["sx"], rec["sy"]) if len(colloc) else (np.zeros(0), np.zeros(0))
+    off = dr * L
+    if len(colloc) and kink_offset:
+        # at a kink the force layer of straight elements has a log-singular stress at the node
+        # (a polygon artefact): sample a finite distance away
+        off = np.where(rec["kink"] > _KINK_TOL, np.maximum(off, kink_offset * L), off)
+    xo = (rec["x"] + side * off * nx) if len(colloc) else np.zeros(0)
+    yo = (rec["y"] + side * off * ny) if len(colloc) else np.zeros(0)
     U, S, _ = get_kernels(xo, yo, mesh, geometry=geometry, mu=mu, nu=nu, use_numba=use_numba)
     Tg = traction_kernels(S, nx, ny)  # reference traction, global
     Tl = traction_kernels(S, nx, ny, sx, sy) if pe == 2 else Tg
@@ -3027,12 +3287,13 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None,
     def flat(K, i, c):
         return K[i, :, c].ravel() if pe == 1 else K[i, :, c, :].ravel()
 
-    A, b, rows = [], [], {"element": [], "component": [], "type": []}
+    A, b, rows = [], [], {"element": [], "component": [], "type": [], "x": [], "y": []}
     for i, e in enumerate(colloc):
+        nodal = rec["nodal"][i] >= 0
         for c in range(pe):
             t = mesh.bc_type[e, c]
             if t == "s":
-                row = centre_ops[e][c]
+                row = ops[i][c]
             elif t == "u":
                 row = flat(U, i, c)
             elif t == "t":
@@ -3042,11 +3303,13 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None,
             else:  # "h": force density = interface line force from the traction
                 kappa = interface_kappa(mesh.mu_minus[e], mesh.mu_plus[e], side)
                 if pe == 1:  # antiplane force kernel convention: mu0 lap(u) = f delta
-                    row = centre_ops[e][0] + kappa * flat(Tg, i, 0)
+                    row = ops[i][0] + kappa * flat(Tg, i, 0)
+                elif nodal:  # global frame: f - kappa T = 0
+                    row = ops[i][c] - kappa * flat(Tg, i, c)
                 else:  # plane-strain Kelvin convention: force acts along f
                     R = els.rot_mats[e]
                     t_local_c = R[0, c] * flat(Tg, i, 0) + R[1, c] * flat(Tg, i, 1)  # (R^T T)_c
-                    row = centre_ops[e][c] - kappa * t_local_c
+                    row = ops[i][c] - kappa * t_local_c
             A.append(row)
             rhs = 0.0 if t == "h" else mesh.bc_value[e, c] if mesh.bc_value is not None else 0.0
             if background is not None:
@@ -3059,12 +3322,16 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None,
                 elif t == "h":
                     if pe == 1:
                         rhs -= kappa * t_bg[i, 0]
+                    elif nodal:
+                        rhs += kappa * t_bg[i, c]
                     else:
                         rhs += kappa * (R[0, c] * t_bg[i, 0] + R[1, c] * t_bg[i, 1])
             b.append(rhs)
             rows["element"].append(e)
             rows["component"].append(c)
             rows["type"].append(t)
+            rows["x"].append(rec["x"][i])
+            rows["y"].append(rec["y"][i])
     if "slip" in mesh.kinds and mesh.basis["slip"] == "quadratic":
         Ac, info = mesh.continuity_operator(geometry=geometry)
         A.extend(Ac)
@@ -3072,6 +3339,8 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None,
         rows["element"].extend(info["element"])
         rows["component"].extend([-1] * len(Ac))
         rows["type"].extend(["continuity"] * len(Ac))
+        rows["x"].extend(info["x"])
+        rows["y"].extend(info["y"])
     return np.array(A), np.array(b), {k: np.array(v) for k, v in rows.items()}
 
 
@@ -3096,7 +3365,7 @@ def _linear_solve(A, b, solver):
 
 
 def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None, return_system=False,
-          return_info=False, proximity_tol=0.1, solver="auto", background=None):
+          return_info=False, proximity_tol=0.1, solver="auto", background=None, kink_offset=0.5):
     """Solve a BEM problem defined by a Mesh with boundary conditions.
 
     The formulation follows the mesh bases:
@@ -3133,6 +3402,13 @@ def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None, retu
         (`TrapezoidCrossingWarning`) when a force trapezoid spans a node where a fault
         crosses the force chain; both warnings point to a fix in the mesh or
         connectivity, which remain the user's choice.
+    kink_offset : float
+        Nodal force basis only: where the interface bends at a collocation node (a
+        polygonal approximation of a curved interface), the force layer of straight
+        elements has a log-singular stress at the node. The node is then sampled
+        kink_offset element lengths off the interface, on the sampled side (default
+        0.5; 0 disables). Straight nodes use the usual tiny offset `dr`. Curved
+        interfaces converge at first order either way (tasks.md P1c).
     background : callable, optional
         A known reference-medium field (e.g. `uniform_background` for a remote
         stress). The total field is background + BEM: boundary conditions ("u", "t",
@@ -3161,7 +3437,8 @@ def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None, retu
     give the minimum-norm solution (see `solver`).
     """
     A, b, rows = assemble(mesh, geometry=geometry, mu=mu, nu=nu, side=side, dr=dr, use_numba=use_numba,
-                          proximity_tol=proximity_tol, background=background, _stacklevel=4)
+                          proximity_tol=proximity_tol, background=background, kink_offset=kink_offset,
+                          _stacklevel=4)
     bad = ~np.isfinite(A).all(axis=1)
     if bad.any():
         raise FloatingPointError(

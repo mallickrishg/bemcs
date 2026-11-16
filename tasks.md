@@ -498,14 +498,38 @@ checked by:
       element, and the odd error f'(x - c) there gives O(h). The same density linearly interpolated gives O(h^2)
       (traction error 1.25e-2 -> 5.8e-3 vs 3.8e-3 -> 9.6e-4). Antiplane has no such coupling along the line,
       hence h^2 there.
-- [ ] **P1d. Plane-strain force basis (decision needed).** The trapezoids, chosen to avoid the checkerboard
-  null mode of every-element linear force with centre collocation, cost an order in plane strain. Candidates:
-  - **(1)** continuous piecewise-linear force (nodal "force hats") with collocation at the nodes (offset `dr`).
-    The checkerboard is visible at nodes, so there is no null mode; open/tapered chain ends as for the trapezoids.
-  - **(2)** trapezoid support with a linear (not constant) middle element: two unknowns and two collocation
-    points (Gauss points) per middle element.
-  - **(3)** keep the trapezoids and accept first order in plane strain.
-  - Compare on the Dundurs case (expect h^2 for (1) and (2)).
+- [x] **P1d. Plane-strain force basis: option 1 chosen (user, 2026-11-16) and implemented: `basis={"force": "nodal"}`.**
+  - **Basis:** continuous piecewise-linear force, one unknown (a global force vector) per node, collocated at the node
+    with normal = the average of the two element normals (`nodal_force_layout`, `nodal_force_coefficients`,
+    `Mesh.nodal_layout`). Trapezoids remain available for comparison.
+  - **Break points:** at `Mesh.trapezoid_restart_points()` (fault crossings, open force ends, overlap ends of non-"s"
+    slip) the force may differ on the two sides: a half-hat on each side, collocated at its element's centre. This
+    is automatic, since there is no connectivity for this basis. Tapered tips have no unknown.
+  - **Accuracy:**
+    - **Dundurs (straight interface):** second order. 1.0e-2, 2.6e-3, 6.5e-4 (mu2 = 4, horizontal fault), against
+      the trapezoids' 2.4e-2, 1.0e-2, 5.4e-3.
+    - **Antiplane layered half-space, fault through the interface:** 1.1e-4, 3.3e-5, 1.7e-5, without any
+      connectivity file.
+    - **Rybicki contact:** as the trapezoids (corner-limited, P3).
+  - **Kinks (curved interfaces as polygons):** the straight-element force layer is log-singular at a kink node, so
+    collocating there (offset `dr` = 1e-9 element lengths) fails: 3.9, 1.2, 0.35, 0.15 on the circular inclusion.
+    `solve(kink_offset=0.5)` samples kink nodes 0.5 element lengths off the interface on the sampled side:
+    4.1e-3, 2.4e-3, 1.3e-3, 6.6e-4 for n = 32 to 256. That is first order (the polygon), but better than the
+    trapezoids (1.6e-2, 5.5e-3, 2.1e-3). Straight nodes keep `dr`.
+  - **Overlapping slip and force meshes (user):** the force mesh may be much denser than the slip mesh where they
+    overlap. Recommended: an integer number M >= 1 of force elements per slip element, i.e. every slip node in the
+    overlap is also a force node. Not enforced: `Mesh` warns (`OverlapRefinementWarning`,
+    `overlap_refinement_issues`).
+    - **Antiplane interface crack:** M = 2 and 4 make the contrast free (5.84e-2 at h = 0.05, the same crack with
+      no contrast 5.8e-2); M = 1: 8.1e-2; M = 1.5 warns, 6.4e-2.
+    - **Plane-strain interface crack (M = 2):** cond <= 7e2, traction continuous to 1e-5 at the bonded nodes,
+      converging.
+    - The proximity check now skips collinear overlaps, and works on collocation points (nodes included).
+  - **`assemble`'s `rows`** gains "x" and "y" (the collocation point of each row).
+  - **Tests:** `tests/test_nodal_force.py`.
+  - **Next:**
+    - make "nodal" the force basis of the examples and of the plane-strain example rebuild (P4);
+    - decide whether a user can set break points for the nodal basis (today they are automatic).
   - **Original note:** (b) Edge dislocation, or a short fault with smooth slip, near a planar bimaterial interface. Dundurs image
     dislocations. This is the plane-strain analogue of the antiplane layered case, with fault-interface coupling
     through both shear and normal components.
