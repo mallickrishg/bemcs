@@ -400,7 +400,8 @@ Updated 2026-11-16. Details are in T1/T2 and the issue list (section 4).
   and compute the shared logs/arctans once per point. Target: compile in seconds and no slower at run time. Guarded by
   `tests/test_force_kernels_reference.py` (Kelvin reference) and `test_numba_backend_matches_numpy`.
   Apply the same pattern to the antiplane kernels if it helps.
-- [ ] Add reference tests for the remaining kernels.
+- [ ] Add reference tests for the remaining kernels. **Only the triangle-force kernels remain** (lowest priority,
+  tracked in T4); everything else below is done.
   - **Done:**
     - ~~constant slip (plane strain)~~ against Crouch & Starfield;
     - ~~linear and constant force (both geometries)~~ against point-force quadrature;
@@ -459,7 +460,8 @@ checked by:
 - general = hat forms.
 
 **Missing before plane-strain results can be trusted at a finite contrast:**
-- [ ] **P1. A finite-contrast exact solution in plane strain.** (a) done 2026-11-16, (b) open.
+- [x] ~~**P1. A finite-contrast exact solution in plane strain.**~~ **Done 2026-11-16:** (a) circular inclusion and
+  (b) Dundurs, both below.
   - **(a) Circular inclusion: done** (`tests/test_circular_inclusion.py`, `tests/reference_solutions.py`).
     - **Reference:** Muskhelishvili potentials, with the constants solved from continuity at boundary points
       (residual 1e-15). It matches the closed-form inclusion stress, Kirsch for a hole, Hooke and equilibrium.
@@ -548,7 +550,9 @@ checked by:
   - **Original note:** (b) Edge dislocation, or a short fault with smooth slip, near a planar bimaterial interface. Dundurs image
     dislocations. This is the plane-strain analogue of the antiplane layered case, with fault-interface coupling
     through both shear and normal components.
-- [ ] **P1c. First-order convergence on curved interfaces: diagnosed (2026-11-16), remedy open.**
+- [x] ~~**P1c. First-order convergence on curved interfaces.**~~ **Settled 2026-11-16.** Diagnosed (polygon kinks),
+  and the user decided to keep the trapezoids and accept first order on curved interfaces: refine the force mesh
+  for accuracy. Realistic interfaces are non-planar, where the tents lose their advantage too.
   - **Basis is not the bottleneck.** On the circular inclusion (antiplane), representing the *exact* force density
     in the trapezoid space, without solving, gives interior errors 1.2e-2, 3.1e-3, 7.7e-4, 1.9e-4 for n = 32 to
     256: second order. That equals plain linear interpolation on half as many elements, as expected from half the
@@ -576,7 +580,9 @@ checked by:
   - **Plan:** a convergence study, plus a residual net-force or traction check on a dipping fault through a planar
     interface. If it converges only at first order with a visible far-field offset, do the step task (a half-trapezoid
     on each side of the crossing) before relying on such geometries.
-- [ ] **P3. An interface that meets the free surface** (outcropping or dipping layers, basins). **Confirmed
+- [x] ~~**P3. An interface that meets the free surface**~~ **Done 2026-11-16**: the force chain has an open (free)
+  end at the free surface. The remaining first-order corner error is handled by refining towards the corner
+  (documented in the Rybicki example). Below, the original item (outcropping or dipping layers, basins). **Confirmed
   2026-11-16** with the vertical-contact case (`examples/antiplane/BimaterialContact_Rybicki.py`,
   `tests/test_heterogeneous.py`):
   - **Exact reference:** a strike-slip fault at x = 0 in a half-space, contact at x = d, mu2/mu1 = 4.
@@ -630,7 +636,10 @@ checked by:
   - **Original note:** rebuild `examples/planestrain/testing_HeterogeneousMaterialsPlanestrain.py`. It is still a toy
   (3 slip and 3 force elements, a 3-element interface), like the old antiplane example. Rebuild it on the P1 case(s)
   with log-spaced lines and connectivity files, the same way as the antiplane example.
-- [ ] **P6. Fault on a material interface: slip and force meshes that overlap exactly** (antiplane and plane strain).
+- [x] ~~**P6. Fault on a material interface: slip and force meshes that overlap exactly**~~ **Done 2026-11-16**
+  (antiplane and plane strain). Classification, warnings, denser force meshes with integer M, and tests
+  (`tests/test_overlapping_meshes.py`, `tests/test_nodal_force.py`). Optional later: the exact plane-strain
+  interface-crack solution (England 1965; Rice 1988).
   - **Why:** the natural setup for a bimaterial fault (the fault is the contact between two materials). Slip
     elements and force (`'h'`) elements then share every node and every collocation point. Physically important:
     in plane strain, slip on a bimaterial interface changes the normal stress (bimaterial coupling).
