@@ -396,13 +396,22 @@ Square system of `2(N_s + N_f)` equations.
 - [x] Fix issue 4.1 (compliance) and re-run `testing_HeterogeneousMaterialsPlanestrain.py` (runs; same solution, see issue 1).
 - [x] Resolve 4.2 and 4.3: exact kappa from (mu_minus, mu_plus) and the sampled side, `bemcs.interface_kappa` (see issue 2).
 - [x] Fix 4.5 so the test script runs end to end.
-- [ ] Validate (`tests/test_solve.py`):
-  - [x] (a) no contrast gives no interface force;
-  - [ ] (b) the antiplane limit;
-  - [x] (c) layered inclusion with an analytic solution: antiplane bimaterial image solution (plane strain: still
-    to do, e.g. a Dundurs bimaterial solution or FEM);
-  - [ ] (d) symmetry `mu1 <-> mu2`;
-  - [x] (e) plane-strain traction continuity across the interface.
+- [x] Validate (`tests/test_solve.py`, `tests/test_validation.py`, 2026-11-16):
+  - [x] (a) no contrast gives no interface force.
+  - [x] (b) limits, interpreted as the high-contrast limits in both geometries (say if (b) meant something else).
+    mu+/mu- = 1e4 matches a rigid boundary (homogeneous BEM with u = 0 on the line), and 1e-4 matches a free surface
+    (t = 0); compared by stresses, because displacements also reflect the different mesh truncations. Measured from
+    h = 0.1 to 0.05 (first order, the rate of the default trapezoids):
+    - plane strain: rigid 5.0e-3 -> 2.5e-3, free 7.3e-2 -> 3.1e-2;
+    - antiplane: about 1e-3 (rigid) and 4e-3 (free).
+  - [x] (c) analytic layered case: antiplane bimaterial image solution (h^2 convergence, both sides). Plane strain
+    relies on (b) and (e); a Dundurs bimaterial dislocation solution would be a further check.
+  - [x] (d) symmetry:
+    - reversing the interface elements (n -> -n) while swapping mu- <-> mu+ gives identical fields (1e-10);
+    - the bimaterial mirrored about the interface gives mirrored fields. For plane strain the mirrored fault takes
+      the opposite local shear slip, because t' = -R t.
+  - [x] (e) plane-strain traction continuity across the interface: exact at collocation points, first order between
+    them.
 - [x] `'t'` rows now prescribe the true traction (mu_side / mu0) S.n; prescribed projected strain is no longer a BC type.
 - [x] Verify the trapezoidal-force kernels in isolation (issue 4.6; see the issue for the tests).
 
@@ -457,7 +466,18 @@ Square system of `2(N_s + N_f)` equations.
   check that 1-in/2-out and 2-in/1-out still pass.
 
 ### T3. Tests and docs
-- [ ] Extend `tests/` with the remaining T1 validation cases ((b), (d), and a plane-strain analytic case).
+- [x] Extend `tests/` with the T1 validation cases (`tests/test_validation.py`). Optional: a plane-strain Dundurs
+  bimaterial dislocation solution.
+- [x] Crossing cracks without remeshing (`tests/test_crossing_cracks.py`):
+  - **Stable tangles:** random tangles with a tree-shaped crossing graph are stable (condition number 20 to 690),
+    give hat == general, and have bounded stress at the crossings.
+  - **Enclosed blocks:** tangles whose cracks cut out closed blocks (traction-free all round) slip about 20x the
+    load, but both forms agree. That is the geometry, not the numerics.
+  - **Node near another crack's collocation point:**
+    - with `dr = 0`: converges down to d ~ 1e-10 L, loses precision near 1e-13 L, and blows up at 1e-16 L;
+    - `dr = 0, d = 0` raises a clear `FloatingPointError`;
+    - with the default `dr = 1e-9` the solve stays finite for all d. The limit depends on the approach
+      direction, because slip curvature jumps at nodes.
 - [ ] Document heterogeneous elasticity (sections 2.1 and 2.2) in the README or wiki, plus a plane-strain tutorial.
 - [x] Tidy up: `environment.yml` gains `mpmath` (the tests evaluate 50-digit references with it), `pkg_resources`
   is replaced, and library debug prints are removed.
