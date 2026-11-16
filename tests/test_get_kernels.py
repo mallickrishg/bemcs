@@ -538,22 +538,45 @@ def test_trapezoids_restart_at_two_breaks_and_on_closed_loops():
     assert np.sort(d)[0] == pytest.approx(1.5) and np.sort(d)[1] <= 2.55
 
 
-def test_mesh_restarts_trapezoids_at_fault_crossings():
-    """A fault crossing an interface (no shared node) at an interface node."""
+def test_mesh_warns_about_trapezoids_across_fault_crossings(tmp_path):
+    """A fault crossing an interface (no shared node) at an interface node. The Mesh
+    keeps the user's connectivity (or the plain default); solve warns when a trapezoid
+    spans the crossing, and split_force_trapezoids suggests a fix."""
+    import warnings
+
     interface = _straight(8, x0=-4.0, y=-1.0)
     fault = [((0.0, 0.0), (0.0, -0.75)), ((0.0, -0.75), (0.0, -1.5)), ((0.0, -1.5), (0.0, -2.25))]
     els = _line_els(fault + interface)
     labels = ["s"] * 3 + ["f"] * 8
     np.testing.assert_allclose(GF.fault_crossings(els, labels), [[0.0, -1.0]])
-    mesh = bemcs.Mesh(els, labels=labels, basis={"slip": "hat", "force": "trapezoid"})
-    np.testing.assert_array_equal(mesh.connectivity["force"], 3 + np.array([[1, 2, 3], [4, 5, 6]]))
-    # no crossing: the default stays None (stride 2 from one end)
+    kw = dict(bc_type=["s"] * 3 + ["h"] * 8, bc_value=np.r_[0.5, 1.0, 0.5, np.zeros(8)],
+              mu_minus=np.r_[np.ones(3), np.full(8, 3.0)], mu_plus=1.0,
+              basis={"slip": "hat", "force": "trapezoid"})
+    mesh = bemcs.Mesh(els, **kw)
+    assert mesh.connectivity["force"] is None  # the default is not changed behind the user's back
+    with pytest.warns(bemcs.TrapezoidCrossingWarning, match=r"\(0, -1\) between elements 6 and 7"):
+        bemcs.solve(mesh, geometry="antiplane", mu=1.0)
+    fix = mesh.split_force_trapezoids()
+    np.testing.assert_array_equal(fix, 3 + np.array([[1, 2, 3], [4, 5, 6]]))
+    # the fix, given as a connectivity file: no warning
+    path = tmp_path / "connectivity.csv"
+    np.savetxt(path, fix, fmt="%d", delimiter=",", header="e1,e2,e3", comments="")
+    mesh = bemcs.Mesh(els, connectivity={"force": str(path)}, **kw)
+    np.testing.assert_array_equal(mesh.connectivity["force"], fix)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", bemcs.TrapezoidCrossingWarning)
+        bemcs.solve(mesh, geometry="antiplane", mu=1.0)
+    # no crossing: nothing to warn about
     fault_off = [((5.0, 0.0), (5.0, -0.75)), ((5.0, -0.75), (5.0, -1.5)), ((5.0, -1.5), (5.0, -2.25))]
-    mesh = bemcs.Mesh(_line_els(fault_off + interface), labels=labels,
-                      basis={"slip": "hat", "force": "trapezoid"})
-    assert len(mesh.fault_crossings) == 0 and mesh.connectivity["force"] is None
-    # an explicit connectivity is kept as given
-    given = 3 + np.array([[0, 1, 2], [2, 3, 4], [4, 5, 6]])
-    mesh = bemcs.Mesh(els, labels=labels, basis={"slip": "hat", "force": "trapezoid"},
-                      connectivity={"force": given})
-    np.testing.assert_array_equal(mesh.connectivity["force"], given)
+    mesh = bemcs.Mesh(_line_els(fault_off + interface), **kw)
+    assert len(mesh.fault_crossings) == 0
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", bemcs.TrapezoidCrossingWarning)
+        bemcs.solve(mesh, geometry="antiplane", mu=1.0)
+
+
+def test_connectivity_file_needs_three_integer_columns(tmp_path):
+    path = tmp_path / "bad.csv"
+    path.write_text("0,1\n2,3\n")
+    with pytest.raises(ValueError, match="three integer columns"):
+        GF._read_connectivity(path)

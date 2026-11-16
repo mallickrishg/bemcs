@@ -1212,6 +1212,19 @@ def _check_material(geometry, mu, nu):
             raise ValueError(f"nu must be a scalar in (-1, 0.5), got {nu!r}")
 
 
+def _read_connectivity(path):
+    """(n, 3) int array from a CSV file: one patch per row, three 0-based element
+    indices, optional header line."""
+    import pandas as pd
+
+    d = pd.read_csv(path, header=None, comment="#")
+    d = d[pd.to_numeric(d.iloc[:, 0], errors="coerce").notna()]  # drop a header row
+    conn = d.to_numpy(dtype=float)
+    if conn.ndim != 2 or conn.shape[1] != 3 or not np.all(conn == np.round(conn)):
+        raise ValueError(f"{path}: a connectivity file needs three integer columns per row")
+    return conn.astype(int)
+
+
 def _check_connectivity(conn, n_els):
     c = np.asarray(conn)
     if c.ndim != 2 or c.shape[1] != 3 or not np.issubdtype(c.dtype, np.integer):
@@ -1443,7 +1456,8 @@ def trapezoid_connectivity(els, breaks=None, tol=1e-9):
 
     breaks : (k, 2) array of points, optional
         Chain nodes where the stride restarts, e.g. where a fault crosses the chain
-        (`Mesh` finds these). The chain is split there; on each side the stride is
+        (`Mesh.fault_crossings`; `Mesh.split_force_trapezoids` builds the global
+        connectivity from them). The chain is split there; on each side the stride is
         counted from the break, so collocation points flank it symmetrically (1.5
         elements away) and the two trapezoids next to it share no element (the force
         is zero at the break node). Without this, a stride that runs through a
@@ -2099,11 +2113,13 @@ class Mesh:
         {"slip": (n, 3) int, "force": (m, 3) int} with *global* element
         indices. Optional for "hat" and "trapezoid"; defaults from the mesh
         topology: one-ring hats on every non-tip slip element, and trapezoids
-        centred on every other element along each chain of force elements. The
-        trapezoid stride restarts at every force-chain node that lies on a slip
-        element (a fault crossing an interface, `fault_crossings`), so that
-        collocation points flank the crossing on both sides; the points found are
-        in `mesh.fault_crossings`.
+        centred on every other element along each chain of force elements.
+        Each value may also be the path of a CSV file with one patch per row: three
+        0-based element indices (rows of the mesh file), with or without a header.
+        The connectivity is the user's choice; `solve` warns about layouts that
+        cause known problems (a trapezoid spanning a node where a fault crosses
+        the chain, `TrapezoidCrossingWarning`) and `split_force_trapezoids`
+        suggests a fix.
     bc_type : sequence of str (same type on all components), or (n_els, 2) with one
         type per component in plane strain (component 1/2: x/y for global types,
         t/n for local types). Boundary condition of each element, used by `solve`:
@@ -2152,7 +2168,8 @@ class Mesh:
             raise ValueError(f"labels must be 's' or 'f', got {bad}")
 
         basis = dict(basis or {})
-        connectivity = dict(connectivity or {})
+        connectivity = {k: (_read_connectivity(v) if isinstance(v, (str, os.PathLike)) else v)
+                        for k, v in dict(connectivity or {}).items()}
         for name, d in (("basis", basis), ("connectivity", connectivity)):
             unknown = set(d) - set(_KINDS)
             if unknown:
@@ -2178,13 +2195,8 @@ class Mesh:
         for k in set(basis) | set(connectivity):
             if k not in self.kinds:
                 raise ValueError(f"basis/connectivity given for {k!r} but no element is labelled {k[0]!r}")
-        # default trapezoids restart where a fault crosses a force chain (trapezoid_connectivity)
+        # nodes where a fault crosses a force chain: `solve` warns if a trapezoid spans one
         self.fault_crossings = fault_crossings(els, labels)
-        if (self.basis.get("force") == "trapezoid" and self.connectivity.get("force") is None
-                and len(self.fault_crossings)):
-            idx = np.flatnonzero(labels == "f")
-            sub = _subset_els(els, idx)
-            self.connectivity["force"] = idx[trapezoid_connectivity(sub, breaks=self.fault_crossings)]
         if bc_type is not None:
             for e in range(n_els):
                 kind = "slip" if labels[e] == "s" else "force"
@@ -2268,6 +2280,16 @@ class Mesh:
         if key not in self._cache:
             self._cache[key] = self._subset(kind)
         return self._cache[key]
+
+    def split_force_trapezoids(self, points=None, tol=1e-9):
+        """Force trapezoids (global element indices) with the stride restarted at
+        `points` (default: `self.fault_crossings`), a suggestion for the connectivity
+        file when `solve` raises `TrapezoidCrossingWarning`. Save it with e.g.
+        np.savetxt("connectivity.csv", conn, fmt="%d", delimiter=",")."""
+        idx = self.elements("force")
+        sub = _subset_els(self.els, idx)
+        pts = self.fault_crossings if points is None else points
+        return idx[trapezoid_connectivity(sub, breaks=pts, tol=tol)]
 
     def transform(self, kind, *, geometry):
         """Basis transform of one source type (`basis_transform`; the identity for the
@@ -2650,7 +2672,46 @@ def _collocation_elements(mesh):
     return np.array(colloc, dtype=int), parts
 
 
-def _warn_close_collocation(mesh, colloc, tol):
+class TrapezoidCrossingWarning(UserWarning):
+    """A force trapezoid spans a node where a fault crosses the force chain. The
+    stride then runs through the crossing and only one side of it gets a nearby
+    collocation point. The interface force density steps at a crossing (in proportion
+    to the slip gradient), so the lopsided layout misrepresents it and, in general,
+    leaves a spurious net force whose far field (log r in antiplane) spreads the error
+    through the whole solution. Fix: a connectivity that restarts the stride at the
+    crossing (`Mesh.split_force_trapezoids`)."""
+
+
+def _warn_trapezoids_across_crossings(mesh, tol=1e-9, stacklevel=3):
+    if "force" not in mesh.kinds or mesh.basis["force"] != "trapezoid" or not len(mesh.fault_crossings):
+        return
+    conn = mesh.connectivity["force"]
+    if conn is None:
+        sub, idx, _ = mesh.subset("force")
+        conn = idx[trapezoid_connectivity(sub)]
+    els = mesh.els
+    f = mesh.elements("force")
+    L = 2 * np.max(np.asarray(els.half_lengths)[f])
+    bad = []
+    for px, py in mesh.fault_crossings:
+        at = [int(e) for e in f
+              if min(np.hypot(els.x1[e] - px, els.y1[e] - py), np.hypot(els.x2[e] - px, els.y2[e] - py)) < tol * L]
+        if len(at) == 2 and any(at[0] in row and at[1] in row for row in conn.tolist()):
+            bad.append((px, py, at))
+    if bad:
+        shown = ", ".join(f"({px:.4g}, {py:.4g}) between elements {a} and {b}" for px, py, (a, b) in bad[:5])
+        more = f", ... ({len(bad)} crossings)" if len(bad) > 5 else ""
+        warnings.warn(
+            f"force trapezoid(s) span fault crossing(s) at {shown}{more}: the trapezoid stride runs "
+            "through the crossing, so the force density there is poorly represented and the interface "
+            "can carry a spurious net force. Fix the force connectivity so the stride restarts at the "
+            "crossing: mesh.split_force_trapezoids() suggests one (save it as your connectivity file).",
+            TrapezoidCrossingWarning,
+            stacklevel=stacklevel,
+        )
+
+
+def _warn_close_collocation(mesh, colloc, tol, stacklevel=3):
     """Warn about collocation points close to other elements (rows that sample kernels)."""
     if tol is None or tol <= 0 or len(colloc) == 0:
         return
@@ -2672,12 +2733,12 @@ def _warn_close_collocation(mesh, colloc, tol):
         "bemcs.bemAssembly.close_collocation_points(mesh.els, ...) or "
         "mesh.close_collocation_points(). Silence with proximity_tol=None.",
         CollocationProximityWarning,
-        stacklevel=3,
+        stacklevel=stacklevel,
     )
 
 
 def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None,
-             proximity_tol=0.1):
+             proximity_tol=0.1, _stacklevel=3):
     """Linear system A x = b for a mesh with boundary conditions (see `solve`).
 
     Returns (A, b, rows) with rows a dict of per-row arrays: element, component,
@@ -2704,7 +2765,9 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None,
 
     # collocation elements and the operators giving slip / force density at their centres
     colloc, parts = _collocation_elements(mesh)
-    _warn_close_collocation(mesh, colloc, proximity_tol)
+    # warnings point at the caller of assemble, or of solve (_stacklevel=4)
+    _warn_close_collocation(mesh, colloc, proximity_tol, stacklevel=_stacklevel)
+    _warn_trapezoids_across_crossings(mesh, stacklevel=_stacklevel)
     centre_ops = {}
     for k, (sub, idx, conn, local) in parts.items():
         b = mesh.basis[k]
@@ -2824,7 +2887,10 @@ def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None, retu
         kernels lies within proximity_tol element lengths of another element that is
         not a neighbour (e.g. one crack crossing another next to its element centre).
         The condition there is ambiguous or poorly resolved; see
-        `close_collocation_points`. None disables the check.
+        `close_collocation_points`. None disables the check. `solve` also warns
+        (`TrapezoidCrossingWarning`) when a force trapezoid spans a node where a fault
+        crosses the force chain; both warnings point to a fix in the mesh or
+        connectivity, which remain the user's choice.
     solver : {"auto", "lu", "lstsq"}
         "auto" (default): LU factorisation for square systems, with a condition
         estimate; falls back to least squares (the minimum-norm solution) when the
@@ -2848,7 +2914,7 @@ def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None, retu
     give the minimum-norm solution (see `solver`).
     """
     A, b, rows = assemble(mesh, geometry=geometry, mu=mu, nu=nu, side=side, dr=dr, use_numba=use_numba,
-                          proximity_tol=proximity_tol)
+                          proximity_tol=proximity_tol, _stacklevel=4)
     bad = ~np.isfinite(A).all(axis=1)
     if bad.any():
         raise FloatingPointError(

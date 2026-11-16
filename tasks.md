@@ -542,17 +542,32 @@ Updated 2026-11-16. Details are in T1/T2 and the issue list (section 4).
     - both faults match with the symmetric layout;
     - the lopsided default layout produces the spurious symmetric part;
     - traction is continuous at the collocation points.
-- [x] ~~**Default force-trapezoid layout at fault crossings.**~~ done (2026-11-16):
-  - **Detection:** `fault_crossings(els, labels)` finds force-chain nodes that lie on a slip element.
-  - **Layout:** `trapezoid_connectivity(els, breaks=...)` splits each chain at those nodes and counts the stride
-    from the break on each side, so collocation points sit 1.5 elements from the crossing on both sides.
-  - **Parity limit:** a segment between two breaks with an even number of elements gets 1.5 at one end and 2.5 at
-    the other.
-  - **`Mesh`:** uses this for the default force connectivity when there are crossings (`mesh.fault_crossings`);
-    an explicit connectivity is kept as given.
-  - **Effect:** in the layered example the default now equals the hand-built symmetric layout.
-  - **Tests:** `tests/test_get_kernels.py` (breaks, two breaks, closed loop, Mesh default) and
-    `tests/test_heterogeneous.py`.
+- [x] **Force trapezoids at fault crossings: warn, and suggest a fix** (2026-11-16).
+  - **Principle (user's decision):** the user provides the mesh file and the connectivity file. bemcs does not
+    silently repair a poorly designed mesh. It points out what the user can fix, as with
+    `CollocationProximityWarning`.
+  - **First version replaced:** `Mesh` first rewrote the default force connectivity at crossings; that was reverted
+    the same day. `Mesh` now keeps the user's connectivity, or the plain stride-2 default.
+  - **Detection:** `fault_crossings(els, labels)` finds force-chain nodes that lie on a slip element
+    (`mesh.fault_crossings`).
+  - **Warning:** `assemble` / `solve` issue `TrapezoidCrossingWarning` when a trapezoid spans a crossing node, i.e.
+    contains both elements next to it. The message gives the location, the elements, the consequence (poorly
+    represented force density, spurious net force) and the fix.
+  - **Fix helpers:**
+    - `mesh.split_force_trapezoids(points=None)` returns a global connectivity with the stride restarted at the
+      crossings, ready to save as the connectivity file;
+    - underneath, `trapezoid_connectivity(els, breaks=...)` counts the stride from each break, so collocation
+      points sit 1.5 elements from it on both sides. A segment between two breaks with an even number of elements
+      gets 1.5 at one end and 2.5 at the other.
+  - **Connectivity files:** `Mesh` and `Mesh.from_csv` accept a CSV path per kind, e.g.
+    `connectivity={"force": "x_connectivity.csv"}`, with three 0-based element indices per row and an optional
+    header.
+  - **Example:** `ConstructMesh.py` writes a mesh file and a connectivity file per case. The comparison without
+    a connectivity file shows the warning.
+  - **Warning location:** both mesh warnings point at the user's `solve(...)` / `assemble(...)` call.
+  - **Tests:**
+    - `tests/test_get_kernels.py`: breaks, closed loop, warning, suggested fix, connectivity file;
+    - `tests/test_heterogeneous.py`: the lopsided case warns and is off by percent; the split case is exact.
 - [ ] **Let the interface force density step where a fault crosses an interface.**
   - **Cause:** across a fault the normal traction on an interface steps in proportion to the slip gradient, and
     the step differs on the two sides (mu1 vs mu2). So the equivalent force density steps at the crossing.

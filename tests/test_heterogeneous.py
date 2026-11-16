@@ -50,8 +50,9 @@ def _slip(depth, D):
 def _layered_mesh(D, h, L=300.0, ratio=1.08, h_max=5.0, lopsided=False):
     """Vertical fault from the surface to depth D (no node on the interface), free surface
     and interface on [-L, L]: spacing h for |x| < 2, then log-spaced up to h_max. Force
-    trapezoids: the Mesh default (restarting at the fault crossing), or with lopsided=True
-    a stride-2 layout from one end that runs through the crossing."""
+    trapezoids restarting at the fault crossing (`Mesh.split_force_trapezoids`, what a user
+    would put in the connectivity file), or with lopsided=True no connectivity: the plain
+    default stride, which runs through the crossing."""
     xs, step = list(np.arange(0.0, 2.0, h)), h
     while xs[-1] < L:
         xs.append(xs[-1] + step)
@@ -68,9 +69,8 @@ def _layered_mesh(D, h, L=300.0, ratio=1.08, h_max=5.0, lopsided=False):
     bemcs.standardize_els_geometry(els, reorder=False)
     mu_f = np.where(zc > -H_LAYER, MU1, MU2)
     conn = None
-    if lopsided:
-        iface = n_f + n + np.arange(n)
-        conn = {"force": np.array([[iface[m - 1], iface[m], iface[m + 1]] for m in range(1, n - 1, 2)])}
+    if not lopsided:
+        conn = {"force": _layered_mesh(D, h, L, ratio, h_max, lopsided=True).split_force_trapezoids()}
     return bemcs.Mesh(els, bc_type=["s"] * n_f + ["t"] * n + ["h"] * n, connectivity=conn,
                       bc_value=np.r_[_slip(-zc, D), np.zeros(2 * n)],
                       mu_minus=np.r_[mu_f, np.full(n, MU1), np.full(n, MU2)],
@@ -129,20 +129,22 @@ def test_image_series_branches_agree_at_the_interface():
 @pytest.mark.parametrize("D", [0.6, 1.63])
 def test_layered_half_space_matches_the_image_series(D):
     """Inside the layer and through the interface, with the lines out to 300 H
-    (log-spaced) and the default trapezoids (restarting at the crossing): both ~2.5e-5."""
+    (log-spaced) and trapezoids restarting at the crossing: both ~2.5e-5."""
     err, sym, *_ = _surface_error(D, 0.05)
     assert err < 5e-5  # measured 2.4e-5 and 2.6e-5
-    # through the interface the default layout is mirror-symmetric about the crossing; inside
+    # through the interface the split layout is mirror-symmetric about the crossing; inside
     # the layer there is no crossing and the plain stride leaves a harmless ~2e-6 asymmetry
     assert sym < (1e-8 if D > H_LAYER else 1e-5)
 
 
 def test_lopsided_trapezoids_at_a_crossing_give_a_spurious_net_force():
-    """A stride-2 layout running through the crossing has a collocation point on one side
-    of it only (what the default did before it restarted at crossings): the antisymmetry breaks, the interface carries a net force, and its log far
-    field offsets the surface displacement (percent level, growing with L)."""
-    err, sym, *_ = _surface_error(1.63, 0.1, L=100.0, lopsided=True)
-    assert sym > 1e-2 and err > 5e-3  # measured 3.3e-2 and 1.7e-2 (default: <1e-8, 8e-5)
+    """Without a connectivity, the plain stride-2 layout runs through the crossing and has
+    a collocation point on one side of it only, and solve warns (TrapezoidCrossingWarning):
+    the antisymmetry breaks, the interface carries a net force, and its log far field
+    offsets the surface displacement (percent level, growing with L)."""
+    with pytest.warns(bemcs.TrapezoidCrossingWarning, match="split_force_trapezoids"):
+        err, sym, *_ = _surface_error(1.63, 0.1, L=100.0, lopsided=True)
+    assert sym > 1e-2 and err > 5e-3  # measured 3.3e-2 and 1.7e-2 (split: <1e-8, 8e-5)
     mesh = _layered_mesh(1.63, 0.1, L=100.0)
     np.testing.assert_allclose(mesh.fault_crossings, [[0.0, -H_LAYER]], atol=1e-12)
 

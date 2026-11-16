@@ -18,17 +18,20 @@
 # elements would put collocation points within 0.1 element lengths of the other line
 # (`CollocationProximityWarning`).
 #
-# **Force trapezoids at the crossing.** `bemcs.Mesh` restarts the trapezoid stride at every interface
-# node that lies on a fault (`mesh.fault_crossings`), so collocation points flank the crossing on both
-# sides. A stride running through the crossing would have a collocation point on one side only, and
-# the interface would carry a spurious net force whose far field grows like log r; the example shows
-# that case for comparison (`layered_mesh(..., lopsided=True)`).
+# **Connectivity file.** The force trapezoids are given in a connectivity file, one trapezoid per row
+# (three 0-based element indices, i.e. rows of the mesh file). Here the trapezoid stride restarts at the
+# node where the fault crosses the interface, so collocation points flank the crossing on both sides;
+# `mesh.split_force_trapezoids()` builds that layout. Without the file, bemcs uses trapezoids on every
+# other element from one end of the interface: that stride runs through the crossing, and `bemcs.solve`
+# warns (`TrapezoidCrossingWarning`) because the interface then carries a spurious net force whose far
+# field grows like log r. The example shows that case for comparison (`layered_mesh(..., lopsided=True)`).
 #
 # The fault does not get a node on the interface: it crosses it inside one of its elements, and the
 # interface has a node there. (A node shared by the fault and the interface would be treated as an
 # open, clamped node for both, forcing zero slip at the crossing.)
 #
-# Running this file writes `fault_in_layer.csv` and `fault_through_interface.csv`, read by
+# Running this file writes the mesh files `fault_in_layer.csv` and `fault_through_interface.csv` and
+# their connectivity files `*_connectivity.csv`, read by
 # `HeterogeneousElasticity_forces.py`, which also imports the parameters and `layered_mesh` from here.
 
 # %% imports
@@ -87,28 +90,33 @@ def mesh_table(D, h=H_EL, L=L):
 BASIS = {"slip": "quadratic", "force": "trapezoid"}
 
 
-def layered_mesh(D, h=H_EL, L=L, lopsided=False):
-    """The same mesh as a bemcs.Mesh, without going through a CSV file. lopsided=True replaces the
-    default force trapezoids by the plain stride-2 layout, which runs through the fault crossing
-    (for comparison only)."""
-    t = mesh_table(D, h, L)
+def _mesh_from_table(t, connectivity=None):
     els = bemcs.initialize_els()
     els.x1, els.y1, els.x2, els.y2 = (t[c].to_numpy(float) for c in ("x1", "z1", "x2", "z2"))
     bemcs.standardize_els_geometry(els, reorder=False)
     return bemcs.Mesh(els, bc_type=t["BC_type"].to_numpy(), bc_value=t["value"].to_numpy(),
                       mu_minus=t["mu_minus"].to_numpy(), mu_plus=t["mu_plus"].to_numpy(), basis=BASIS,
-                      connectivity={"force": _stride2_trapezoids(els, t)} if lopsided else None)
+                      connectivity=connectivity)
 
 
-def _stride2_trapezoids(els, t):
-    """Trapezoids every other element from one end of each force chain, ignoring crossings."""
-    idx = np.flatnonzero(t["BC_type"].to_numpy() == "h")
-    sub = bemcs.bemAssembly._subset_els(els, idx)
-    return idx[bemcs.bemAssembly.trapezoid_connectivity(sub)]
+def force_connectivity(t):
+    """Force trapezoids for the connectivity file: the stride restarts at the fault crossing."""
+    return _mesh_from_table(t).split_force_trapezoids()
+
+
+def layered_mesh(D, h=H_EL, L=L, lopsided=False):
+    """The same mesh as a bemcs.Mesh, without going through files. lopsided=True leaves out the
+    connectivity, so bemcs uses its plain stride-2 trapezoids through the crossing (comparison)."""
+    t = mesh_table(D, h, L)
+    return _mesh_from_table(t, None if lopsided else {"force": force_connectivity(t)})
 
 
 # %% write the two mesh files
 if __name__ == "__main__":
-    for name, D in (("fault_in_layer.csv", D_IN), ("fault_through_interface.csv", D_CROSS)):
-        mesh_table(D).to_csv(name, index=False)
-        print(f"wrote {name}: fault depth {D}, layer thickness {H}, mu {MU1} over {MU2}")
+    for name, D in (("fault_in_layer", D_IN), ("fault_through_interface", D_CROSS)):
+        t = mesh_table(D)
+        t.to_csv(f"{name}.csv", index=False)
+        conn = force_connectivity(t)
+        np.savetxt(f"{name}_connectivity.csv", conn, fmt="%d", delimiter=",", header="e1,e2,e3", comments="")
+        print(f"wrote {name}.csv and {name}_connectivity.csv: fault depth {D}, layer thickness {H}, "
+              f"mu {MU1} over {MU2}, {len(conn)} force trapezoids")
