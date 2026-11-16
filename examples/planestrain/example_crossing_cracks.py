@@ -10,8 +10,8 @@
 # crossings never close a loop: a closed loop of cracks would cut out a block bounded only by
 # traction-free faces, which is free to translate (a rigid-body mode), not a problem we study.
 #
-# The last part moves a node of one crack onto a collocation point (element centre) of another,
-# to show when float64 round-off takes over.
+# The last part is a separate test with two cracks, A and B (panels c and d): a node of B moves
+# onto a collocation point (element centre) of A, to show when float64 round-off takes over.
 
 # %% imports
 import numpy as np
@@ -150,11 +150,11 @@ err = {
     for dr in (0.0, 1e-9)
 }
 
-# %% plot all three panels (one cell, so the figure is complete when it is shown)
-fig = plt.figure(figsize=(17, 5.8))
+# %% plot all four panels (one cell, so the figure is complete when it is shown)
+fig = plt.figure(figsize=(14, 12))
 
 # (a) total maximum shear stress (remote + cracks)
-ax = fig.add_subplot(1, 3, 1)
+ax = fig.add_subplot(2, 2, 1)
 X, Y = np.meshgrid(np.linspace(-2.2, 2.2, 320), np.linspace(-2.2, 2.2, 320))
 f = bemcs.evaluate_fields(hat, x_hat, X, Y, geometry=geometry, mu=mu, nu=nu)
 sxx, syy, sxy = f["sxx"] + SIG[0, 0], f["syy"] + SIG[1, 1], f["sxy"] + SIG[0, 1]
@@ -205,7 +205,7 @@ ax.set_title(
 )
 
 # (b) slip along each crack: hats (lines) and general form (dots) agree
-ax = fig.add_subplot(1, 3, 2)
+ax = fig.add_subplot(2, 2, 2)
 n_eval = 20
 for mesh_k, x, style in ((hat, x_hat, "-"), (general, x_gen, ".")):
     _, _, v = mesh_k.values_on_elements(
@@ -233,8 +233,62 @@ ax.set_title(
     "(b) shear slip along each crack:\nhats and general form agree", fontsize=10
 )
 
-# (c) node of crack B approaching a collocation point of crack A
-ax = fig.add_subplot(1, 3, 3)
+# (c) a separate two-crack test: crack A and crack B, with a node of B near a
+# collocation point P (element centre) of A; d is exaggerated here
+D_SKETCH = 0.08
+ax = fig.add_subplot(2, 2, 3)
+node = P + D_SKETCH * APPROACH
+els_ab = crack_mesh(
+    [
+        (np.array([-1.0, 0.0]), np.array([1.0, 0.0])),
+        (node - 4 * 0.22 * DIR_B, node + 4 * 0.22 * DIR_B),
+    ],
+    n_el=8,
+)
+for k, (name, color) in enumerate((("A", "k"), ("B", "C3"))):
+    e = slice(8 * k, 8 * (k + 1))
+    ax.plot(np.r_[els_ab.x1[e], els_ab.x2[e][-1]], np.r_[els_ab.y1[e], els_ab.y2[e][-1]],
+            "-", color=color, lw=2, marker="|", ms=10, mew=1.5)
+    ax.quiver(els_ab.x_centers[e], els_ab.y_centers[e], els_ab.x_normals[e],
+              els_ab.y_normals[e], color=color, angles="xy", scale_units="xy",
+              scale=6, width=0.005)
+    ax.text(els_ab.x2[e][-1] + 0.06, els_ab.y2[e][-1], f"crack {name}", color=color,
+            fontsize=11, fontweight="bold", va="center")
+ax.plot(els_ab.x_centers[:8], els_ab.y_centers[:8], "k.", ms=5)
+ax.plot(*P, "*", color="C0", ms=14, zorder=5, label="P: collocation point (centre of A's element 4)")
+ax.plot(*node, "o", color="C3", mec="w", ms=9, zorder=5, label="node 4 of B")
+ax.annotate("", xy=node, xytext=P, arrowprops=dict(arrowstyle="<->", color="C0", lw=1.2))
+ax.set_aspect("equal")
+ax.set_xlim(-1.15, 1.35)
+ax.set_ylim(-0.95, 1.0)
+ax.grid(alpha=0.3)
+ax.legend(fontsize=8, loc="lower right")
+# zoom on P and B's node
+axz = ax.inset_axes([0.03, 0.55, 0.4, 0.42])
+w = 1.6 * D_SKETCH
+for k, color in enumerate(("k", "C3")):
+    e = slice(8 * k, 8 * (k + 1))
+    axz.plot(np.r_[els_ab.x1[e], els_ab.x2[e][-1]], np.r_[els_ab.y1[e], els_ab.y2[e][-1]],
+             "-", color=color, lw=2, marker="|", ms=14, mew=1.5)
+axz.plot(*P, "*", color="C0", ms=16, zorder=5)
+axz.plot(*node, "o", color="C3", mec="w", ms=10, zorder=5)
+axz.annotate("", xy=node, xytext=P, arrowprops=dict(arrowstyle="<->", color="C0", lw=1.5))
+axz.text(*(P + 0.5 * D_SKETCH * APPROACH + np.array([0.0, -0.025])), "d", color="C0", fontsize=12)
+axz.set_xlim(P[0] - w, P[0] + w)
+axz.set_ylim(P[1] - w, P[1] + w)
+axz.set_aspect("equal")
+axz.set_xticks([])
+axz.set_yticks([])
+ax.indicate_inset_zoom(axz, edgecolor="0.4")
+ax.set_title(
+    "(c) separate test, not the tangle above: node 4 of crack B moves\n"
+    f"towards P along a fixed direction (d = {D_SKETCH} drawn, exaggerated);"
+    " ticks: nodes, arrows: normals",
+    fontsize=10,
+)
+
+# (d) how the solution behaves as d -> 0
+ax = fig.add_subplot(2, 2, 4)
 for dr, style, label in (
     (0.0, "o-", "collocation at the element centre (dr = 0)"),
     (1e-9, "s-", "default offset (dr = 1e-9 element lengths)"),
@@ -250,21 +304,21 @@ ax.axhline(jump, color="C1", lw=0.8, ls="--")
 ax.text(
     1e-2, jump * 1.6, "limit from the other side of crack B", fontsize=7, color="C1"
 )
-ax.set_xlabel("distance d from B's node to A's collocation point (element lengths)")
+ax.set_xlabel("distance d from B's node to A's collocation point (element lengths of A)")
 ax.set_ylabel("relative distance from the converged solution")
 ax.set_ylim(1e-12, 1e3)
 ax.invert_xaxis()
 ax.legend(fontsize=7, loc="upper left")
 ax.set_title(
-    "(c) node of crack B approaching a collocation point of crack A:\n"
-    "converges until round-off (dr = 0); offset crosses to B's other side",
+    "(d) setup (c) as d -> 0: converges until round-off at dr = 0;\n"
+    "with the default offset the sampling point crosses to B's other side",
     fontsize=10,
 )
 fig.tight_layout()
 plt.show()
 
 # %% [markdown]
-# **Reading panel (c).** With collocation exactly at the element centre (`dr = 0`) the solution
+# **Reading panel (d).** With collocation exactly at the element centre (`dr = 0`) the solution
 # converges to a finite limit as the node approaches (each crack's stress is bounded at its own
 # nodes), until float64 round-off between B's element kernels (each ~1/d near the node) takes over
 # near 1e-12 to 1e-13 element lengths; it blows up at 1e-16, and `bemcs.solve` raises an error when
