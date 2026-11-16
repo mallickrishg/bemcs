@@ -2,8 +2,10 @@
 # # Crossing cracks without remeshing
 # Several straight cracks, each meshed on its own, cross each other: where two cracks intersect,
 # their elements simply overlap in space (no node at the crossing, no junction). Each crack is
-# traction-free under a uniform remote stress, so the boundary condition on every element is
-# `t = -sigma_inf . n`.
+# traction-free under a uniform remote stress. The remote field is passed to `solve` and
+# `evaluate_fields` as a background (`bemcs.uniform_background`): boundary conditions apply to the
+# total field (background + BEM), so the crack faces simply get zero traction, and the fields come
+# back as totals.
 #
 # With quadratic hats every crack's stress is bounded everywhere (the singular parts of its
 # elements cancel), so the crossings are harmless. The random tangle is drawn so that the
@@ -20,8 +22,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import bemcs
 
-SIG = np.array([[0.3, 1.0], [1.0, -0.4]])  # remote stress (sxx, sxy; sxy, syy)
 geometry, mu, nu = "planestrain", 1.0, 0.25
+REMOTE = (0.3, -0.4, 1.0)  # remote stress (sxx, syy, sxy)
+BG = bemcs.uniform_background(REMOTE, geometry=geometry, mu=mu, nu=nu)
 
 
 def crack_mesh(segments, n_el):
@@ -40,12 +43,11 @@ def crack_mesh(segments, n_el):
 
 
 def traction_free_mesh(els, basis):
-    """Traction-free crack faces under the remote stress: BEM traction = -sigma_inf . n."""
-    n = np.c_[els.x_normals, els.y_normals]
+    """Traction-free crack faces (total traction, background included, is zero)."""
     return bemcs.Mesh(
         els,
         bc_type=["t"] * len(els.x1),
-        bc_value=-n @ SIG,
+        bc_value=np.zeros((len(els.x1), 2)),
         mu_minus=mu,
         mu_plus=mu,
         basis={"slip": basis},
@@ -112,9 +114,9 @@ print(
 hat = traction_free_mesh(els, "hat")
 general = traction_free_mesh(els, "quadratic")
 x_hat, (A_hat, _, _) = bemcs.solve(
-    hat, geometry=geometry, mu=mu, nu=nu, return_system=True
+    hat, geometry=geometry, mu=mu, nu=nu, background=BG, return_system=True
 )
-x_gen = bemcs.solve(general, geometry=geometry, mu=mu, nu=nu)
+x_gen = bemcs.solve(general, geometry=geometry, mu=mu, nu=nu, background=BG)
 print("condition number (hats): %.1f" % np.linalg.cond(A_hat))
 # collocation points within 0.1 element lengths of another crack (solve warns about these)
 close = hat.close_collocation_points()
@@ -142,7 +144,9 @@ def node_near_collocation(d, dr, approach=APPROACH):
     mesh_ab = traction_free_mesh(els_ab, "hat")
     # proximity_tol=None: this test puts B close to A's collocation point on purpose, so
     # silence the CollocationProximityWarning that solve would otherwise issue
-    x = bemcs.solve(mesh_ab, geometry=geometry, mu=mu, nu=nu, dr=dr, proximity_tol=None)
+    x = bemcs.solve(
+        mesh_ab, geometry=geometry, mu=mu, nu=nu, dr=dr, proximity_tol=None, background=BG
+    )
     return mesh_ab.element_coefficients(x, "slip", geometry=geometry)
 
 
@@ -181,7 +185,7 @@ def through_P(n, s):
     bemcs.standardize_els_geometry(e, reorder=False)
     m = traction_free_mesh(e, "hat")
     # P is on B on purpose: silence the CollocationProximityWarning
-    x = bemcs.solve(m, geometry=geometry, mu=mu, nu=nu, proximity_tol=None)
+    x = bemcs.solve(m, geometry=geometry, mu=mu, nu=nu, proximity_tol=None, background=BG)
     c = m.element_coefficients(x, "slip", geometry=geometry).reshape(2 * n, 3, 2)
     return c[:n, 1, 0], e
 
@@ -207,10 +211,10 @@ fig = plt.figure(figsize=(14, 18))
 # (a) total maximum shear stress (remote + cracks)
 ax = fig.add_subplot(3, 2, 1)
 X, Y = np.meshgrid(np.linspace(-2.2, 2.2, 320), np.linspace(-2.2, 2.2, 320))
-f = bemcs.evaluate_fields(hat, x_hat, X, Y, geometry=geometry, mu=mu, nu=nu)
-sxx, syy, sxy = f["sxx"] + SIG[0, 0], f["syy"] + SIG[1, 1], f["sxy"] + SIG[0, 1]
+f = bemcs.evaluate_fields(hat, x_hat, X, Y, geometry=geometry, mu=mu, nu=nu, background=BG)
+sxx, syy, sxy = f["sxx"], f["syy"], f["sxy"]  # total stress (remote + cracks)
 tau = np.sqrt(0.25 * (sxx - syy) ** 2 + sxy**2)
-tau0 = np.sqrt(0.25 * (SIG[0, 0] - SIG[1, 1]) ** 2 + SIG[0, 1] ** 2)
+tau0 = np.sqrt(0.25 * (REMOTE[0] - REMOTE[1]) ** 2 + REMOTE[2] ** 2)
 im = ax.pcolormesh(X, Y, tau / tau0, cmap="magma", vmin=0, vmax=3, shading="auto")
 n_el = len(els.x1) // len(segs)
 for k, (a, b) in enumerate(segs):
@@ -513,5 +517,7 @@ plt.show()
 # one of *B's* collocation points comes within about 0.1 element lengths of crack A (dotted lines),
 # the system becomes ill-conditioned and the answer is erratic; exactly at the dotted line B's
 # collocation point coincides with P and the condition number reaches ~1e10. Random meshes avoid
-# both almost surely; meshes built by hand or by symmetry can hit them. A check that warns when a
-# collocation point lies close to another crack is in tasks.md.
+# both almost surely; meshes built by hand or by symmetry can hit them. `bemcs.solve` warns about
+# them (`CollocationProximityWarning`, a collocation point within `proximity_tol` = 0.1 element
+# lengths of another element; list them with `mesh.close_collocation_points()`). The tests above
+# put crack B there on purpose, so they pass `proximity_tol=None`.
