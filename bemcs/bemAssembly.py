@@ -1428,6 +1428,34 @@ def trapezoid_connectivity(els):
     return np.array(rows, dtype=int).reshape(-1, 3)
 
 
+def _check_trapezoid_overlap(conn):
+    """Neighbouring trapezoids may share at most one element.
+
+    A trapezoid is a linear-force basis spread over 3 elements (unit force on its
+    middle element), so neighbouring patches share one element: [0, 1, 2],
+    [2, 3, 4], ... (hats, in contrast, share two). Patches sharing two elements
+    create an alternating combination with zero force density at every
+    collocation centre, which the collocation rows cannot control.
+    """
+    members = {}
+    for p, row in enumerate(conn):
+        for e in set(int(v) for v in row):
+            members.setdefault(e, []).append(p)
+    shared = {}
+    for e, ps in members.items():
+        for i, a in enumerate(ps):
+            for b in ps[i + 1 :]:
+                shared.setdefault((a, b), []).append(e)
+    bad = {k: v for k, v in shared.items() if len(v) > 1}
+    if bad:
+        (a, b), elems = next(iter(bad.items()))
+        raise ValueError(
+            f"trapezoid patches {a} {conn[a].tolist()} and {b} {conn[b].tolist()} share elements "
+            f"{sorted(elems)}; neighbouring trapezoids may share at most one element "
+            "(e.g. [0, 1, 2], [2, 3, 4], ...)"
+        )
+
+
 def patch_elements(els, basis, connectivity=None):
     """Element at the centre of each patch: the middle element of each connectivity
     row; by default every non-tip element for hats (one-ring) and every other
@@ -1454,6 +1482,7 @@ def trapezoid_coefficients(els, connectivity=None, *, geometry):
     if connectivity is None:
         connectivity = trapezoid_connectivity(els)
     conn = _check_connectivity(connectivity, len(els.x_centers))
+    _check_trapezoid_overlap(conn)
     n_els, n_p = len(els.x_centers), len(conn)
     pe = 1 if geometry == "antiplane" else 2
     n_unknowns = 6 * pe

@@ -17,7 +17,8 @@ import bemcs.bemAssembly as GF
 import reference_kernels as ref
 
 MU, NU = 1.3, 0.3
-CONN = np.array([[0, 1, 2], [1, 2, 3]])
+CONN = np.array([[0, 1, 2], [1, 2, 3]])  # hats: neighbours share two elements
+TRAP_CONN = np.array([[0, 1, 2]])  # trapezoids: neighbours may share at most one element
 GEOMETRIES = ["antiplane", "planestrain"]
 LEVEL2 = {"slip": bemcs.get_slip_kernels, "force": bemcs.get_force_kernels}
 
@@ -28,14 +29,14 @@ BASES = [
     ("slip", "hat", 2),
     ("force", "linear", 8),
     ("force", "constant", 4),
-    ("force", "trapezoid", 2),
+    ("force", "trapezoid", 1),
 ]
 CASES = [(g, k, b, n) for g in GEOMETRIES for (k, b, n) in BASES]
 CASE_IDS = ["-".join(c[:3]) for c in CASES]
 
 
 def _level2(els, obs, geometry, kind, basis, mu=MU, **kw):
-    conn = CONN if basis in ("hat", "trapezoid") else None
+    conn = {"hat": CONN, "trapezoid": TRAP_CONN}.get(basis)
     return LEVEL2[kind](
         *obs, els, geometry=geometry, mu=mu, nu=NU, basis=basis, connectivity=conn, **kw
     )
@@ -178,8 +179,8 @@ def test_trapezoid_force_is_continuous_and_tapers(els_curved, geometry):
     """Force at element ends: start = ramp-1 coefficient, end = ramp-0 coefficient.
     A trapezoid is zero at the open ends, continuous (in the global frame) at the
     internal nodes, and equal to 1 at both ends of its middle element."""
-    T = GF.trapezoid_coefficients(els_curved, CONN, geometry=geometry)
-    for p, (a, b, c) in enumerate(CONN):
+    T = GF.trapezoid_coefficients(els_curved, TRAP_CONN, geometry=geometry)
+    for p, (a, b, c) in enumerate(TRAP_CONN):
         for m in ((0,) if geometry == "antiplane" else (0, 1)):
             def force(e, end):  # end 0 = start node (x1), 1 = end node (x2)
                 row = 2 * e + (1 if end == 0 else 0)
@@ -302,7 +303,7 @@ def test_constant_and_patch_bases_are_combinations_of_element_bases(els_curved, 
     elem = "quadratic" if kind == "slip" else "linear"
     Ue, Se, _ = _level2(els_curved, obs_points, geometry, kind, elem)
     U, S, _ = _level2(els_curved, obs_points, geometry, kind, basis)
-    conn = CONN if basis in ("hat", "trapezoid") else None
+    conn = {"hat": CONN, "trapezoid": TRAP_CONN}.get(basis)
     T = GF.basis_transform(els_curved, kind=kind, basis=basis, geometry=geometry, connectivity=conn)
     sub = "osc,sb->obc" if geometry == "antiplane" else "oscl,slbm->obcm"
     np.testing.assert_allclose(U, np.einsum(sub, Ue, T), rtol=1e-12, atol=1e-14)
@@ -463,3 +464,24 @@ def test_points_on_an_element_give_the_two_sided_average(els_curved, kind, geome
     assert np.abs(Sp - Sm).max() > 0.1  # there is a jump to average over
     np.testing.assert_allclose(S0, 0.5 * (Sp + Sm), atol=1e-6)
     np.testing.assert_allclose(U0, 0.5 * (Up + Um), atol=1e-6)
+
+
+def test_trapezoid_patches_may_share_at_most_one_element(els_curved, obs_points):
+    """Neighbouring trapezoids share one element ([0,1,2], [2,3,4], ...), unlike hats (two)."""
+    with pytest.raises(ValueError, match="share at most one element"):
+        GF.trapezoid_coefficients(els_curved, CONN, geometry="planestrain")
+    with pytest.raises(ValueError, match="share at most one element"):
+        bemcs.get_force_kernels(*obs_points, els_curved, geometry="antiplane", mu=1.0,
+                                basis="trapezoid", connectivity=CONN)
+    hats = GF.hat_coefficients(els_curved, CONN, geometry="antiplane")  # fine for hats
+    assert hats.shape == (12, 2)
+
+
+def test_default_trapezoids_share_exactly_one_element():
+    from test_kernel_precision import _chain
+
+    els = _chain(0.0)  # 5 elements
+    conn = GF.trapezoid_connectivity(els)
+    np.testing.assert_array_equal(conn, [[0, 1, 2], [2, 3, 4]])
+    for a, b in zip(conn[:-1], conn[1:]):
+        assert len(set(a) & set(b)) == 1

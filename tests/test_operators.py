@@ -148,9 +148,12 @@ def test_force_continuity_rejects_triple_junction(els_triple):
 @pytest.mark.parametrize("geometry", ["antiplane", "planestrain"])
 def test_hats_and_trapezoids_satisfy_continuity(els_curved, geometry):
     """The patch bases lie in the null space of the continuity rows: A T = 0."""
-    for kind, fn in (("slip", GF.hat_coefficients), ("force", GF.trapezoid_coefficients)):
+    for kind, fn, conn in (
+        ("slip", GF.hat_coefficients, CONN),  # hats: neighbours share two elements
+        ("force", GF.trapezoid_coefficients, np.array([[0, 1, 2]])),  # trapezoids: at most one
+    ):
         A, _ = GF.continuity_rows(els_curved, kind=kind, geometry=geometry)
-        T = fn(els_curved, CONN, geometry=geometry)
+        T = fn(els_curved, conn, geometry=geometry)
         T = T if geometry == "antiplane" else T.reshape(T.shape[0] * 2, -1)
         np.testing.assert_allclose(A @ T, 0, atol=1e-12)
 

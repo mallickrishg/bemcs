@@ -308,7 +308,9 @@ Square system of `2(N_s + N_f)` equations.
   - **Effect of clamped tips** (by design): 0.7-6% changes in examples whose faults have tips (19% for `sxy` in the
     free-surface example); the split box has no tips and is unchanged. Short faults change a lot: the
     3-element faults in `example_non_planar_fault_plotting.py` and `HeterogeneousElasticity_forces.py` lose the
-    BCs of both or one end element. Their meshes should get one extra element per tip (decision for the user).
+    BCs of both or one end element. Decided (2026-11-16): no extra elements. The non-planar fault is a toy case
+    showing continuity of slip and traction, and the heterogeneous antiplane example is not built properly yet
+    (open task in T1/T3).
   - **Tests:** `tests/test_operators.py` checks against `construct_smoothoperator*` plus gradient rows at open nodes,
     `A T = 0` for hats and trapezoids, and the equation count `pe (N - N_tip) + rows = 3 pe N`.
   - **Not done here (T2):** one-ring hats; rejecting all-in/all-out junctions (issue 17). Force collocation count:
@@ -412,6 +414,9 @@ Square system of `2(N_s + N_f)` equations.
   - one-ring hats for slip;
   - trapezoids centred on every other element along each force chain, as in the original design.
 
+  **Rule (enforced, `_check_trapezoid_overlap`):** a trapezoid is a linear basis spread over 3 elements, so
+  neighbouring trapezoids share exactly one element ([0,1,2], [2,3,4], ...), whereas neighbouring quadratic hats
+  share two. A connectivity in which two trapezoids share two or more elements raises `ValueError` (tested).
   Every-element trapezoids have an alternating near-null mode that centre collocation cannot see. It blew up to +-49
   where a fault crosses an interface; the default layout removes it, and the condition number drops from 1.6e5 to 2.7e3.
 - [x] Unified solver `bemcs.solve(mesh, geometry=, mu=, nu=)` (and `bemcs.assemble`), 2026-11-16:
@@ -429,6 +434,10 @@ Square system of `2(N_s + N_f)` equations.
   - **Accuracy note:** with the default trapezoids the interface condition is exact at collocation points and first
     order in h between them (force constant on every other element).
 - [ ] Support multiple patches, and patches that share nodes (junctions between slip and interface elements).
+- [ ] Rebuild `examples/antiplane/HeterogeneousElasticity_forces.py` (and its `ConstructMesh.py`) properly. Today its
+  3-element fault crosses the y = -1 interface: the fault and interface elements share a node, which is treated as
+  open (clamped) for both, and the stress is singular where the fault crosses the material contrast. It runs on the
+  new API, but its setup is not yet a meaningful test case (see the item above).
 - [x] One-ring hats (section 7.4), 2026-11-16:
   - **API:** `basis="hat"` *without* connectivity builds one hat per non-tip element from the mesh topology
     (`one_ring_hat_coefficients`, `hat_elements`), at level 2 and in `Mesh`. An explicit 3-element connectivity still
