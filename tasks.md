@@ -481,7 +481,32 @@ checked by:
   - **(a) Circular inhomogeneity under a uniform remote stress.** Exact (Muskhelishvili; the stress inside is
     uniform). It also exercises a **closed, curved interface**, the normal and volumetric parts of the condition,
     and the remote load. Gives h-convergence.
-  - **(b) Edge dislocation, or a short fault with smooth slip, near a planar bimaterial interface.** Dundurs image
+  - **(b) Done 2026-11-16** (`tests/test_dundurs.py`, `tests/reference_solutions.py`).
+    - **Reference:** an edge dislocation near a bonded planar bimaterial interface (Dundurs 1969), with the image
+      and transmitted potentials solved from continuity (residual 1e-15). It has Burgers vector b, satisfies Hooke
+      and equilibrium, has continuous traction, and gives the free-surface and rigid limits. A buried fault with
+      tapered shear and opening slip is the dislocation density -s' e, by quadrature.
+    - **BEM setup:** an "s" fault in material 1 (horizontal, or dipping 40 degrees), an "h" interface out to
+      +-300, no background.
+    - **No contrast:** 2.1e-4, 9.3e-6, 5.3e-7 for h = 0.1, 0.05, 0.025. This validates the reference, the signs
+      and the quadrature.
+    - **mu2/mu1 = 4 and 1/4:** 2.4e-2, 1.0e-2, 5.4e-3 and 1.8e-2, 6.6e-3, 2.7e-3, about first order everywhere
+      (not only near the interface). Truncation (L = 30 to 3000) makes no difference.
+    - **Diagnosed:** the interface rows are only O(h) consistent in plane strain even on a straight line (residual
+      at the exact force 1.1e-2, 4.9e-3, 2.3e-3). In plane strain a tangential force produces a normal traction on
+      the line through a 1/x kernel, and vice versa. The trapezoids hold the force constant over each collocated
+      element, and the odd error f'(x - c) there gives O(h). The same density linearly interpolated gives O(h^2)
+      (traction error 1.25e-2 -> 5.8e-3 vs 3.8e-3 -> 9.6e-4). Antiplane has no such coupling along the line,
+      hence h^2 there.
+- [ ] **P1d. Plane-strain force basis (decision needed).** The trapezoids, chosen to avoid the checkerboard
+  null mode of every-element linear force with centre collocation, cost an order in plane strain. Candidates:
+  - **(1)** continuous piecewise-linear force (nodal "force hats") with collocation at the nodes (offset `dr`).
+    The checkerboard is visible at nodes, so there is no null mode; open/tapered chain ends as for the trapezoids.
+  - **(2)** trapezoid support with a linear (not constant) middle element: two unknowns and two collocation
+    points (Gauss points) per middle element.
+  - **(3)** keep the trapezoids and accept first order in plane strain.
+  - Compare on the Dundurs case (expect h^2 for (1) and (2)).
+  - **Original note:** (b) Edge dislocation, or a short fault with smooth slip, near a planar bimaterial interface. Dundurs image
     dislocations. This is the plane-strain analogue of the antiplane layered case, with fault-interface coupling
     through both shear and normal components.
 - [ ] **P1c. First-order convergence on curved interfaces: diagnosed (2026-11-16), remedy open.**
