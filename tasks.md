@@ -488,6 +488,29 @@ Square system of `2(N_s + N_f)` equations.
     - with the default `dr = 1e-9` the solve stays finite for all d. The limit depends on the approach
       direction, because slip curvature jumps at nodes.
 - [ ] Document heterogeneous elasticity (sections 2.1 and 2.2) in the README or wiki, plus a plane-strain tutorial.
+- [ ] (Low priority) Update the GitHub wiki pages and tutorials for the revamped API. The existing tutorials use
+  removed functions. Cover:
+  - **Mesh CSV format:** `x1, z1, x2, z2, mu_minus, mu_plus`, plus BC columns. Plane strain:
+    `BC_type_1, value_1, BC_type_2, value_2` (component 1/2 = x/y for `u`, `t`; t/n for `s`, `t_local`; `h` on
+    both). Antiplane: `BC_type, value`. Shorthand: `BC_type, value[, value2]`.
+  - **BC types:** `s`, `u`, `t`, `t_local`, `h`. Element orientation and the normal convention (tangent rotated
+    +90 degrees). The -n / +n sides and `mu_minus` / `mu_plus`.
+  - **Choosing moduli:** traction (`t`) elements take the modulus of the material they bound, matching the adjacent
+    `h` side; the reference mu is arbitrary. Show the visual check with `bemcs.plot_mesh`: closed polygons of
+    `t` / `h` elements should enclose uniform mu.
+  - **Solving:** `bemcs.solve`, general (`basis={"slip": "quadratic"}`) vs one-ring hats (`{"slip": "hat"}`);
+    force always trapezoids (default every other element; neighbours share one element, unlike hats); clamped fault
+    tips (tip elements carry no BC); the collocation offset `dr` / `side`.
+  - **Solution coefficients:** order (slip then force; source, then direction), `return_info=True` /
+    `CoefficientLayout`, `split`, `element_coefficients`, `node_values`, `values_on_elements`. Quadratic coefficients
+    are slip at s = -2w/3, 0, +2w/3.
+  - **Fields and plots:** `evaluate_fields`, `plot_fields` (`derived=`, `mask=`, `mu_field=` for true stresses),
+    `plot_mesh`.
+  - **Lower-level API:** `get_kernels` / `get_slip_kernels` / `get_force_kernels`, `KernelInfo`, the kernel array
+    layout, `traction_kernels`, `kernel_matrix`, `use_numba`.
+  - **Known limitations:** singularity cancellation only for co-planar elements (kinks and junctions keep a log
+    singularity); crack tangles that enclose blocks; nodes on another fault's collocation point; first-order
+    accuracy of the trapezoid interface condition between collocation points.
 - [x] Tidy up: `environment.yml` gains `mpmath` (the tests evaluate 50-digit references with it), `pkg_resources`
   is replaced, and library debug prints are removed.
 
