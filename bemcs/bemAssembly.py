@@ -42,6 +42,13 @@ except ImportError:  # numba is optional; only use_numba=True needs it
 # The force formulas were already well conditioned near endpoints and are kept
 # in their original variables. Both work on scalars (numba drivers) and on
 # numpy arrays (numpy drivers, through .py_func).
+#
+# These generated formulas are now the source of truth. The original closed
+# forms they were generated from (bemcs.quadratic_kernel_farfield,
+# f_slip_to_displacement_stress, the force-kernel closures, and the antiplane
+# slip/force kernels) were removed from the package; they are in the git history
+# at commit 0ca988d (bemcs/bemcs.py and bemcs/bemAssembly.py of an earlier
+# commit, e.g. c078cbc, for the numba force kernels).
 # =============================================================================
 
 @njit(cache=True, error_model="numpy")

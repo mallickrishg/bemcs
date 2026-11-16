@@ -15,6 +15,142 @@ import bemcs.bemcs as core
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Crouch & Starfield constant-slip element (moved from bemcs.bemcs, no longer in the package)
+# ---------------------------------------------------------------------------
+
+
+def constant_kernel(x, y, a, nu):
+    """From Starfield and Crouch, pages 49 and 82"""
+    f = np.zeros((7, x.size))
+
+    f[0, :] = (
+        -1
+        / (4 * np.pi * (1 - nu))
+        * (
+            y * (np.arctan2(y, (x - a)) - np.arctan2(y, (x + a)))
+            - (x - a) * np.log(np.sqrt((x - a) ** 2 + y**2))
+            + (x + a) * np.log(np.sqrt((x + a) ** 2 + y**2))
+        )
+    )
+
+    f[1, :] = (
+        -1
+        / (4 * np.pi * (1 - nu))
+        * ((np.arctan2(y, (x - a)) - np.arctan2(y, (x + a))))
+    )
+
+    f[2, :] = (
+        1
+        / (4 * np.pi * (1 - nu))
+        * (np.log(np.sqrt((x - a) ** 2 + y**2)) - np.log(np.sqrt((x + a) ** 2 + y**2)))
+    )
+
+    f[3, :] = (
+        1
+        / (4 * np.pi * (1 - nu))
+        * (y / ((x - a) ** 2 + y**2) - y / ((x + a) ** 2 + y**2))
+    )
+
+    f[4, :] = (
+        1
+        / (4 * np.pi * (1 - nu))
+        * ((x - a) / ((x - a) ** 2 + y**2) - (x + a) / ((x + a) ** 2 + y**2))
+    )
+
+    f[5, :] = (
+        1
+        / (4 * np.pi * (1 - nu))
+        * (
+            ((x - a) ** 2 - y**2) / ((x - a) ** 2 + y**2) ** 2
+            - ((x + a) ** 2 - y**2) / ((x + a) ** 2 + y**2) ** 2
+        )
+    )
+
+    f[6, :] = (
+        2
+        * y
+        / (4 * np.pi * (1 - nu))
+        * ((x - a) / ((x - a) ** 2 + y**2) ** 2 - (x + a) / ((x + a) ** 2 + y**2) ** 2)
+    )
+    return f
+
+
+def f_slip_to_displacement_stress(x_component, y_component, f, y, mu, nu):
+    """This is the generalization from Starfield and Crouch"""
+    displacement = np.zeros((2, y.size))
+    stress = np.zeros((3, y.size))
+
+    # The sign change here is to:
+    # 1 - Ensure consistenty with Okada convention
+    # 2 - For a horizontal/flat fault make the upper half move in the +x direction
+    x_component = -1 * x_component
+    y_component = -1 * y_component
+
+    displacement[0, :] = x_component * (
+        2 * (1 - nu) * f[1, :] - y * f[4, :]
+    ) + y_component * (-1 * (1 - 2 * nu) * f[2, :] - y * f[3, :])
+
+    displacement[1, :] = x_component * (
+        (1 - 2 * nu) * f[2, :] - y * f[3, :]
+    ) + y_component * (
+        2 * (1 - nu) * f[1, :] - y * -f[4, :]
+    )  # Note the negative sign in front f[4, :] because f[4, :] = f,xx = -f,yy
+
+    stress[0, :] = 2 * x_component * mu * (
+        2 * f[3, :] + y * f[5, :]
+    ) + 2 * y_component * mu * (-f[4, :] + y * f[6, :])
+
+    stress[1, :] = 2 * x_component * mu * (-y * f[5, :]) + 2 * y_component * mu * (
+        -f[4, :] - y * f[6, :]
+    )
+
+    stress[2, :] = 2 * x_component * mu * (
+        -f[4, :] + y * f[6, :]
+    ) + 2 * y_component * mu * (-y * f[5, :])
+
+    return displacement, stress
+
+
+def displacements_stresses_constant_no_rotation(
+    x,
+    y,
+    a,
+    mu,
+    nu,
+    x_component,
+    y_component,
+    x_center,
+    y_center,
+):
+    """Calculate displacements and stresses for constant slip elements"""
+    # Translate into local coordinate system
+    x = x - x_center
+    y = y - y_center
+    f = constant_kernel(x, y, a, nu)
+    displacement, stress = f_slip_to_displacement_stress(
+        x_component, y_component, f, y, mu, nu
+    )
+    return displacement, stress
+
+
+def rotate_displacement_stress(displacement, stress, inverse_rotation_matrix):
+    """Rotate displacements stresses from local to global reference frame"""
+    displacement = np.matmul(displacement.T, inverse_rotation_matrix).T
+    for i in range(0, stress.shape[1]):
+        stress_tensor = np.array(
+            [[stress[0, i], stress[2, i]], [stress[2, i], stress[1, i]]]
+        )
+        stress_tensor_global = (
+            inverse_rotation_matrix.T @ stress_tensor @ inverse_rotation_matrix
+        )
+        stress[0, i] = stress_tensor_global[0, 0]
+        stress[1, i] = stress_tensor_global[1, 1]
+        stress[2, i] = stress_tensor_global[0, 1]
+    return displacement, stress
+
+
+
 def constant_slip_kernel_planestrain(x_obs, y_obs, els, mu, nu, flag):
     """Function to calculate displacement and stress kernels at a numpy array of locations [x_obs,y_obs]
 
@@ -62,7 +198,7 @@ def constant_slip_kernel_planestrain(x_obs, y_obs, els, mu, nu, flag):
         (
             displacement_local,
             stress_local,
-        ) = core.displacements_stresses_constant_no_rotation(
+        ) = displacements_stresses_constant_no_rotation(
             x_rot,
             y_rot,
             els.half_lengths[i],
@@ -73,7 +209,7 @@ def constant_slip_kernel_planestrain(x_obs, y_obs, els, mu, nu, flag):
             els.x_centers[i],
             els.y_centers[i],
         )
-        displacement_eval, stress_eval = core.rotate_displacement_stress(
+        displacement_eval, stress_eval = rotate_displacement_stress(
             displacement_local, stress_local, els.rot_mats_inv[i, :, :]
         )
         # index = 3 * i

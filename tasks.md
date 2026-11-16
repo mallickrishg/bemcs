@@ -582,6 +582,18 @@ When old functions are removed, the `examples/**/*.py` scripts that call them mu
 - **`bemcs/bemcs.py`: single-element physics and geometry.** It covers `els` construction and standardization,
   analytic element solutions in the local frame, basis/shape functions, rotations and point sources. It **never
   imports `bemAssembly`** (enforced by `tests/test_api.py`).
+  - **Update (2026-11-16):** the element kernel formulas themselves now live in `bemAssembly.py`, as the generated
+    `_quadratic_slip_f`, `_linear_force_g`, `_antiplane_slip_point` and `_antiplane_force_point` with their numba
+    and numpy drivers.
+  - **Removed from `bemcs.py` as superseded:** the original closed forms (`quadratic_kernel_farfield`,
+    `quadratic_kernel_coincident`, the `displacements_stresses_*_no_rotation` functions,
+    `f_slip_to_displacement_stress`) and unused leftovers (`phicoef`, `get_slip_slipgradient`,
+    `get_quadratic_coefficients_for_linear_slip`). They are in git at 0ca988d.
+  - **Moved to `tests/reference_kernels.py`:** the Crouch & Starfield constant-slip element (`constant_kernel`,
+    `displacements_stresses_constant_no_rotation`, `rotate_displacement_stress`), still used as a reference.
+  - **`bemcs.py` keeps:** geometry (`initialize_els`, `standardize_els_geometry`, `label_nodes`, `plot_els_geometry`,
+    `inpolygon`, `discretized_line`), the quadratic basis functions, the Kelvin/Laplace point sources, the
+    triangle-force kernels (area sources), and `get_strainenergy_from_stress`.
 - **`bemcs/bemAssembly.py`: everything that combines elements.** That means all three levels below, the numba
   backends, continuity and BC operators (`construct_smoothoperator*` moves here), solvers and field plotting.
 - `bemcs/__init__.py` re-exports the public API.
