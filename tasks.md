@@ -161,8 +161,14 @@ Square system of `2(N_s + N_f)` equations.
    line-force result.
 7. ~~**Duplicated functions**~~ **SOLVED in stage 3 (2026-11-16):** the duplicates were deleted, and `test_no_redundancy_between_modules` passes. Original: duplicated functions in `bemcs.py` and `bemAssembly.py` (audited, see section 6). The 3 slip/gradient
    helpers and the 2 antiplane kernels agree numerically. The plane-strain force kernel does not (item 9).
-8. **Minor** (partly solved: `pkg_resources` was replaced by `importlib.metadata` in stage 3): a `1-2nu` typo in the notes' last sentence, `__init__.py` uses deprecated `pkg_resources`, and
-   `solve_planestrain_heterogeneous` has `print(np.linalg.cond(A))` on every call.
+8. ~~**Minor**~~ **SOLVED in code:**
+   - `pkg_resources` was replaced by `importlib.metadata`;
+   - the per-call `print(np.linalg.cond(A))` went with the old `solve_planestrain_heterogeneous` (`solve` has
+     `return_system=True`).
+
+   Left for the LaTeX notes (not in the repo): the `1-2nu` typo in the last sentence, and the plane-stress compliance
+   of issue 1. Original: a `1-2nu` typo in the notes' last sentence, `__init__.py` uses deprecated `pkg_resources`,
+   and `solve_planestrain_heterogeneous` has `print(np.linalg.cond(A))` on every call.
 9. ~~**`bemcs.get_displacement_stress_kernel_force_planestrain` is wrong for rotated elements**~~ **SOLVED in stage 3 (2026-11-16):** deleted; plane-strain force goes through the generated kernels, which are tested against Kelvin quadrature at 4 angles. Original: the `bemcs.py` version is wrong for any
    non-horizontal element (confirmed).** It agrees with the numba version only for horizontal elements, and differs
    by up to ~0.16 (stresses) for a 30-degree element. The numba version in `bemAssembly` matches an independent
@@ -361,8 +367,16 @@ Square system of `2(N_s + N_f)` equations.
   and compute the shared logs/arctans once per point. Target: compile in seconds and no slower at run time. Guarded by
   `tests/test_force_kernels_reference.py` (Kelvin reference) and `test_numba_backend_matches_numpy`.
   Apply the same pattern to the antiplane kernels if it helps.
-- [ ] Add reference tests for the remaining kernels: slip (plane strain and antiplane, constant and quadratic),
-  antiplane force, triangle forces, hat-slip and trapezoid-force patches.
+- [ ] Add reference tests for the remaining kernels.
+  - **Done:**
+    - ~~constant slip (plane strain)~~ against Crouch & Starfield;
+    - ~~linear and constant force (both geometries)~~ against point-force quadrature;
+    - ~~hat-slip and trapezoid-force patches~~: smoothness, `A T = 0`, near field.
+  - **Remaining:**
+    - the quadratic slip formula itself against quadrature of the point-dislocation solution, in both geometries
+      (today: Lagrange-node jumps, constant = sum of nodes vs the analytic kernel, and precision vs 50 digits of the
+      same formula);
+    - the triangle-force kernels.
 - [x] Near-field tests of the singularity-free patch bases (`tests/test_near_field.py`, 2026-11-16):
   - **Setup:**
     - hat slip and trapezoid force, in plane strain and antiplane, on a straight and a 30-degree kinked fault;
@@ -451,11 +465,17 @@ Square system of `2(N_s + N_f)` equations.
     - `ConstructMesh.py` already gives the free surface the top-layer modulus.
   - **Accuracy note:** with the default trapezoids the interface condition is exact at collocation points and first
     order in h between them (force constant on every other element).
-- [ ] Support multiple patches, and patches that share nodes (junctions between slip and interface elements).
+- [x] ~~Support multiple patches, and patches that share nodes (junctions between slip and interface elements)~~.
+  Done:
+  - multiple patches: one-ring hats on every non-tip slip element, and trapezoids along every force chain;
+  - a node shared by a slip and an interface element is open (tapered) for both (decided; `continuity_operator`).
+
+  Whether that treatment is physically adequate where a fault crosses a material contrast is part of the rebuild
+  below.
 - [ ] Rebuild `examples/antiplane/HeterogeneousElasticity_forces.py` (and its `ConstructMesh.py`) properly. Today its
   3-element fault crosses the y = -1 interface: the fault and interface elements share a node, which is treated as
   open (clamped) for both, and the stress is singular where the fault crosses the material contrast. It runs on the
-  new API, but its setup is not yet a meaningful test case (see the item above).
+  new API, but its setup is not yet a meaningful test case.
 - [x] One-ring hats (section 7.4), 2026-11-16:
   - **API:** `basis="hat"` *without* connectivity builds one hat per non-tip element from the mesh topology
     (`one_ring_hat_coefficients`, `hat_elements`), at level 2 and in `Mesh`. An explicit 3-element connectivity still
@@ -517,7 +537,8 @@ Square system of `2(N_s + N_f)` equations.
 ### T4. Possible extensions (later)
 - [ ] Spatially varying `nu` (currently assumed uniform).
 - [ ] Heterogeneous domains with topography/free surface, combining with existing non-planar fault tools.
-- [ ] Numba acceleration for the kernels that do not have it yet (plane-strain slip, triangles).
+- [ ] Numba acceleration for the kernels that do not have it yet: ~~plane-strain slip~~ (done, generated kernels);
+  triangle forces remain.
 
 ---
 
