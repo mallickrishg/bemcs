@@ -46,7 +46,7 @@ _MIRROR_SIGN = [1, 1, 1, -1, -1, -1, 1, 1, 1]
 
 
 def _m(v):
-    return mp.mpf(float(v))
+    return mp.mpf(np.asarray(v, dtype=float).item())
 
 
 def _nonzero(v):
