@@ -616,7 +616,18 @@ checked by:
     in either geometry.
   - **Plan:** test against a high-contrast limit or by convergence, then decide whether to warn
     (warn-don't-fix rule).
-- [ ] **P4. Rebuild `examples/planestrain/testing_HeterogeneousMaterialsPlanestrain.py`.** It is still a toy
+- [x] **P4. Rebuilt (2026-11-16) on the Dundurs setup:**
+  - **Setup:** a buried 40-degree fault with tapered shear and opening slip in material 1, below a bonded interface
+    with material 2 (mu2/mu1 = 4).
+  - **Script:** self-contained, with its own exact dislocation-integral solution (continuity residual 5e-15).
+  - **Figures:** geometry and prescribed slip; true stresses, BEM (trapezoids) vs exact; profiles above and below
+    the interface with trapezoids and tents; convergence.
+  - **Results** (h = 0.1, 0.05, 0.025):
+    - trapezoids 9.9e-3, 2.8e-3, 1.5e-3;
+    - tents 4.1e-3, 1.1e-3, 2.7e-4;
+    - no contrast 1.8e-4, 7.9e-6, 4.1e-7.
+  - Runs in about 11 s.
+  - **Original note:** rebuild `examples/planestrain/testing_HeterogeneousMaterialsPlanestrain.py`. It is still a toy
   (3 slip and 3 force elements, a 3-element interface), like the old antiplane example. Rebuild it on the P1 case(s)
   with log-spaced lines and connectivity files, the same way as the antiplane example.
 - [ ] **P6. Fault on a material interface: slip and force meshes that overlap exactly** (antiplane and plane strain).
