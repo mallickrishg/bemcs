@@ -26,7 +26,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import bemcs
-from ConstructMesh import BASIS, D_CROSS, D_IN, H, H_EL, MU1, MU2, layered_mesh, slip_profile
+import pandas as pd
+from ConstructMesh import (BASIS, D_CROSS, D_IN, H, H_EL, L, MU1, MU2, force_connectivity,
+                          layered_mesh, slip_profile)
 
 geometry = "antiplane"
 mu = 1.0  # reference shear modulus of the kernels (any value works)
@@ -68,7 +70,9 @@ def image_series(x, D, mu1=MU1, mu2=MU2, n_quad=400):
 # %% read the meshes and solve
 solutions = {}
 for name, (path, D) in CASES.items():
-    mesh = bemcs.Mesh.from_csv(path, basis=BASIS)
+    # force trapezoids symmetric about the fault (see ConstructMesh.py; a CSV cannot hold them)
+    conn = {"force": force_connectivity(pd.read_csv(path))}
+    mesh = bemcs.Mesh.from_csv(path, basis=BASIS, connectivity=conn)
     x = bemcs.solve(mesh, geometry=geometry, mu=mu)
     solutions[name] = (mesh, x, D)
     print(f"{name}: {mesh}")
@@ -90,22 +94,28 @@ for name, (mesh, x, D) in solutions.items():
     u = bemcs.evaluate_fields(mesh, x, xs, np.full_like(xs, -1e-9), geometry=geometry, mu=mu)["uz"]
     surface[name] = (u, image_series(xs, D), image_series(xs, D, mu2=MU1))
 
-# convergence with element size (meshes built in memory, same model)
-h_list = [0.1, 0.05, 0.025, 0.0125]
-conv = {}
+# convergence with element size, and the effect of where the free surface and the interface end
+# (meshes built in memory, same model)
 xc = np.r_[-np.geomspace(5, 0.02, 15), np.geomspace(0.02, 5, 15)]
-for name, (_, _, D) in solutions.items():
-    ref = image_series(xc, D)
-    conv[name] = []
-    for h in h_list:
-        m = layered_mesh(D, h=h)
-        xh = bemcs.solve(m, geometry=geometry, mu=mu)
-        uh = bemcs.evaluate_fields(m, xh, xc, np.full_like(xc, -1e-9), geometry=geometry, mu=mu)["uz"]
-        conv[name].append(np.abs(uh - ref).max())
+
+
+def surface_error(D, **kw):
+    m = layered_mesh(D, **kw)
+    xm = bemcs.solve(m, geometry=geometry, mu=mu)
+    um = bemcs.evaluate_fields(m, xm, xc, np.full_like(xc, -1e-9), geometry=geometry, mu=mu)["uz"]
+    return np.abs(um - image_series(xc, D)).max()
+
+
+h_list = [0.1, 0.05, 0.025]
+L_list = [10.0, 30.0, 100.0, 300.0, 1000.0]
+conv = {name: [surface_error(D, h=h) for h in h_list] for name, (_, _, D) in solutions.items()}
+trunc = {name: [surface_error(D, L=Lh) for Lh in L_list] for name, (_, _, D) in solutions.items()}
+# the default trapezoid layout (stride 2 from one end): lopsided about the crossing
+trunc_default = [surface_error(D_CROSS, L=Lh, symmetric=False) for Lh in L_list]
 
 # %% plot
-fig, axes = plt.subplots(1, 3, figsize=(17, 5))
-ax = axes[0]
+fig, axes = plt.subplots(2, 2, figsize=(13, 10))
+ax = axes[0, 0]
 for i, (name, (u, ref, homog)) in enumerate(surface.items()):
     ax.plot(xs, ref, "-", color=f"C{i}", lw=1.5, label=f"{name}: exact (image series)")
     ax.plot(xs[::6], u[::6], "o", color=f"C{i}", ms=3.5, label=f"{name}: BEM")
@@ -117,7 +127,7 @@ ax.legend(fontsize=7, loc="upper right")
 ax.set_title(f"(a) surface displacement; layer $\\mu_1$ = {MU1:g} over half-space $\\mu_2$ = {MU2:g}",
              fontsize=10)
 
-ax = axes[1]
+ax = axes[0, 1]
 for i, (name, (u, ref, _)) in enumerate(surface.items()):
     ax.semilogy(xs, np.abs(u - ref), ".-", color=f"C{i}", ms=3, lw=0.8, label=name)
 ax.set_xlabel("x / H")
@@ -126,31 +136,48 @@ ax.grid(alpha=0.3, which="both")
 ax.legend(fontsize=8)
 ax.set_title(f"(b) error at the surface (element length {H_EL:g} H near the fault)", fontsize=10)
 
-ax = axes[2]
+ax = axes[1, 0]
 for i, (name, err) in enumerate(conv.items()):
     ax.loglog(h_list, err, "o-", color=f"C{i}", label=name)
-h = np.array(h_list)
-ax.loglog(h, conv["fault through the interface"][0] * h / h[0], "k:", lw=1, label="first order")
-ax.axhline(2e-5, color="0.5", lw=0.8, ls="--")
-ax.text(h[-1], 2.6e-5, "truncation of the surface and\ninterface at |x| = 60 H", fontsize=7,
-        color="0.4")
-ax.set_xlabel("element length / H")
-ax.set_ylabel("max |BEM - exact| at the surface")
+ax.set_xlabel("element length near the fault / H")
+ax.set_ylabel("max |BEM - exact| for |x| < 5 H")
 ax.grid(alpha=0.3, which="both")
 ax.legend(fontsize=8)
-ax.set_title("(c) convergence: fast in the layer; first order where\n"
-             "the fault crosses the material contrast", fontsize=10)
+ax.set_title(f"(c) convergence with the element length near the fault\n"
+             f"(lines to |x| = {L:g} H, trapezoids symmetric about the fault)", fontsize=10)
+
+ax = axes[1, 1]
+for i, (name, err) in enumerate(trunc.items()):
+    ax.loglog(L_list, err, "o-", color=f"C{i}", label=name)
+ax.loglog(L_list, trunc_default, "s--", color="C1", mfc="none",
+          label="fault through the interface, default trapezoid layout")
+ax.set_xlabel("half-width L of the free surface and the interface / H")
+ax.set_ylabel("max |BEM - exact| for |x| < 5 H")
+ax.grid(alpha=0.3, which="both")
+ax.legend(fontsize=8)
+ax.set_title(f"(d) where the lines end (element length {H_EL:g} H near the fault):\n"
+             "beyond ~100 H truncation no longer matters (symmetric layout)", fontsize=10)
 fig.tight_layout()
 plt.show()
 
 # %% [markdown]
 # **Reading the figure.** (a) The compliant layer concentrates the deformation near the fault
-# compared with a homogeneous half-space (dashed). The BEM matches the image series for both faults.
-# (b, c) For the fault inside the layer the error is ~3e-5 at the default element length and is then
-# limited by truncating the free surface and the interface at |x| = 60 H (it falls as 1/L for longer
-# lines). Where the fault cuts through the interface the solution is not smooth at the crossing point
-# (the slip gradient is discontinuous in its effect on stress across the material contrast), and the
-# trapezoidal interface forces converge at first order there: ~1.5% at the default element length.
+# compared with a homogeneous half-space (dashed). The BEM matches the image series for both faults,
+# ~2e-5 at the default element length, and converges as the elements near the fault shrink (c).
+#
+# (d) **Where the lines end.** The free surface and the interface are truncated, with clamped
+# (tapered) ends, so the comparison with the half-space solution needs them to end far from the
+# fault. Log-spaced elements make that cheap: beyond ~100 H the truncation no longer affects the error
+# near the fault, and the default is 1000 H.
+#
+# (d) **Layout of the force trapezoids.** With the default layout (stride 2 from one end of the
+# interface) the fault through the interface is 1-2% off, and the error *grows* with L. The default
+# layout has a collocation point on one side of the crossing only. The problem is antisymmetric in
+# x, so the true interface force density is odd and its net force is zero; the lopsided layout breaks
+# that and leaves a net force of ~0.02, whose far field grows like log r: a nearly uniform offset of
+# the surface displacement. Restarting the stride at the crossing node (`force_connectivity` in
+# ConstructMesh.py) keeps the discrete problem antisymmetric, and the error drops to the level of
+# the fault inside the layer.
 
 # %% true stress and traction continuity, fault through the interface
 mesh, x, D = solutions["fault through the interface"]
@@ -182,7 +209,7 @@ ax.axhline(-H, color="w", lw=1, ls="--", label="interface")
 fig.colorbar(im, ax=ax, label=r"true shear stress $\sqrt{\sigma_{xz}^2 + \sigma_{yz}^2}$")
 ax.set_aspect("equal")
 ax.legend(fontsize=8, loc="lower right")
-ax.set_title(r"(d) fault through the interface: true stress ($\mu_1$ above, $\mu_2$ below)",
+ax.set_title(r"(e) fault through the interface: true stress ($\mu_1$ above, $\mu_2$ below)",
              fontsize=10)
 
 ax = axes[1]
@@ -196,8 +223,8 @@ ax.set_xlabel("x / H")
 ax.set_ylabel("true normal traction on the interface")
 ax.grid(alpha=0.3)
 ax.legend(fontsize=8)
-ax.set_title("(e) traction across the interface: continuous at collocation points; wrong on the\n"
-             "element left of the fault, which has none (the true force density steps at x = 0)",
+ax.set_title("(f) traction across the interface: continuous at collocation points; not on the\n"
+             "two elements at the crossing, where the true force density steps (x = 0)",
              fontsize=10)
 fig.tight_layout()
 plt.show()
@@ -208,11 +235,11 @@ print("max traction mismatch for 0.1 < |x| < 0.6: %.1e of the peak"
       % (np.abs(above - below)[far].max() / np.abs(above).max()))
 
 # %% [markdown]
-# **Why the fault through the interface converges at first order.** Across the fault the normal
-# traction on the interface steps by an amount proportional to the slip gradient, and that step is
-# different above and below the interface (mu_1 vs mu_2). The equivalent force density on the
-# interface therefore has a step at the crossing point x = 0. The trapezoids are continuous and
-# piecewise linear, and only every other element carries a collocation point, so the element on one
-# side of the crossing is interpolated across the step (panel e). The error is local to the crossing,
-# but it spreads to the surface and decreases only in proportion to the element length (panel c).
-# Allowing the force density to step at a fault crossing is an open task (tasks.md).
+# **The crossing point.** Across the fault the normal traction on the interface steps in proportion
+# to the slip gradient, and the step differs above and below the interface (mu_1 vs mu_2), so the
+# equivalent force density steps at the crossing. Continuous trapezoids cannot represent the step:
+# with the symmetric layout both elements next to the crossing are interpolated (the force is zero at
+# the crossing node, the average of the two sides), and the traction is not continuous there (f).
+# The error stays local because the layout is symmetric; in a problem without that symmetry a local
+# error with a nonzero net force would again spread as log r. Allowing a step at fault crossings is an
+# open task (tasks.md).

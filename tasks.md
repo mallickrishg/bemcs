@@ -526,25 +526,43 @@ Updated 2026-11-16. Details are in T1/T2 and the issue list (section 4).
     - convergence with element length;
     - the true stress field;
     - traction continuity on the interface.
-  - **Results:**
-    - **Fault in the layer:** about 3e-5 at h = 0.05 H, then limited by truncating the lines at |x| = 60 H
-      (falls as 1/L).
-    - **Fault through the interface:** first order (3.1e-2, 1.55e-2, 7.7e-3, 3.9e-3 for h = 0.1 to 0.0125 H).
-      The traction is continuous at the collocation points (2e-5) but not on the element next to the crossing
-      that has none.
-  - **Tests:** `tests/test_heterogeneous.py` (series branches, both faults, traction at collocation points).
-- [ ] **Let the interface force density step where a fault crosses an interface** (from the rebuild above).
+  - **Mesh:** the free surface and the interface extend to |x| = 1000 H. Elements are log-spaced (8% growth) and
+    capped at 5 H, so the parallel lines H apart stay resolved and no proximity warnings fire. The force trapezoids
+    are mirror-symmetric about the fault (`force_connectivity`: the stride restarts at the crossing node).
+  - **Results:** both faults match to about 2.5e-5 at h = 0.05 H. Inside the layer the error falls with h (1.8e-4,
+    2.4e-5, 7e-6); through the interface 8.6e-5, 2.5e-5, 1.7e-5. Truncation stops mattering beyond about 100 H
+    (2.6e-4 at 10 H). The traction is continuous at the collocation points (2e-5), but not on the two elements
+    next to the crossing.
+  - **Finding: the default trapezoid layout at a crossing.** The stride-2 layout from one end puts a collocation
+    point on one side of the crossing only. In this antisymmetric problem that leaves a spurious net force on the
+    interface of about 0.02, whose log-r far field shifts the surface displacement by 1-2%, growing with L (1.0e-2
+    at 10 H, 2.3e-2 at 1000 H). The first rebuild (L = 60 H) misread this as first-order convergence.
+  - **Tests:** `tests/test_heterogeneous.py`:
+    - the series branches agree;
+    - both faults match with the symmetric layout;
+    - the lopsided default layout produces the spurious symmetric part;
+    - traction is continuous at the collocation points.
+- [ ] **Default force-trapezoid layout at fault crossings.** `trapezoid_connectivity` should restart the stride at any
+  interface node that lies on a fault, so that collocation points flank the crossing on both sides, as the
+  layered half-space example does by hand.
+  - **Why:** a layout that is lopsided about a crossing gives the interface a spurious net force, and its log-r far
+    field pollutes the whole solution, growing with the domain size. In the layered half-space example it is the
+    whole 1-2% error.
+  - **How:** detect force-chain nodes within a tolerance of a slip element (point-on-segment), then split the
+    stride there.
+- [ ] **Let the interface force density step where a fault crosses an interface.**
   - **Cause:** across a fault the normal traction on an interface steps in proportion to the slip gradient, and
-    the step differs on the two sides of the interface (mu1 vs mu2). So the equivalent force density steps at the
-    crossing point.
-  - **Effect:** continuous trapezoids, with collocation on every other element, interpolate across the step. The
-    element on one side of the crossing is wrong by O(1), and the whole solution converges only at first order.
-  - **Options:**
-    - split the force chain at nodes that lie on a fault, with a non-tapering end basis (a half-trapezoid) on
-      each side, so each side has its own collocation point next to the crossing;
-    - grade the interface mesh towards crossings, which only reduces the constant.
-  - The shared-node rule (a node shared by a fault and an interface is open and clamped for both) is a different
-    issue: it forces zero slip at the crossing, and the example avoids it by giving the fault no node there.
+    the step differs on the two sides (mu1 vs mu2). So the equivalent force density steps at the crossing.
+  - **Effect:** continuous trapezoids cannot represent the step. With the symmetric layout the force is zero at the
+    crossing node (the average of the two sides) and both adjacent elements are interpolated, so the traction is
+    O(1) off on those two elements. In the symmetric example the error stays local, but without the symmetry the
+    local error carries a net force.
+  - **Option:** split the chain at the crossing with a non-tapering end basis (a half-trapezoid) on each side.
+- [ ] **Far-field cancellation in very long meshes.** Kernels of small elements evaluated far away lose accuracy as
+  roughly eps (r/a)^2 in absolute terms. In the layered example, extending the lines to 1e4-1e5 H with elements of
+  0.0125-0.05 H near the fault ruins the solution (errors 8e-3 to 1). Up to about r/a ~ 1e5 it is harmless. A
+  far-field (multipole) expansion of the slip and force kernels for r >> a would remove the limit; until then,
+  keep r_max / a_min below about 1e5.
 - [x] One-ring hats (section 7.4), 2026-11-16:
   - **API:** `basis="hat"` *without* connectivity builds one hat per non-tip element from the mesh topology
     (`one_ring_hat_coefficients`, `hat_elements`), at level 2 and in `Mesh`. An explicit 3-element connectivity still

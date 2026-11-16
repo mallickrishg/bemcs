@@ -47,13 +47,15 @@ def _slip(depth, D):
     return np.where(depth < D, np.cos(0.5 * np.pi * depth / D) ** 2, 0.0)
 
 
-def _layered_mesh(D, h, L=30.0, ratio=1.1):
+def _layered_mesh(D, h, L=300.0, ratio=1.08, h_max=5.0, symmetric=True):
     """Vertical fault from the surface to depth D (no node on the interface), free surface
-    and interface on [-L, L] with spacing h for |x| < 2, then growing."""
+    and interface on [-L, L]: spacing h for |x| < 2, then log-spaced up to h_max. With
+    symmetric=True the force trapezoids restart at the interface node x = 0 (mirror-
+    symmetric about the fault); otherwise the default stride-2 layout."""
     xs, step = list(np.arange(0.0, 2.0, h)), h
     while xs[-1] < L:
         xs.append(xs[-1] + step)
-        step *= ratio
+        step = min(step * ratio, h_max)
     xs = np.r_[-np.array(xs)[:0:-1], xs]
     n_f, n = max(2, int(round(D / h))), len(xs) - 1
     zf = np.linspace(0.0, -D, n_f + 1)
@@ -65,7 +67,12 @@ def _layered_mesh(D, h, L=30.0, ratio=1.1):
     els.y2 = np.r_[zf[1:], np.zeros(n), np.full(n, -H_LAYER)]
     bemcs.standardize_els_geometry(els, reorder=False)
     mu_f = np.where(zc > -H_LAYER, MU1, MU2)
-    return bemcs.Mesh(els, bc_type=["s"] * n_f + ["t"] * n + ["h"] * n,
+    conn = None
+    if symmetric:
+        iface, c = n_f + n + np.arange(n), n // 2  # interface elements; c starts at x = 0
+        mids = sorted(list(range(c + 1, n - 1, 2)) + list(range(c - 2, 0, -2)))
+        conn = {"force": np.array([[iface[m - 1], iface[m], iface[m + 1]] for m in mids])}
+    return bemcs.Mesh(els, bc_type=["s"] * n_f + ["t"] * n + ["h"] * n, connectivity=conn,
                       bc_value=np.r_[_slip(-zc, D), np.zeros(2 * n)],
                       mu_minus=np.r_[mu_f, np.full(n, MU1), np.full(n, MU2)],
                       mu_plus=np.r_[mu_f, np.full(n, MU1), np.full(n, MU1)],
@@ -99,11 +106,12 @@ def _image_series(x, D, n_quad=300):
 _XS = np.r_[-np.geomspace(5, 0.02, 12), np.geomspace(0.02, 5, 12)]
 
 
-def _surface_error(D, h):
-    mesh = _layered_mesh(D, h)
+def _surface_error(D, h, **kw):
+    mesh = _layered_mesh(D, h, **kw)
     x, (_, _, rows) = bemcs.solve(mesh, geometry="antiplane", mu=1.0, return_system=True)
     u = bemcs.evaluate_fields(mesh, x, _XS, np.full_like(_XS, -1e-9), geometry="antiplane", mu=1.0)["uz"]
-    return np.abs(u - _image_series(_XS, D)).max(), mesh, x, rows
+    symmetric_part = np.abs(u[:12][::-1] + u[12:]).max()  # u is odd in x
+    return np.abs(u - _image_series(_XS, D)).max(), symmetric_part, mesh, x, rows
 
 
 def test_image_series_branches_agree_at_the_interface():
@@ -119,18 +127,25 @@ def test_image_series_branches_agree_at_the_interface():
         np.testing.assert_allclose(jump, 1.0, atol=1e-6)
 
 
-def test_fault_inside_the_layer_matches_the_image_series():
-    err, *_ = _surface_error(0.6, 0.05)
-    assert err < 1e-4  # measured 5e-5, limited by truncating the lines at |x| = 30
+@pytest.mark.parametrize("D", [0.6, 1.63])
+def test_layered_half_space_matches_the_image_series(D):
+    """Inside the layer and through the interface, with the lines out to 300 H
+    (log-spaced) and trapezoids symmetric about the fault: both ~2.5e-5."""
+    err, sym, *_ = _surface_error(D, 0.05)
+    assert err < 5e-5  # measured 2.4e-5 and 2.6e-5
+    assert sym < 1e-8  # the discrete problem stays antisymmetric
 
 
-def test_fault_through_the_interface_converges_at_first_order():
-    """The interface force density steps where the fault crosses it; continuous
-    trapezoids converge at first order there (tasks.md)."""
-    e1, *_ = _surface_error(1.63, 0.1)
-    e2, mesh, x, rows = _surface_error(1.63, 0.05)
-    assert e2 < 0.03 and 1.6 < e1 / e2 < 2.4  # measured 3.1e-2 -> 1.55e-2
-    # the true traction is still continuous at the interface collocation points
+def test_lopsided_trapezoids_at_a_crossing_give_a_spurious_net_force():
+    """The default stride-2 layout has a collocation point on one side of the crossing
+    only: the antisymmetry breaks, the interface carries a net force, and its log far
+    field offsets the surface displacement (percent level, growing with L)."""
+    err, sym, *_ = _surface_error(1.63, 0.1, L=100.0, symmetric=False)
+    assert sym > 1e-2 and err > 5e-3  # measured 3.3e-2 and 1.7e-2 (symmetric: <1e-8, 8e-5)
+
+
+def test_traction_is_continuous_at_interface_collocation_points():
+    _, _, mesh, x, rows = _surface_error(1.63, 0.1, L=100.0)
     xk = mesh.els.x_centers[rows["element"][rows["type"] == "h"]]
     xk = xk[np.abs(xk) < 2]
     mf = lambda X, Y: np.where(Y > -H_LAYER, MU1, MU2)  # noqa: E731
