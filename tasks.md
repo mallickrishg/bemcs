@@ -58,7 +58,12 @@ Originally implemented in `bemAssembly.solveAntiplaneBEM(fileinput, connectivity
 Now `bemcs.solve` with the exact interface condition and `mu_minus` / `mu_plus` columns. Demo, checked against the
 exact layered half-space solution: `examples/antiplane/HeterogeneousElasticity_forces.py`.
 
-### 2.2 Plane strain (to implement / validate)
+### 2.2 Plane strain (original design; superseded, see section 3)
+
+> The code does not use the `alpha` / projected-strain rows below. With uniform `nu`, every stiffness scales with
+> `mu`, so the true stress is `(mu(x) / mu0) S` with `S` the reference-medium stress. The `'h'` row imposes exact
+> continuity of the true traction (all components, volumetric part included) through `kappa`, and `'t'` rows
+> prescribe the true traction. The table is kept for history.
 
 Assumes uniform Poisson's ratio `nu`, so heterogeneity is a single scalar field `mu(x)`.
 
@@ -117,13 +122,10 @@ Updated 2026-11-16. Details are in T1/T2 and the issue list (section 4).
   - reversing the interface elements, or mirroring the problem, gives identical or mirrored fields;
   - the general and one-ring forms agree;
   - in antiplane only, the bimaterial image solution (h^2 convergence).
-- **Not yet done:**
-  - a plane-strain analytic check (e.g. Dundurs bimaterial dislocation, or a circular inclusion);
-  - curved or closed interfaces in the tests;
-  - ~~a meaningful fault-crossing-an-interface case~~ done: the layered half-space example (T2), exact for a fault
-    inside the layer, first order for a fault through the interface (open task in T2);
-  - ~~the collocation-proximity warning (T3)~~ done;
-  - documentation (T3).
+- **Not yet done:** see "P. Readiness for plane-strain heterogeneous elasticity" in section 5.
+  - ~~a meaningful fault-crossing-an-interface case~~ done in antiplane: the layered half-space example (T2), with
+    both faults at about 2.5e-5;
+  - ~~the collocation-proximity warning (T3)~~ done, and `TrapezoidCrossingWarning` too.
 - **Accuracy:** the interface condition is exact at collocation points and first order in h between them.
 
 ---
@@ -444,6 +446,47 @@ Updated 2026-11-16. Details are in T1/T2 and the issue list (section 4).
   point-dislocation solution.
 - [x] Resolve `KNOWN_UNEXPORTED` and `KNOWN_DUPLICATES` until both are empty (stage 3); the xfail marker is removed.
 - [x] Remove `examples/antiplane/GF.py` (issue 12). It was removed with the antiplane examples that used it.
+
+### P. Readiness for plane-strain heterogeneous elasticity (reviewed 2026-11-16)
+
+**In place:** solver, exact interface condition (kappa, true traction), mesh/BC/moduli input, connectivity files,
+warnings (`CollocationProximityWarning`, `TrapezoidCrossingWarning`), numba kernels, LU solve. The slip and force
+kernels are verified against independent references in both geometries. The plane-strain heterogeneous solve is
+checked by:
+- the high-contrast limits (rigid and free, first order);
+- traction continuity at the collocation points;
+- side independence, element reversal and the mirror test;
+- general = hat forms.
+
+**Missing before plane-strain results can be trusted at a finite contrast:**
+- [ ] **P1. A finite-contrast exact solution in plane strain.** This is the plane-strain counterpart of the
+  antiplane image series; today nothing checks the answer at, say, mu2/mu1 = 4. Two candidates, ideally both:
+  - **(a) Circular inhomogeneity under a uniform remote stress.** Exact (Muskhelishvili; the stress inside is
+    uniform). It also exercises a **closed, curved interface**, the normal and volumetric parts of the condition,
+    and the remote load. Gives h-convergence.
+  - **(b) Edge dislocation, or a short fault with smooth slip, near a planar bimaterial interface.** Dundurs image
+    dislocations. This is the plane-strain analogue of the antiplane layered case, with fault-interface coupling
+    through both shear and normal components.
+- [ ] **P2. A fault crossing an interface in plane strain.**
+  - **Gap:** no exact solution, and no symmetry to rely on. The antiplane result (about 2.5e-5 once the trapezoids
+    restart at the crossing) depended partly on antisymmetry. With a dipping fault, or mixed shear/opening, the step
+    in force density at the crossing (open task in T2) may again leave a net force error.
+  - **Plan:** a convergence study, plus a residual net-force or traction check on a dipping fault through a planar
+    interface. If it converges only at first order with a visible far-field offset, do the step task (a half-trapezoid
+    on each side of the crossing) before relying on such geometries.
+- [ ] **P3. An interface that meets the free surface** (outcropping or dipping layers, basins).
+  - **Gap:** where a force chain meets a slip (free-surface) element, the force tapers to zero ("slip-force contact:
+    both taper"). The true force density there is generally nonzero, so expect a local, first-order error. Untested
+    in either geometry.
+  - **Plan:** test against a high-contrast limit or by convergence, then decide whether to warn
+    (warn-don't-fix rule).
+- [ ] **P4. Rebuild `examples/planestrain/testing_HeterogeneousMaterialsPlanestrain.py`.** It is still a toy
+  (3 slip and 3 force elements, a 3-element interface), like the old antiplane example. Rebuild it on the P1 case(s)
+  with log-spaced lines and connectivity files, the same way as the antiplane example.
+- [ ] **P5. Documentation of the heterogeneous formulation as implemented** (T3). Can follow P1-P4.
+
+**Not blockers:** triangle force sources (lowest priority), far-field kernel expansion (only for very long meshes),
+spatially varying nu (T4), wiki updates.
 
 ### T1. Correctness of plane-strain heterogeneous solver
 - [x] Fix issue 4.1 (compliance) and re-run `testing_HeterogeneousMaterialsPlanestrain.py` (runs; same solution, see issue 1).
