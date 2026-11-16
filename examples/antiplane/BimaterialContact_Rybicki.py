@@ -28,7 +28,7 @@ import bemcs
 MU1, MU2 = 1.0, 4.0
 D = 1.0  # fault depth
 L = 1000.0  # extent of the free surface (|x| < L) and of the contact (depth < L)
-H_EL = 0.05  # element length near the fault (|x| < 2, depth < 2)
+H_EL = 0.01  # element length near the fault (|x| < 2, depth < 2)
 geometry, mu = "antiplane", 1.0
 CASES = {"fault near the contact (d = 0.5)": 0.5, "fault on the contact (d = 0)": 0.0}
 
@@ -48,14 +48,19 @@ def S_halfspace(x, y=0.0, n_quad=400):
     d, wd = 0.5 * D * (g + 1), 0.5 * D * w
     neg_ds = 0.5 * np.pi / D * np.sin(np.pi * d / D)
     z = -np.asarray(y, float)
-    return sum(wi * si * (np.arctan((di - z) / x) + np.arctan((di + z) / x)) / (2 * np.pi)
-               for di, wi, si in zip(d, wd, neg_ds))
+    return sum(
+        wi * si * (np.arctan((di - z) / x) + np.arctan((di + z) / x)) / (2 * np.pi)
+        for di, wi, si in zip(d, wd, neg_ds)
+    )
 
 
 def exact(x, dist, y=0.0, mu2=MU2):
     k = (MU1 - mu2) / (MU1 + mu2)
-    return np.where(x < dist, S_halfspace(x, y) + k * S_halfspace(2 * dist - x, y),
-                    (1 + k) * S_halfspace(x, y))
+    return np.where(
+        x < dist,
+        S_halfspace(x, y) + k * S_halfspace(2 * dist - x, y),
+        (1 + k) * S_halfspace(x, y),
+    )
 
 
 # %% the mesh
@@ -87,10 +92,18 @@ def contact_mesh(dist, h=H_EL, L=L):
     side = np.where(els.x_centers < dist, MU1, MU2)
     # the fault and contact elements run downward, so their unit normal is +x: -n is the MU1 side
     mu_minus = np.where(bc == "t", side, MU1)
-    mu_plus = np.where(bc == "t", side, np.where(bc == "h", MU2, MU2 if dist == 0 else MU1))
+    mu_plus = np.where(
+        bc == "t", side, np.where(bc == "h", MU2, MU2 if dist == 0 else MU1)
+    )
     value = np.where(bc == "s", slip_profile(-els.y_centers), 0.0)
-    return bemcs.Mesh(els, bc_type=bc, bc_value=value, mu_minus=mu_minus, mu_plus=mu_plus,
-                      basis={"slip": "hat", "force": "trapezoid"})
+    return bemcs.Mesh(
+        els,
+        bc_type=bc,
+        bc_value=value,
+        mu_minus=mu_minus,
+        mu_plus=mu_plus,
+        basis={"slip": "hat", "force": "trapezoid"},
+    )
 
 
 def solve(mesh):
@@ -107,7 +120,9 @@ results = {}
 for name, dist in CASES.items():
     mesh = contact_mesh(dist)
     x = solve(mesh)
-    u = bemcs.evaluate_fields(mesh, x, xs, np.full_like(xs, -1e-9), geometry=geometry, mu=mu)["uz"]
+    u = bemcs.evaluate_fields(
+        mesh, x, xs, np.full_like(xs, -1e-9), geometry=geometry, mu=mu
+    )["uz"]
     results[name] = (mesh, x, dist, u)
     print(f"{name}: {mesh}")
 
@@ -119,7 +134,9 @@ for name, dist in CASES.items():
     for h in h_list:
         m = contact_mesh(dist, h=h)
         xm = solve(m)
-        um = bemcs.evaluate_fields(m, xm, xc, np.full_like(xc, -1e-9), geometry=geometry, mu=mu)["uz"]
+        um = bemcs.evaluate_fields(
+            m, xm, xc, np.full_like(xc, -1e-9), geometry=geometry, mu=mu
+        )["uz"]
         conv[name].append(np.abs(um - exact(xc, dist)).max())
 
 # %% plot
@@ -135,16 +152,24 @@ ax.set_xlabel("x / D")
 ax.set_ylabel("surface displacement / surface slip")
 ax.grid(alpha=0.3)
 ax.legend(fontsize=7)
-ax.set_title(f"(a) surface displacement; $\\mu_1$ = {MU1:g} (x < d), $\\mu_2$ = {MU2:g} (x > d)", fontsize=10)
+ax.set_title(
+    f"(a) surface displacement; $\\mu_1$ = {MU1:g} (x < d), $\\mu_2$ = {MU2:g} (x > d)",
+    fontsize=10,
+)
 
 ax = axes[0, 1]
 for i, (name, (mesh, x, dist, u)) in enumerate(results.items()):
-    ax.semilogy(xs, np.abs(u - exact(xs, dist)), ".-", color=f"C{i}", ms=3, lw=0.8, label=name)
+    ax.semilogy(
+        xs, np.abs(u - exact(xs, dist)), ".-", color=f"C{i}", ms=3, lw=0.8, label=name
+    )
 ax.set_xlabel("x / D")
 ax.set_ylabel("|BEM - exact|")
 ax.grid(alpha=0.3, which="both")
 ax.legend(fontsize=8)
-ax.set_title(f"(b) error at the surface (element length {H_EL:g} D): smooth and broad", fontsize=10)
+ax.set_title(
+    f"(b) error at the surface (element length {H_EL:g} D): smooth and broad",
+    fontsize=10,
+)
 
 ax = axes[1, 0]
 for i, (name, err) in enumerate(conv.items()):
@@ -166,7 +191,12 @@ k = (MU1 - MU2) / (MU1 + MU2)
 kappa = bemcs.interface_kappa(MU1, MU2, -1)
 z = np.linspace(-2.5, -1e-4, 400)
 e = 1e-6
-f_exact = -kappa * (1 - k) * (S_halfspace(dist - e, z) - S_halfspace(dist - 3 * e, z)) / (2 * e)
+f_exact = (
+    -kappa
+    * (1 - k)
+    * (S_halfspace(dist - e, z) - S_halfspace(dist - 3 * e, z))
+    / (2 * e)
+)
 ax.plot(f_exact, -z, "k-", lw=1.5, label="exact")
 ax.plot(f[keep], -ye[keep], ".", color="C0", ms=3, label="BEM (trapezoids)")
 ax.invert_yaxis()
@@ -174,8 +204,11 @@ ax.set_xlabel("force density on the contact (reference medium)")
 ax.set_ylabel("depth / D")
 ax.grid(alpha=0.3)
 ax.legend(fontsize=8)
-ax.set_title("(d) fault near the contact: force density along the contact.\n"
-             "The chain end at the free surface is open (a free value, not tapered)", fontsize=10)
+ax.set_title(
+    "(d) fault near the contact: force density along the contact.\n"
+    "The chain end at the free surface is open (a free value, not tapered)",
+    fontsize=10,
+)
 fig.tight_layout()
 plt.show()
 
