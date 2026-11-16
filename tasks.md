@@ -53,9 +53,10 @@ equivalent of traction). Unknowns: slip coefficients `s` (3/element) and force c
 3. `'h'` rows: `alpha Psi^(s) s + (I + alpha Psi^(f)) f = 0`, with `alpha = mu_,n/mu`.
 4. Smoothness rows (open nodes, overlaps, triple junctions) for slip elements, RHS = 0.
 
-Implemented in `bemAssembly.solveAntiplaneBEM(fileinput, connectivityfile)`:
-mesh CSV columns `x1,z1,x2,z2,BC_type,value` (for `'h'` rows `value` holds `alpha`), connectivity CSV
-lists 3-element force patches. Demo: `examples/antiplane/HeterogeneousElasticity_forces.py`.
+Originally implemented in `bemAssembly.solveAntiplaneBEM(fileinput, connectivityfile)`: mesh CSV columns
+`x1,z1,x2,z2,BC_type,value` (for `'h'` rows `value` holds `alpha`), connectivity CSV lists 3-element force patches.
+Now `bemcs.solve` with the exact interface condition and `mu_minus` / `mu_plus` columns. Demo, checked against the
+exact layered half-space solution: `examples/antiplane/HeterogeneousElasticity_forces.py`.
 
 ### 2.2 Plane strain (to implement / validate)
 
@@ -119,8 +120,9 @@ Updated 2026-11-16. Details are in T1/T2 and the issue list (section 4).
 - **Not yet done:**
   - a plane-strain analytic check (e.g. Dundurs bimaterial dislocation, or a circular inclusion);
   - curved or closed interfaces in the tests;
-  - a meaningful fault-crossing-an-interface case (rebuild of `HeterogeneousElasticity_forces.py`, T2);
-  - the collocation-proximity warning (T3);
+  - ~~a meaningful fault-crossing-an-interface case~~ done: the layered half-space example (T2), exact for a fault
+    inside the layer, first order for a fault through the interface (open task in T2);
+  - ~~the collocation-proximity warning (T3)~~ done;
   - documentation (T3).
 - **Accuracy:** the interface condition is exact at collocation points and first order in h between them.
 
@@ -509,10 +511,40 @@ Updated 2026-11-16. Details are in T1/T2 and the issue list (section 4).
 
   Whether that treatment is physically adequate where a fault crosses a material contrast is part of the rebuild
   below.
-- [ ] Rebuild `examples/antiplane/HeterogeneousElasticity_forces.py` (and its `ConstructMesh.py`) properly. Today its
-  3-element fault crosses the y = -1 interface: the fault and interface elements share a node, which is treated as
-  open (clamped) for both, and the stress is singular where the fault crosses the material contrast. It runs on the
-  new API, but its setup is not yet a meaningful test case.
+- [x] ~~Rebuild `examples/antiplane/HeterogeneousElasticity_forces.py` (and its `ConstructMesh.py`)~~ done
+  (2026-11-16):
+  - **Problem:** a strike-slip fault breaking the free surface of a compliant layer (mu1, thickness H) over a stiff
+    half-space (mu2 = 4 mu1), with smooth tapered slip. Two faults: one inside the layer (D = 0.6 H), one through
+    the interface (D = 1.63 H). The fault has no node on the interface: it crosses inside one of its elements, at
+    an interface node.
+  - **Reference:** the exact image series for the surface displacement (Rybicki 1971; Segall 2010 ch. 5), for
+    both depth branches, integrated over the slip profile.
+  - **Files:** `ConstructMesh.py` holds the model (parameters, `mesh_table`, `layered_mesh`) and writes two CSVs.
+    The example reads them, solves, and compares. Panels:
+    - surface displacement vs the series and the homogeneous half-space;
+    - error along the surface;
+    - convergence with element length;
+    - the true stress field;
+    - traction continuity on the interface.
+  - **Results:**
+    - **Fault in the layer:** about 3e-5 at h = 0.05 H, then limited by truncating the lines at |x| = 60 H
+      (falls as 1/L).
+    - **Fault through the interface:** first order (3.1e-2, 1.55e-2, 7.7e-3, 3.9e-3 for h = 0.1 to 0.0125 H).
+      The traction is continuous at the collocation points (2e-5) but not on the element next to the crossing
+      that has none.
+  - **Tests:** `tests/test_heterogeneous.py` (series branches, both faults, traction at collocation points).
+- [ ] **Let the interface force density step where a fault crosses an interface** (from the rebuild above).
+  - **Cause:** across a fault the normal traction on an interface steps in proportion to the slip gradient, and
+    the step differs on the two sides of the interface (mu1 vs mu2). So the equivalent force density steps at the
+    crossing point.
+  - **Effect:** continuous trapezoids, with collocation on every other element, interpolate across the step. The
+    element on one side of the crossing is wrong by O(1), and the whole solution converges only at first order.
+  - **Options:**
+    - split the force chain at nodes that lie on a fault, with a non-tapering end basis (a half-trapezoid) on
+      each side, so each side has its own collocation point next to the crossing;
+    - grade the interface mesh towards crossings, which only reduces the constant.
+  - The shared-node rule (a node shared by a fault and an interface is open and clamped for both) is a different
+    issue: it forces zero slip at the crossing, and the example avoids it by giving the fault no node there.
 - [x] One-ring hats (section 7.4), 2026-11-16:
   - **API:** `basis="hat"` *without* connectivity builds one hat per non-tip element from the mesh topology
     (`one_ring_hat_coefficients`, `hat_elements`), at level 2 and in `Mesh`. An explicit 3-element connectivity still
