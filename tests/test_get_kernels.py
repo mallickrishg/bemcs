@@ -268,7 +268,8 @@ def test_level2_shapes_and_info(els_curved, obs_points, case):
         assert U.shape == (n_obs, n_src, 1) and S.shape == (n_obs, n_src, 2)
         assert info.directions == () and info.nu is None
     assert (info.u_shape, info.s_shape) == (U.shape, S.shape)
-    assert info.basis == {kind: basis} and info.backend == "numpy" and info.mu == MU
+    default = "numba" if GF._check_numba(None) else "numpy"  # numba when installed
+    assert info.basis == {kind: basis} and info.backend == default and info.mu == MU
     assert np.all(info.src_label == kind[0])
     if basis in ("quadratic", "linear"):
         per = n_src // 4
@@ -328,7 +329,7 @@ def test_displacement_scales_with_one_over_mu(els_curved, obs_points, geometry, 
 @pytest.mark.parametrize("case", CASES, ids=CASE_IDS)
 def test_numba_backend_matches_numpy(els_curved, obs_points, case):
     geometry, kind, basis, _ = case
-    Un, Sn, info_n = _level2(els_curved, obs_points, geometry, kind, basis)
+    Un, Sn, info_n = _level2(els_curved, obs_points, geometry, kind, basis, use_numba=False)
     Uj, Sj, info_j = _level2(els_curved, obs_points, geometry, kind, basis, use_numba=True)
     assert (info_n.backend, info_j.backend) == ("numpy", "numba")
     np.testing.assert_allclose(Uj, Un, rtol=1e-10, atol=1e-12)
@@ -485,3 +486,74 @@ def test_default_trapezoids_share_exactly_one_element():
     np.testing.assert_array_equal(conn, [[0, 1, 2], [2, 3, 4]])
     for a, b in zip(conn[:-1], conn[1:]):
         assert len(set(a) & set(b)) == 1
+
+
+def _line_els(segments):
+    els = bemcs.initialize_els()
+    els.x1 = np.array([a[0] for a, _ in segments], float)
+    els.y1 = np.array([a[1] for a, _ in segments], float)
+    els.x2 = np.array([b[0] for _, b in segments], float)
+    els.y2 = np.array([b[1] for _, b in segments], float)
+    bemcs.standardize_els_geometry(els, reorder=False)
+    return els
+
+
+def _straight(n, x0=0.0, y=0.0):
+    return [((x0 + i, y), (x0 + i + 1, y)) for i in range(n)]
+
+
+def test_trapezoids_restart_at_a_break_symmetrically():
+    """8 elements on [0, 8], break at x = 4: collocation (middle) elements 2 and 5, 1.5
+    elements from the break on both sides; the two trapezoids there share nothing."""
+    els = _line_els(_straight(8))
+    conn = GF.trapezoid_connectivity(els, breaks=[[4.0, 0.0]])
+    np.testing.assert_array_equal(conn, [[1, 2, 3], [4, 5, 6]])
+    GF._check_trapezoid_overlap(conn)
+    # longer: every other element counted from the break on each side
+    els = _line_els(_straight(12))
+    conn = GF.trapezoid_connectivity(els, breaks=[[6.0, 0.0]])
+    np.testing.assert_array_equal(conn[:, 1], [2, 4, 7, 9])
+    centres = els.x_centers[conn[:, 1]]
+    np.testing.assert_allclose(np.sort(6 - centres[centres < 6]), np.sort(centres[centres > 6] - 6))  # 1.5, 3.5
+    # without breaks: the previous default, through x = 6
+    np.testing.assert_array_equal(GF.trapezoid_connectivity(els)[:, 1], [1, 3, 5, 7, 9])
+
+
+def test_trapezoids_restart_at_two_breaks_and_on_closed_loops():
+    els = _line_els(_straight(11))
+    conn = GF.trapezoid_connectivity(els, breaks=[[3.0, 0.0], [8.0, 0.0]])
+    GF._check_trapezoid_overlap(conn)
+    mids = conn[:, 1].tolist()
+    assert 1 in mids and 2 not in mids  # left segment [0, 1, 2], counted from the break at 3
+    assert 4 in mids and 9 in mids  # both sides of the break at 8 flanked 1.5 elements away
+    # a closed square loop of 8 elements with a break at one corner
+    sq = [((0, 0), (1, 0)), ((1, 0), (2, 0)), ((2, 0), (2, 1)), ((2, 1), (2, 2)),
+          ((2, 2), (1, 2)), ((1, 2), (0, 2)), ((0, 2), (0, 1)), ((0, 1), (0, 0))]
+    els = _line_els(sq)
+    conn = GF.trapezoid_connectivity(els, breaks=[[0.0, 0.0]])
+    GF._check_trapezoid_overlap(conn)
+    # 8 elements between the break and itself: an even segment can be flanked at 1.5 elements on
+    # one side of the break only (the other gets 2.5)
+    d = np.hypot(els.x_centers[conn[:, 1]], els.y_centers[conn[:, 1]])
+    assert np.sort(d)[0] == pytest.approx(1.5) and np.sort(d)[1] <= 2.55
+
+
+def test_mesh_restarts_trapezoids_at_fault_crossings():
+    """A fault crossing an interface (no shared node) at an interface node."""
+    interface = _straight(8, x0=-4.0, y=-1.0)
+    fault = [((0.0, 0.0), (0.0, -0.75)), ((0.0, -0.75), (0.0, -1.5)), ((0.0, -1.5), (0.0, -2.25))]
+    els = _line_els(fault + interface)
+    labels = ["s"] * 3 + ["f"] * 8
+    np.testing.assert_allclose(GF.fault_crossings(els, labels), [[0.0, -1.0]])
+    mesh = bemcs.Mesh(els, labels=labels, basis={"slip": "hat", "force": "trapezoid"})
+    np.testing.assert_array_equal(mesh.connectivity["force"], 3 + np.array([[1, 2, 3], [4, 5, 6]]))
+    # no crossing: the default stays None (stride 2 from one end)
+    fault_off = [((5.0, 0.0), (5.0, -0.75)), ((5.0, -0.75), (5.0, -1.5)), ((5.0, -1.5), (5.0, -2.25))]
+    mesh = bemcs.Mesh(_line_els(fault_off + interface), labels=labels,
+                      basis={"slip": "hat", "force": "trapezoid"})
+    assert len(mesh.fault_crossings) == 0 and mesh.connectivity["force"] is None
+    # an explicit connectivity is kept as given
+    given = 3 + np.array([[0, 1, 2], [2, 3, 4], [4, 5, 6]])
+    mesh = bemcs.Mesh(els, labels=labels, basis={"slip": "hat", "force": "trapezoid"},
+                      connectivity={"force": given})
+    np.testing.assert_array_equal(mesh.connectivity["force"], given)

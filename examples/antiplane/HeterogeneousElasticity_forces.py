@@ -26,9 +26,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import bemcs
-import pandas as pd
-from ConstructMesh import (BASIS, D_CROSS, D_IN, H, H_EL, L, MU1, MU2, force_connectivity,
-                          layered_mesh, slip_profile)
+from ConstructMesh import BASIS, D_CROSS, D_IN, H, H_EL, L, MU1, MU2, layered_mesh, slip_profile
 
 geometry = "antiplane"
 mu = 1.0  # reference shear modulus of the kernels (any value works)
@@ -70,9 +68,9 @@ def image_series(x, D, mu1=MU1, mu2=MU2, n_quad=400):
 # %% read the meshes and solve
 solutions = {}
 for name, (path, D) in CASES.items():
-    # force trapezoids symmetric about the fault (see ConstructMesh.py; a CSV cannot hold them)
-    conn = {"force": force_connectivity(pd.read_csv(path))}
-    mesh = bemcs.Mesh.from_csv(path, basis=BASIS, connectivity=conn)
+    mesh = bemcs.Mesh.from_csv(path, basis=BASIS)
+    # the default force trapezoids restart where the fault crosses the interface
+    print(f"{name}: fault crossings found on the interface: {mesh.fault_crossings.tolist()}")
     x = bemcs.solve(mesh, geometry=geometry, mu=mu)
     solutions[name] = (mesh, x, D)
     print(f"{name}: {mesh}")
@@ -110,8 +108,8 @@ h_list = [0.1, 0.05, 0.025]
 L_list = [10.0, 30.0, 100.0, 300.0, 1000.0]
 conv = {name: [surface_error(D, h=h) for h in h_list] for name, (_, _, D) in solutions.items()}
 trunc = {name: [surface_error(D, L=Lh) for Lh in L_list] for name, (_, _, D) in solutions.items()}
-# the default trapezoid layout (stride 2 from one end): lopsided about the crossing
-trunc_default = [surface_error(D_CROSS, L=Lh, symmetric=False) for Lh in L_list]
+# trapezoids every other element from one end, running through the crossing: lopsided about it
+trunc_default = [surface_error(D_CROSS, L=Lh, lopsided=True) for Lh in L_list]
 
 # %% plot
 fig, axes = plt.subplots(2, 2, figsize=(13, 10))
@@ -144,19 +142,19 @@ ax.set_ylabel("max |BEM - exact| for |x| < 5 H")
 ax.grid(alpha=0.3, which="both")
 ax.legend(fontsize=8)
 ax.set_title(f"(c) convergence with the element length near the fault\n"
-             f"(lines to |x| = {L:g} H, trapezoids symmetric about the fault)", fontsize=10)
+             f"(lines to |x| = {L:g} H)", fontsize=10)
 
 ax = axes[1, 1]
 for i, (name, err) in enumerate(trunc.items()):
     ax.loglog(L_list, err, "o-", color=f"C{i}", label=name)
 ax.loglog(L_list, trunc_default, "s--", color="C1", mfc="none",
-          label="fault through the interface, default trapezoid layout")
+          label="fault through the interface, stride-2 trapezoids through the crossing")
 ax.set_xlabel("half-width L of the free surface and the interface / H")
 ax.set_ylabel("max |BEM - exact| for |x| < 5 H")
 ax.grid(alpha=0.3, which="both")
 ax.legend(fontsize=8)
 ax.set_title(f"(d) where the lines end (element length {H_EL:g} H near the fault):\n"
-             "beyond ~100 H truncation no longer matters (symmetric layout)", fontsize=10)
+             "beyond ~100 H truncation no longer matters", fontsize=10)
 fig.tight_layout()
 plt.show()
 
@@ -170,14 +168,13 @@ plt.show()
 # fault. Log-spaced elements make that cheap: beyond ~100 H the truncation no longer affects the error
 # near the fault, and the default is 1000 H.
 #
-# (d) **Layout of the force trapezoids.** With the default layout (stride 2 from one end of the
-# interface) the fault through the interface is 1-2% off, and the error *grows* with L. The default
-# layout has a collocation point on one side of the crossing only. The problem is antisymmetric in
-# x, so the true interface force density is odd and its net force is zero; the lopsided layout breaks
+# (d) **Layout of the force trapezoids at the crossing.** `bemcs.Mesh` restarts the trapezoid
+# stride where the fault crosses the interface (`mesh.fault_crossings`), so collocation points flank
+# the crossing on both sides. The dashed curve shows what happens without that: a stride running
+# through the crossing has a collocation point on one side only. The problem is antisymmetric in x,
+# so the true interface force density is odd and its net force is zero; the lopsided layout breaks
 # that and leaves a net force of ~0.02, whose far field grows like log r: a nearly uniform offset of
-# the surface displacement. Restarting the stride at the crossing node (`force_connectivity` in
-# ConstructMesh.py) keeps the discrete problem antisymmetric, and the error drops to the level of
-# the fault inside the layer.
+# the surface displacement, 1-2% and growing with L.
 
 # %% true stress and traction continuity, fault through the interface
 mesh, x, D = solutions["fault through the interface"]
@@ -238,7 +235,7 @@ print("max traction mismatch for 0.1 < |x| < 0.6: %.1e of the peak"
 # **The crossing point.** Across the fault the normal traction on the interface steps in proportion
 # to the slip gradient, and the step differs above and below the interface (mu_1 vs mu_2), so the
 # equivalent force density steps at the crossing. Continuous trapezoids cannot represent the step:
-# with the symmetric layout both elements next to the crossing are interpolated (the force is zero at
+# with the default layout both elements next to the crossing are interpolated (the force is zero at
 # the crossing node, the average of the two sides), and the traction is not continuous there (f).
 # The error stays local because the layout is symmetric; in a problem without that symmetry a local
 # error with a nonzero net force would again spread as log r. Allowing a step at fault crossings is an

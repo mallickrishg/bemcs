@@ -1,3 +1,4 @@
+import os
 import warnings
 from dataclasses import dataclass, field
 
@@ -1190,8 +1191,13 @@ def _obs(x_obs, y_obs):
 
 
 def _check_numba(use_numba):
+    """Resolve use_numba: None (the default) means numba when it is installed, unless the
+    environment variable BEMCS_NUMBA=0. True requires numba; False forces plain numpy."""
+    if use_numba is None:
+        return NUMBA_AVAILABLE and os.environ.get("BEMCS_NUMBA", "1") != "0"
     if use_numba and not NUMBA_AVAILABLE:
         raise ImportError("use_numba=True needs numba, which is not installed")
+    return bool(use_numba)
 
 
 def _check_material(geometry, mu, nu):
@@ -1230,14 +1236,14 @@ def _subset_els(els, idx):
 # ----------------------------------------------------------------------------
 
 
-def element_kernels_slip(x_obs, y_obs, els, *, geometry, mu, nu=None, use_numba=False):
+def element_kernels_slip(x_obs, y_obs, els, *, geometry, mu, nu=None, use_numba=None):
     """Quadratic-slip kernels, 3 nodes per element: U, S in the get_kernels layout.
 
     Stresses are singular at element end points; the singular parts cancel
     between neighbouring elements only for co-planar elements with continuous
     slip and slip gradient (see `get_kernels`, Notes).
     """
-    _check_numba(use_numba)
+    use_numba = _check_numba(use_numba)
     _check_material(geometry, mu, nu)
     xo, yo = _obs(x_obs, y_obs)
     if geometry == "antiplane":
@@ -1251,12 +1257,12 @@ def element_kernels_slip(x_obs, y_obs, els, *, geometry, mu, nu=None, use_numba=
     return driver(xo, yo, xc, yc, x1, y1, x2, y2, hl, rot, float(mu), float(nu))
 
 
-def element_kernels_force(x_obs, y_obs, els, *, geometry, mu, nu=None, use_numba=False):
+def element_kernels_force(x_obs, y_obs, els, *, geometry, mu, nu=None, use_numba=None):
     """Linear-force kernels, 2 ramps per element: U, S in the get_kernels layout.
 
     Ramp 0 is (w+s)/2w and ramp 1 is (w-s)/2w, with s in [-w, w] along the element.
     """
-    _check_numba(use_numba)
+    use_numba = _check_numba(use_numba)
     _check_material(geometry, mu, nu)
     xo, yo = _obs(x_obs, y_obs)
     n_obs = len(xo)
@@ -1417,7 +1423,15 @@ def _chains(els):
     return chains
 
 
-def trapezoid_connectivity(els):
+def _segment_middles(n, from_end):
+    """Middle elements (indices into a segment of n elements) of stride-2 trapezoids:
+    1, 3, ... counted from the start, or n - 2, n - 4, ... counted from the end."""
+    if from_end:
+        return sorted(range(n - 2, 0, -2))
+    return list(range(1, n - 1, 2))
+
+
+def trapezoid_connectivity(els, breaks=None, tol=1e-9):
     """Default trapezoid patches: along each chain of force elements, patches
     (c[i-1], c[i], c[i+1]) centred on every other element (i = 1, 3, 5, ...),
     so consecutive patches share one element: [0, 1, 2], [2, 3, 4], ...
@@ -1426,14 +1440,80 @@ def trapezoid_connectivity(els):
     Every-element (fully overlapping) trapezoids are avoided: their alternating
     combination has zero force density at every element centre, so centre
     collocation cannot control it (a checkerboard near-null mode).
+
+    breaks : (k, 2) array of points, optional
+        Chain nodes where the stride restarts, e.g. where a fault crosses the chain
+        (`Mesh` finds these). The chain is split there; on each side the stride is
+        counted from the break, so collocation points flank it symmetrically (1.5
+        elements away) and the two trapezoids next to it share no element (the force
+        is zero at the break node). Without this, a stride that runs through a
+        crossing has a collocation point on one side of it only: the interface then
+        carries a spurious net force whose far field (log r in antiplane) pollutes
+        the whole solution (tasks.md; examples/antiplane/HeterogeneousElasticity_forces.py).
+        A segment between two breaks (or a closed loop with one break) with an even
+        number of elements can be flanked at 1.5 elements at one end only; the other
+        end gets 2.5.
+    tol : float
+        A node is a break if it is within tol times the largest element length of a
+        break point.
     """
+    breaks = np.zeros((0, 2)) if breaks is None else np.asarray(breaks, float).reshape(-1, 2)
+    L = 2 * np.max(np.asarray(els.half_lengths)) if len(els.x_centers) else 1.0
+
+    def is_break(x, y):
+        return len(breaks) > 0 and np.hypot(breaks[:, 0] - x, breaks[:, 1] - y).min() < tol * L
+
     rows = []
     for chain, closed in _chains(els):
         n = len(chain)
-        last = n if closed else n - 1
-        for i in range(1, last, 2):
-            rows.append((chain[i - 1], chain[i], chain[(i + 1) % n]))
+        # node k sits between chain[k - 1] and chain[k] (k = 1 .. n - 1; closed: k = 0 too)
+        def start_node(i):
+            e, prev = chain[i], chain[i - 1]
+            for xa, ya in ((els.x1[e], els.y1[e]), (els.x2[e], els.y2[e])):
+                for xb, yb in ((els.x1[prev], els.y1[prev]), (els.x2[prev], els.y2[prev])):
+                    if xa == xb and ya == yb:
+                        return float(xa), float(ya)
+            return None
+
+        cuts = [i for i in range(0 if closed else 1, n) if (pt := start_node(i)) is not None and is_break(*pt)]
+        if not cuts:
+            last = n if closed else n - 1
+            for i in range(1, last, 2):
+                rows.append((chain[i - 1], chain[i], chain[(i + 1) % n]))
+            continue
+        if closed:  # rotate so that the chain starts at a break, then treat it as open
+            chain = chain[cuts[0]:] + chain[: cuts[0]]
+            cuts = [(c - cuts[0]) % n for c in cuts]
+            bounds = sorted(set(cuts)) + [n]
+            open_start, open_end = True, True
+        else:
+            bounds = [0] + cuts + [n]
+            open_start, open_end = False, False
+        for j, (a, b) in enumerate(zip(bounds[:-1], bounds[1:])):
+            seg = chain[a:b]
+            break_start = j > 0 or open_start
+            break_end = j < len(bounds) - 2 or open_end
+            for m in _segment_middles(len(seg), from_end=break_end and not break_start):
+                rows.append((seg[m - 1], seg[m], seg[m + 1]))
     return np.array(rows, dtype=int).reshape(-1, 3)
+
+
+def fault_crossings(els, labels, tol=1e-9):
+    """Nodes of force-element chains that lie on a slip element: (k, 2) points.
+
+    A fault crossing a material interface (without a shared node) passes through
+    one of these. tol is relative to the length of the slip element."""
+    labels = np.asarray(labels).astype(str)
+    f, s = np.flatnonzero(labels == "f"), np.flatnonzero(labels == "s")
+    if len(f) == 0 or len(s) == 0:
+        return np.zeros((0, 2))
+    pts = np.unique(np.r_[np.c_[els.x1[f], els.y1[f]], np.c_[els.x2[f], els.y2[f]]], axis=0)
+    ax, ay = np.asarray(els.x1)[s], np.asarray(els.y1)[s]
+    dx, dy = np.asarray(els.x2)[s] - ax, np.asarray(els.y2)[s] - ay
+    L2 = dx**2 + dy**2
+    t = np.clip(((pts[:, :1] - ax) * dx + (pts[:, 1:] - ay) * dy) / L2, 0.0, 1.0)
+    d = np.hypot(pts[:, :1] - ax - t * dx, pts[:, 1:] - ay - t * dy)
+    return pts[(d < tol * np.sqrt(L2)).any(axis=1)]
 
 
 def _check_trapezoid_overlap(conn):
@@ -1814,7 +1894,8 @@ def values_on_elements(els, coefs, *, kind, geometry, n_eval=10, frame="global")
 # ----------------------------------------------------------------------------
 
 
-def _source_kernels(kind, x_obs, y_obs, els, geometry, mu, nu, basis, connectivity, use_numba):
+def _source_kernels(kind, x_obs, y_obs, els, geometry, mu, nu, basis, connectivity, use_numba,
+                    transform=None):
     _check_material(geometry, mu, nu)
     if basis not in _BASES[kind]:
         raise ValueError(f"basis {basis!r} is not available for {kind}; choose from {_BASES[kind]}")
@@ -1823,6 +1904,7 @@ def _source_kernels(kind, x_obs, y_obs, els, geometry, mu, nu, basis, connectivi
         connectivity = _check_connectivity(connectivity, n_els)
     elif connectivity is not None:
         raise ValueError(f"connectivity is only used with patch bases, not {basis!r}")
+    use_numba = _check_numba(use_numba)
     if use_numba and not _HAS_NUMBA_KERNEL[(geometry, kind)]:
         raise NotImplementedError(f"no numba kernel for {geometry} {kind}; use use_numba=False")
 
@@ -1831,7 +1913,7 @@ def _source_kernels(kind, x_obs, y_obs, els, geometry, mu, nu, basis, connectivi
         x_obs, y_obs, els, geometry=geometry, mu=mu, nu=nu, use_numba=use_numba
     )
     if basis != _ELEMENT_BASIS[kind]:
-        T = basis_transform(
+        T = transform if transform is not None else basis_transform(
             els, kind=kind, basis=basis, geometry=geometry, connectivity=connectivity
         )
         U, S = _apply_transform(U, S, T, geometry)
@@ -1866,7 +1948,7 @@ def _source_kernels(kind, x_obs, y_obs, els, geometry, mu, nu, basis, connectivi
 
 def get_slip_kernels(
     x_obs, y_obs, els, *, geometry, mu, nu=None, basis="quadratic", connectivity=None,
-    use_numba=False,
+    use_numba=None,
 ):
     """Displacement and stress kernels of slip sources on all elements of `els`.
 
@@ -1888,8 +1970,10 @@ def get_slip_kernels(
         the quadratic one); "hat": 1 per 3-element patch in `connectivity`.
     connectivity : (n_patches, 3) int array
         Element indices of each patch; only for basis="hat".
-    use_numba : bool
-        Use the numba-jitted kernel (antiplane only). The first call compiles.
+    use_numba : bool or None
+        None (default): the numba-jitted kernels when numba is installed (unless the
+        environment variable BEMCS_NUMBA=0); False: plain numpy, same formulas. The
+        first numba call compiles (a few seconds, cached on disk afterwards).
 
     Returns
     -------
@@ -1920,7 +2004,7 @@ def get_slip_kernels(
 
 def get_force_kernels(
     x_obs, y_obs, els, *, geometry, mu, nu=None, basis="linear", connectivity=None,
-    use_numba=False,
+    use_numba=None,
 ):
     """Displacement and stress kernels of line-force sources on all elements of `els`.
 
@@ -2015,7 +2099,11 @@ class Mesh:
         {"slip": (n, 3) int, "force": (m, 3) int} with *global* element
         indices. Optional for "hat" and "trapezoid"; defaults from the mesh
         topology: one-ring hats on every non-tip slip element, and trapezoids
-        centred on every other element along each chain of force elements.
+        centred on every other element along each chain of force elements. The
+        trapezoid stride restarts at every force-chain node that lies on a slip
+        element (a fault crossing an interface, `fault_crossings`), so that
+        collocation points flank the crossing on both sides; the points found are
+        in `mesh.fault_crossings`.
     bc_type : sequence of str (same type on all components), or (n_els, 2) with one
         type per component in plane strain (component 1/2: x/y for global types,
         t/n for local types). Boundary condition of each element, used by `solve`:
@@ -2090,6 +2178,13 @@ class Mesh:
         for k in set(basis) | set(connectivity):
             if k not in self.kinds:
                 raise ValueError(f"basis/connectivity given for {k!r} but no element is labelled {k[0]!r}")
+        # default trapezoids restart where a fault crosses a force chain (trapezoid_connectivity)
+        self.fault_crossings = fault_crossings(els, labels)
+        if (self.basis.get("force") == "trapezoid" and self.connectivity.get("force") is None
+                and len(self.fault_crossings)):
+            idx = np.flatnonzero(labels == "f")
+            sub = _subset_els(els, idx)
+            self.connectivity["force"] = idx[trapezoid_connectivity(sub, breaks=self.fault_crossings)]
         if bc_type is not None:
             for e in range(n_els):
                 kind = "slip" if labels[e] == "s" else "force"
@@ -2113,6 +2208,7 @@ class Mesh:
             mus.append(m)
         self.bc_type, self.bc_value = bc_type, bc_value
         self.mu_minus, self.mu_plus = mus
+        self._cache = {}  # per-type subsets and basis transforms (build a new Mesh after editing els)
 
     @classmethod
     def from_csv(cls, path, *, basis=None, connectivity=None, reorder=False, length_scale=1.0):
@@ -2166,7 +2262,24 @@ class Mesh:
         return np.flatnonzero(self.labels == kind[0])
 
     def subset(self, kind):
-        """(els, global indices, connectivity in subset indices) for one source type."""
+        """(els, global indices, connectivity in subset indices) for one source type.
+        Cached: build a new Mesh after changing its elements."""
+        key = ("subset", kind)
+        if key not in self._cache:
+            self._cache[key] = self._subset(kind)
+        return self._cache[key]
+
+    def transform(self, kind, *, geometry):
+        """Basis transform of one source type (`basis_transform`; the identity for the
+        element basis). Cached."""
+        key = ("transform", kind, geometry)
+        if key not in self._cache:
+            sub, _, conn = self.subset(kind)
+            self._cache[key] = basis_transform(sub, kind=kind, basis=self.basis[kind], geometry=geometry,
+                                               connectivity=conn)
+        return self._cache[key]
+
+    def _subset(self, kind):
         idx = self.elements(kind)
         sub = self.els if len(idx) == self.n_els else _subset_els(self.els, idx)
         conn = self.connectivity[kind]
@@ -2341,7 +2454,7 @@ class Mesh:
         return values_on_elements(sub, c, kind=kind, geometry=geometry, n_eval=n_eval, frame=frame)
 
 
-def get_kernels(x_obs, y_obs, mesh, *, geometry, mu, nu=None, use_numba=False):
+def get_kernels(x_obs, y_obs, mesh, *, geometry, mu, nu=None, use_numba=None):
     """Displacement and stress kernels of every source in a mesh.
 
     Parameters
@@ -2357,9 +2470,10 @@ def get_kernels(x_obs, y_obs, mesh, *, geometry, mu, nu=None, use_numba=False):
         d ln(mu)/dn on interface elements), not a kernel argument.
     nu : float
         Uniform Poisson's ratio; required for plane strain.
-    use_numba : bool
-        Use numba-jitted kernels where they exist (not plane-strain slip). The
-        first call compiles; default False runs the same code as plain Python.
+    use_numba : bool or None
+        None (default): the numba-jitted kernels when numba is installed (unless the
+        environment variable BEMCS_NUMBA=0); False: plain numpy, same formulas. The
+        first numba call compiles (a few seconds, cached on disk afterwards).
 
     Returns
     -------
@@ -2396,7 +2510,7 @@ def get_kernels(x_obs, y_obs, mesh, *, geometry, mu, nu=None, use_numba=False):
             "get_kernels takes a bemcs.Mesh; for one source type on bare els use "
             "get_slip_kernels / get_force_kernels"
         )
-    _check_numba(use_numba)
+    use_numba = _check_numba(use_numba)
     _check_material(geometry, mu, nu)
     for k in mesh.kinds:  # check every block before computing any
         if use_numba and not _HAS_NUMBA_KERNEL[(geometry, k)]:
@@ -2406,7 +2520,8 @@ def get_kernels(x_obs, y_obs, mesh, *, geometry, mu, nu=None, use_numba=False):
     for k in mesh.kinds:
         sub, idx, conn = mesh.subset(k)
         U, S, info = _source_kernels(
-            k, x_obs, y_obs, sub, geometry, mu, nu, mesh.basis[k], conn, use_numba
+            k, x_obs, y_obs, sub, geometry, mu, nu, mesh.basis[k], conn, use_numba,
+            transform=mesh.transform(k, geometry=geometry),
         )
         if mesh.basis[k] not in _PATCH_BASES or conn is None:
             info.src_index = idx[info.src_index]  # subset -> global element index
@@ -2457,12 +2572,6 @@ def interface_kappa(mu_minus, mu_plus, side):
     """
     mu_side = np.where(np.asarray(side) < 0, mu_minus, mu_plus)
     return mu_side * (1.0 / np.asarray(mu_minus) - 1.0 / np.asarray(mu_plus))
-
-
-def _patch_operator(sub, kind, basis, conn, geometry):
-    """Flattened basis transform T (element-basis dofs x patch/basis dofs)."""
-    T = basis_transform(sub, kind=kind, basis=basis, geometry=geometry, connectivity=conn)
-    return T if geometry == "antiplane" else T.reshape(T.shape[0] * 2, -1)
 
 
 class CollocationProximityWarning(UserWarning):
@@ -2567,14 +2676,14 @@ def _warn_close_collocation(mesh, colloc, tol):
     )
 
 
-def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False,
+def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None,
              proximity_tol=0.1):
     """Linear system A x = b for a mesh with boundary conditions (see `solve`).
 
     Returns (A, b, rows) with rows a dict of per-row arrays: element, component,
     type ("s", "u", "t", "t_local", "h" or "continuity").
     """
-    _check_numba(use_numba)
+    use_numba = _check_numba(use_numba)
     _check_material(geometry, mu, nu)
     if mesh.bc_type is None:
         raise ValueError("mesh has no bc_type")
@@ -2599,7 +2708,8 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False,
     centre_ops = {}
     for k, (sub, idx, conn, local) in parts.items():
         b = mesh.basis[k]
-        T = _patch_operator(sub, k, b, conn, geometry)
+        T = mesh.transform(k, geometry=geometry)
+        T = T if geometry == "antiplane" else T.reshape(T.shape[0] * 2, -1)
         if k == "slip":
             M, _ = slip_node_matrices(sub, geometry=geometry, reference="local")
             node_rows = lambda le: M[pe * (3 * le + 1) : pe * (3 * le + 2)]  # noqa: E731  centre node
@@ -2661,8 +2771,28 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False,
     return np.array(A), np.array(b), {k: np.array(v) for k, v in rows.items()}
 
 
-def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False, return_system=False,
-          return_info=False, proximity_tol=0.1):
+def _linear_solve(A, b, solver):
+    """x for A x = b. "auto": LU with a condition-number estimate for square systems,
+    least squares (minimum norm) when A is not square or is singular to working
+    precision (reciprocal condition < 1e-12, e.g. a rigid-body null space)."""
+    import scipy.linalg as sla
+
+    if solver not in ("auto", "lu", "lstsq"):
+        raise ValueError(f"solver must be 'auto', 'lu' or 'lstsq', got {solver!r}")
+    square = A.shape[0] == A.shape[1]
+    if solver == "lu" and not square:
+        raise ValueError(f"solver='lu' needs a square system, got {A.shape}")
+    if square and solver in ("auto", "lu"):
+        lu, piv = sla.lu_factor(A, check_finite=False)
+        anorm = np.abs(A).sum(axis=0).max()  # 1-norm
+        rcond, _ = sla.lapack.dgecon(lu, anorm, norm="1")
+        if solver == "lu" or rcond > 1e-12:
+            return sla.lu_solve((lu, piv), b, check_finite=False)
+    return np.linalg.lstsq(A, b, rcond=None)[0]
+
+
+def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None, return_system=False,
+          return_info=False, proximity_tol=0.1, solver="auto"):
     """Solve a BEM problem defined by a Mesh with boundary conditions.
 
     The formulation follows the mesh bases:
@@ -2695,6 +2825,12 @@ def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False, ret
         not a neighbour (e.g. one crack crossing another next to its element centre).
         The condition there is ambiguous or poorly resolved; see
         `close_collocation_points`. None disables the check.
+    solver : {"auto", "lu", "lstsq"}
+        "auto" (default): LU factorisation for square systems, with a condition
+        estimate; falls back to least squares (the minimum-norm solution) when the
+        system is singular to working precision (reciprocal condition < 1e-12), e.g.
+        a domain with traction conditions only (rigid-body null space). "lstsq"
+        always uses least squares (slower: SVD); "lu" never falls back.
 
     Returns
     -------
@@ -2707,8 +2843,9 @@ def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False, ret
     layout : if return_info=True, also the `CoefficientLayout` (what each entry of x
         means; `layout.split(x)` gives the slip and force blocks).
 
-    The system is solved by least squares, so rigid-body null spaces (e.g. a
-    domain with traction conditions only) give the minimum-norm solution.
+    The system is solved by LU when it is square and well posed, otherwise by least
+    squares, so rigid-body null spaces (e.g. a domain with traction conditions only)
+    give the minimum-norm solution (see `solver`).
     """
     A, b, rows = assemble(mesh, geometry=geometry, mu=mu, nu=nu, side=side, dr=dr, use_numba=use_numba,
                           proximity_tol=proximity_tol)
@@ -2720,7 +2857,7 @@ def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False, ret
             "fault lies on a collocation point. Use an offset dr > 0 (default 1e-9 element lengths) "
             "or move the node."
         )
-    x = np.linalg.lstsq(A, b, rcond=None)[0]
+    x = _linear_solve(A, b, solver)
     out = (x,)
     if return_system:
         out += ((A, b, rows),)
@@ -2734,7 +2871,7 @@ def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=False, ret
 # =============================================================================
 
 
-def evaluate_fields(mesh, x, x_obs, y_obs, *, geometry, mu, nu=None, mu_field=None, use_numba=False):
+def evaluate_fields(mesh, x, x_obs, y_obs, *, geometry, mu, nu=None, mu_field=None, use_numba=None):
     """Displacement and stress components at observation points from a solution x.
 
     Returns a dict: antiplane "u", "sxz", "syz"; plane strain "ux", "uy", "sxx",
@@ -2813,7 +2950,7 @@ def plot_mesh(mesh, ax=None, *, show_normals=True, show_moduli=True, offset=0.2,
 
 
 def plot_fields(mesh, x, *, geometry, mu, nu=None, xlim, ylim, n=(100, 100), components=None,
-                derived=None, mu_field=None, mask=None, cmap="RdBu_r", levels=21, use_numba=False):
+                derived=None, mu_field=None, mask=None, cmap="RdBu_r", levels=21, use_numba=None):
     """Evaluate and plot the fields of a solution x on a regular grid.
 
     Components default to all of the geometry (antiplane: uz, sxz, syz; plane

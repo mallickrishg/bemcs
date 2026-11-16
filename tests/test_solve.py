@@ -372,3 +372,65 @@ def test_plot_mesh_marks_every_modulus_used_by_the_solve():
     values = sorted(np.unique(np.concatenate([np.asarray(c.get_array()) for c in ax.collections])))
     assert values == [1.5, 3.0]
     plt.close("all")
+
+
+# ----------------------------------------------------------------------------
+# linear solver: LU for square well-posed systems, least squares otherwise
+# ----------------------------------------------------------------------------
+
+
+def _circle(n=24, r=1.0):
+    t = np.linspace(0, 2 * np.pi, n + 1)
+    els = bemcs.initialize_els()
+    # clockwise, so the normals point out of the disc
+    els.x1, els.y1 = r * np.cos(-t[:-1]), r * np.sin(-t[:-1])
+    els.x2, els.y2 = r * np.cos(-t[1:]), r * np.sin(-t[1:])
+    bemcs.standardize_els_geometry(els, reorder=False)
+    return els
+
+
+def test_auto_solver_matches_least_squares_on_a_well_posed_problem():
+    els = _circle()
+    n = len(els.x1)
+    # a fault-like loop with prescribed slip: square, well conditioned
+    mesh = bemcs.Mesh(els, bc_type=["s"] * n, bc_value=np.sin(np.arange(n)), mu_minus=1.0, mu_plus=1.0,
+                      basis={"slip": "hat"})
+    for geometry in ("antiplane", "planestrain"):
+        x_auto = bemcs.solve(mesh, geometry=geometry, mu=1.0, nu=0.25)
+        x_lsq = bemcs.solve(mesh, geometry=geometry, mu=1.0, nu=0.25, solver="lstsq")
+        np.testing.assert_allclose(x_auto, x_lsq, atol=1e-10 * np.abs(x_lsq).max())
+
+
+def test_auto_solver_falls_back_to_minimum_norm_for_a_null_space():
+    """A square system that is singular to working precision (a null space, as a
+    rigid-body mode gives): "auto" must return the minimum-norm least-squares solution,
+    not the arbitrary null-space component an LU solve would add."""
+    from bemcs.bemAssembly import _linear_solve
+
+    rng = np.random.default_rng(1)
+    U, _, Vt = np.linalg.svd(rng.normal(size=(40, 40)))
+    sv = np.r_[np.geomspace(10, 1, 39), 0.0]  # one exact null direction
+    A = (U * sv) @ Vt
+    b = A @ rng.normal(size=40)  # consistent right-hand side
+    x_auto = _linear_solve(A, b, "auto")
+    x_lsq = np.linalg.lstsq(A, b, rcond=None)[0]
+    np.testing.assert_allclose(x_auto, x_lsq, atol=1e-10)
+    assert abs(Vt[-1] @ x_auto) < 1e-10  # no null-space component
+    # well conditioned: LU, same answer
+    A2 = (U * np.geomspace(10, 1, 40)) @ Vt
+    np.testing.assert_allclose(_linear_solve(A2, b, "auto"), np.linalg.solve(A2, b), atol=1e-12)
+    with pytest.raises(ValueError, match="solver must be"):
+        _linear_solve(A2, b, "svd")
+    with pytest.raises(ValueError, match="square"):
+        _linear_solve(A2[:-1], b[:-1], "lu")
+
+
+def test_auto_solver_matches_least_squares_on_a_traction_loop():
+    els = _circle()
+    n = len(els.x1)
+    nrm = np.c_[els.x_normals, els.y_normals]
+    mesh = bemcs.Mesh(els, bc_type=["t"] * n, bc_value=nrm @ np.array([0.7, -0.3]), mu_minus=1.0,
+                      mu_plus=1.0, basis={"slip": "hat"})
+    x_auto = bemcs.solve(mesh, geometry="antiplane", mu=1.0)
+    x_lsq = bemcs.solve(mesh, geometry="antiplane", mu=1.0, solver="lstsq")
+    np.testing.assert_allclose(x_auto, x_lsq, atol=1e-10 * np.abs(x_lsq).max())

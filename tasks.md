@@ -542,14 +542,17 @@ Updated 2026-11-16. Details are in T1/T2 and the issue list (section 4).
     - both faults match with the symmetric layout;
     - the lopsided default layout produces the spurious symmetric part;
     - traction is continuous at the collocation points.
-- [ ] **Default force-trapezoid layout at fault crossings.** `trapezoid_connectivity` should restart the stride at any
-  interface node that lies on a fault, so that collocation points flank the crossing on both sides, as the
-  layered half-space example does by hand.
-  - **Why:** a layout that is lopsided about a crossing gives the interface a spurious net force, and its log-r far
-    field pollutes the whole solution, growing with the domain size. In the layered half-space example it is the
-    whole 1-2% error.
-  - **How:** detect force-chain nodes within a tolerance of a slip element (point-on-segment), then split the
-    stride there.
+- [x] ~~**Default force-trapezoid layout at fault crossings.**~~ done (2026-11-16):
+  - **Detection:** `fault_crossings(els, labels)` finds force-chain nodes that lie on a slip element.
+  - **Layout:** `trapezoid_connectivity(els, breaks=...)` splits each chain at those nodes and counts the stride
+    from the break on each side, so collocation points sit 1.5 elements from the crossing on both sides.
+  - **Parity limit:** a segment between two breaks with an even number of elements gets 1.5 at one end and 2.5 at
+    the other.
+  - **`Mesh`:** uses this for the default force connectivity when there are crossings (`mesh.fault_crossings`);
+    an explicit connectivity is kept as given.
+  - **Effect:** in the layered example the default now equals the hand-built symmetric layout.
+  - **Tests:** `tests/test_get_kernels.py` (breaks, two breaks, closed loop, Mesh default) and
+    `tests/test_heterogeneous.py`.
 - [ ] **Let the interface force density step where a fault crosses an interface.**
   - **Cause:** across a fault the normal traction on an interface steps in proportion to the slip gradient, and
     the step differs on the two sides (mu1 vs mu2). So the equivalent force density steps at the crossing.
@@ -655,6 +658,22 @@ Updated 2026-11-16. Details are in T1/T2 and the issue list (section 4).
     accuracy of the trapezoid interface condition between collocation points.
 - [x] Tidy up: `environment.yml` gains `mpmath` (the tests evaluate 50-digit references with it), `pkg_resources`
   is replaced, and library debug prints are removed.
+
+- [x] **Speed (2026-11-16): numba by default, LU solve, cached transforms.**
+  - **numba:** `use_numba=None` (the default everywhere) means numba when it is installed. `BEMCS_NUMBA=0` turns it
+    off globally; `use_numba=False` still forces numpy per call. Cold compile of all four drivers is about 7 s,
+    then they load from the on-disk cache in 0.14 s.
+  - **Tests:** run with numba by default; `pytest --no-numba` runs the numpy path and skips the backend
+    comparisons.
+  - **Solver:** `solve(..., solver="auto")` uses LU for square systems, with a LAPACK condition estimate. It falls
+    back to least squares (minimum norm) when the reciprocal condition is below 1e-12, e.g. for null spaces.
+    `"lstsq"` and `"lu"` force one or the other.
+  - **Caching:** `Mesh` caches its per-type subsets and basis transforms (`mesh.transform(kind, geometry=...)`).
+  - **Measured on the layered example mesh (1181 elements):**
+    - one solve: 6.0 s -> 1.1 s (least squares 3.3 s -> LU 0.06 s, same answer to 3e-11);
+    - field on a 60,000-point grid: 26 s -> 4.8 s;
+    - example: 93 s -> 25 s;
+    - test suite: 97 s -> 23 s.
 
 ### T4. Possible extensions (later)
 - [ ] Spatially varying `nu` (currently assumed uniform).

@@ -18,13 +18,11 @@
 # elements would put collocation points within 0.1 element lengths of the other line
 # (`CollocationProximityWarning`).
 #
-# **Force trapezoids are laid out symmetrically about the fault** (`force_connectivity`). The default
-# layout (stride 2 from one end of the interface) puts a collocation point on one side of the fault
-# crossing only; the problem is antisymmetric in x, and the lopsided layout gives the interface a
-# spurious net force whose far field grows like log r (it then dominates the error, and grows with L).
-# Restarting the stride at the crossing node (collocation points 1.5 elements away on both sides)
-# keeps the discrete problem antisymmetric. The CSV cannot hold this connectivity: pass it to
-# `bemcs.Mesh.from_csv(..., connectivity={"force": force_connectivity(table)})`.
+# **Force trapezoids at the crossing.** `bemcs.Mesh` restarts the trapezoid stride at every interface
+# node that lies on a fault (`mesh.fault_crossings`), so collocation points flank the crossing on both
+# sides. A stride running through the crossing would have a collocation point on one side only, and
+# the interface would carry a spurious net force whose far field grows like log r; the example shows
+# that case for comparison (`layered_mesh(..., lopsided=True)`).
 #
 # The fault does not get a node on the interface: it crosses it inside one of its elements, and the
 # interface has a node there. (A node shared by the fault and the interface would be treated as an
@@ -89,27 +87,24 @@ def mesh_table(D, h=H_EL, L=L):
 BASIS = {"slip": "quadratic", "force": "trapezoid"}
 
 
-def force_connectivity(table):
-    """Force trapezoids (global element indices) mirror-symmetric about the interface node at x = 0:
-    middle elements c + 1, c + 3, ... to the right and c - 2, c - 4, ... to the left, where c is the
-    interface element starting at x = 0. The two trapezoids next to the crossing share no element."""
-    iface = np.flatnonzero(np.asarray(table["BC_type"]) == "h")
-    x1 = np.asarray(table["x1"], float)[iface]
-    n, c = len(iface), int(np.flatnonzero(np.isclose(x1, 0.0))[0])
-    mids = sorted(list(range(c + 1, n - 1, 2)) + list(range(c - 2, 0, -2)))
-    return np.array([[iface[m - 1], iface[m], iface[m + 1]] for m in mids])
-
-
-def layered_mesh(D, h=H_EL, L=L, symmetric=True):
-    """The same mesh as a bemcs.Mesh, without going through a CSV file. symmetric=False uses the
-    default trapezoid layout (for comparison)."""
+def layered_mesh(D, h=H_EL, L=L, lopsided=False):
+    """The same mesh as a bemcs.Mesh, without going through a CSV file. lopsided=True replaces the
+    default force trapezoids by the plain stride-2 layout, which runs through the fault crossing
+    (for comparison only)."""
     t = mesh_table(D, h, L)
     els = bemcs.initialize_els()
     els.x1, els.y1, els.x2, els.y2 = (t[c].to_numpy(float) for c in ("x1", "z1", "x2", "z2"))
     bemcs.standardize_els_geometry(els, reorder=False)
     return bemcs.Mesh(els, bc_type=t["BC_type"].to_numpy(), bc_value=t["value"].to_numpy(),
                       mu_minus=t["mu_minus"].to_numpy(), mu_plus=t["mu_plus"].to_numpy(), basis=BASIS,
-                      connectivity={"force": force_connectivity(t)} if symmetric else None)
+                      connectivity={"force": _stride2_trapezoids(els, t)} if lopsided else None)
+
+
+def _stride2_trapezoids(els, t):
+    """Trapezoids every other element from one end of each force chain, ignoring crossings."""
+    idx = np.flatnonzero(t["BC_type"].to_numpy() == "h")
+    sub = bemcs.bemAssembly._subset_els(els, idx)
+    return idx[bemcs.bemAssembly.trapezoid_connectivity(sub)]
 
 
 # %% write the two mesh files
