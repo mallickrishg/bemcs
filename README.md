@@ -2,12 +2,23 @@
 
 [![DOI](https://zenodo.org/badge/651550360.svg)](https://zenodo.org/doi/10.5281/zenodo.10676299)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Python](https://img.shields.io/badge/python-≥3.9-blue.svg)
+![Python](https://img.shields.io/badge/python-≥3.12-blue.svg)
 [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue?logo=github)](https://mallickrishg.github.io/bemcs/)
 
-Solutions to various boundary value problems in linear elasticity using quadratic polynomial slip boundary elements that are continuous in slip gradient at element boundaries. We also offer linear polynomial force boundary elements or distributed forces as constant sources over triangular elements. 
+A two-dimensional boundary element method (antiplane and plane strain) built on **continuous sources**: quadratic
+slip elements whose slip and slip gradient are continuous across nodes, and linear line forces. Continuous slip
+removes the stress singularities at element ends that constant-slip elements have, and line forces on material
+interfaces model **piecewise-uniform heterogeneous media** with the kernels of a homogeneous reference medium.
+
+- Faults and cracks with prescribed slip, displacement or traction, in global or local components, including kinks
+  and triple junctions.
+- Material interfaces between regions of different shear modulus, free surfaces, and fault crossings.
+- Remote (background) stress fields; true stresses in every material.
+- Meshes in Python or from CSV files, with optional connectivity files; numba-accelerated kernels.
 
 >  *Developed for geophysical and tectonics modeling, with a focus on earthquake cycle deformation.*
+
+📘 **Documentation: [https://mallickrishg.github.io/bemcs/](https://mallickrishg.github.io/bemcs/)**
 
 ### Where singularities cancel, and where they don't
 
@@ -30,15 +41,38 @@ numerical noise.
 ---
 # Getting started
 
-To set up a development conda environment, run the following commands in the `bemcs` folder.
+`bemcs` is not on PyPI. Clone the repository and create the conda environment, which also installs `bemcs` in
+editable mode:
 ```
+git clone https://github.com/mallickrishg/bemcs.git
+cd bemcs
 conda config --prepend channels conda-forge
 conda env create
 conda activate bemcs
-pip install --no-use-pep517 -e .
 ```
 
-Then follow 👉 [**Getting started**](https://mallickrishg.github.io/bemcs/getting_started.html) in the documentation: a first solve in a few lines.
+A crack under uniform shear traction, solved and plotted:
+```python
+import numpy as np
+import bemcs
+
+n = 20
+xs = np.linspace(-1.0, 1.0, n + 1)
+els = bemcs.initialize_els()
+els.x1, els.y1, els.x2, els.y2 = xs[:-1], np.zeros(n), xs[1:], np.zeros(n)
+bemcs.standardize_els_geometry(els, reorder=False)
+
+mesh = bemcs.Mesh(els, basis={"slip": "hat"}, bc_type=["t_local"] * n,
+                  bc_value=np.tile([1.0, 0.0], (n, 1)), mu_minus=np.ones(n), mu_plus=np.ones(n))
+x = bemcs.solve(mesh, geometry="planestrain", nu=0.25)
+fig, axes, fields = bemcs.plot_fields(mesh, x, geometry="planestrain", nu=0.25,
+                                      xlim=(-2, 2), ylim=(-2, 2), components=["sxy"])
+```
+
+Then read 👉 [**Getting started**](https://mallickrishg.github.io/bemcs/getting_started.html) and the [user guide](https://mallickrishg.github.io/bemcs/user_guide/index.html).
+Worked examples are in `examples/antiplane` and `examples/planestrain`.
+
+Run the tests with `pytest` (`pytest --no-numba` for the plain-numpy kernels).
 
 ---
 
@@ -67,8 +101,11 @@ interface.
 
 | Module                    | Description                                             |
 | ------------------------- | ------------------------------------------------------- |
-| `bemcs.bemcs`             | Core classes and functions for BEM modeling             |
-| `bemcs.bemAssembly`       | Helper routines for assembling system matrices          |
+| `bemcs.bemAssembly`       | `Mesh`, `solve`, field evaluation and plotting, bases, kernels and assembly |
+| `bemcs.bemcs`             | Element geometry, closed-form element kernels, point sources                |
+
+The public functions are re-exported at the top level (`bemcs.Mesh`, `bemcs.solve`, ...); see the
+[API reference](https://mallickrishg.github.io/bemcs/api.html).
 
 ---
 

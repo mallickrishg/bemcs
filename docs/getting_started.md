@@ -11,11 +11,11 @@ cd bemcs
 conda config --prepend channels conda-forge
 conda env create
 conda activate bemcs
-pip install -e .
 ```
 
-[numba](https://numba.pydata.org) is optional. With it installed, pass `use_numba=True` to the kernel functions
-and `bemcs.solve` for faster kernel evaluation on large meshes.
+The environment installs `bemcs` itself in editable mode (`pip install -e .`), so changes to the source take effect
+without reinstalling. [numba](https://numba.pydata.org) is included and used by default for the kernels; pass
+`use_numba=False` (or set `BEMCS_NUMBA=0`) to use plain numpy.
 
 ## A first solve
 
