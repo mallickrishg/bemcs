@@ -12,8 +12,6 @@ float64 truncation in the log/atan terms used to blow up and inflate
 condition numbers.
 """
 
-import inspect
-import textwrap
 
 import mpmath as mp
 import numpy as np
@@ -21,28 +19,15 @@ import pytest
 
 import bemcs
 import bemcs.bemAssembly as GF
+from meshes import kinked_chain  # noqa: E402
+from reference_kernels import mp_version  # noqa: E402
 
 mp.mp.dps = 50
 A, NU, MU = 0.7, 0.27, 1.3
 
 
-class _MpNumpy:
-    pi = mp.pi
-    log = staticmethod(mp.log)
-    arctan = staticmethod(mp.atan)
-    sign = staticmethod(mp.sign)
-
-
-def _mp_version(jitted):
-    src = textwrap.dedent(inspect.getsource(jitted.py_func))
-    src = "\n".join(l for l in src.splitlines() if not l.startswith("@"))
-    ns = {"np": _MpNumpy}
-    exec(src, ns)
-    return ns[jitted.py_func.__name__]
-
-
-_SLIP_MP = _mp_version(GF._quadratic_slip_f)
-_FORCE_MP = _mp_version(GF._linear_force_g)
+_SLIP_MP = mp_version(GF._quadratic_slip_f)
+_FORCE_MP = mp_version(GF._linear_force_g)
 
 
 def _nonzero(v):
@@ -111,21 +96,6 @@ def test_force_formula_precision_near_endpoint(d, tol, angle):
 # ----------------------------------------------------------------------------
 
 
-def _chain(kink_deg):
-    """5 unit elements; a kink of kink_deg at the node shared by elements 1 and 2."""
-    k = np.deg2rad(kink_deg)
-    pts = [np.array([-2.0, 0.0]), np.array([-1.0, 0.0]), np.array([0.0, 0.0])]
-    for _ in range(3):
-        pts.append(pts[-1] + np.array([np.cos(k), np.sin(k)]))
-    els = bemcs.initialize_els()
-    els.x1 = np.array([p[0] for p in pts[:-1]])
-    els.y1 = np.array([p[1] for p in pts[:-1]])
-    els.x2 = np.array([p[0] for p in pts[1:]])
-    els.y2 = np.array([p[1] for p in pts[1:]])
-    bemcs.standardize_els_geometry(els, reorder=False)
-    return els
-
-
 def _hat_stress_mp(els, T, xo, yo):
     """sxx, syy, sxy of sum_j T[j, l] * kernel_j at one point, in 50 digits."""
     out = [mp.mpf(0)] * 3
@@ -157,7 +127,7 @@ def _hat_stress_mp(els, T, xo, yo):
 @pytest.mark.parametrize("kink_deg", [0.0, 30.0])
 @pytest.mark.parametrize("d", [1e-2, 1e-4, 1e-6, 1e-8])
 def test_hat_stress_near_shared_node_has_no_float64_blowup(kink_deg, d):
-    els = _chain(kink_deg)
+    els = kinked_chain(kink_deg)
     T = GF.hat_coefficients(els, np.array([[1, 2, 3]]), geometry="planestrain")[:, :, 0, 0]
     node = np.array([els.x2[1], els.y2[1]])
     n = np.array([els.x_normals[1] + els.x_normals[2], els.y_normals[1] + els.y_normals[2]])

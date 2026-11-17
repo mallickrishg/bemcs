@@ -362,3 +362,30 @@ def quadratic_slip_by_dislocations(els, e, xo, yo, node, direction, geometry, mu
     u = np.einsum("ij,j...->i...", R, np.array([ux, uy]))
     Sg = np.einsum("ij,jk...,lk->il...", R, S, R)
     return np.array([u[0], u[1], Sg[0, 0], Sg[1, 1], Sg[0, 1]])
+
+
+# ---------------------------------------------------------------------------
+# arbitrary-precision versions of the generated kernel formulas (mpmath)
+# ---------------------------------------------------------------------------
+
+
+class _MpNumpy:
+    import mpmath as _mp
+
+    pi = _mp.pi
+    log = staticmethod(_mp.log)
+    arctan = staticmethod(_mp.atan)
+    sign = staticmethod(_mp.sign)
+
+
+def mp_version(jitted):
+    """The same formula as a jitted bemAssembly kernel (`GF._quadratic_slip_f`,
+    `GF._linear_force_g`), evaluated with mpmath (set mpmath.mp.dps in the caller)."""
+    import inspect
+    import textwrap
+
+    src = textwrap.dedent(inspect.getsource(jitted.py_func))
+    src = "\n".join(l for l in src.splitlines() if not l.startswith("@"))
+    ns = {"np": _MpNumpy}
+    exec(src, ns)
+    return ns[jitted.py_func.__name__]

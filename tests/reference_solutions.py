@@ -224,3 +224,82 @@ def edge_dislocation_bimaterial_displacement(x, y, x0, y0, b, mu1, mu2, nu):
         phi, dphi, _, psi, _ = _bimat_potentials(z[mask], z0, A, c, upper)
         u[mask] = (kappa * phi - z[mask] * np.conj(dphi) - np.conj(psi)) / (2 * mu)
     return np.array([u.real, u.imag])
+
+
+# =============================================================================
+# Antiplane: strike-slip fault in a layered half-space and near a vertical contact
+# (Rybicki 1971), with the tapered slip cos^2(pi d / 2D) from the surface to depth D
+# =============================================================================
+
+
+def layered_image_series(x, D, H, mu1, mu2, n_quad=300):
+    """Surface displacement of the tapered fault (vertical, from the surface to depth D) in a
+    layer (mu1, thickness H) over a half-space (mu2), Rybicki's image series (Segall 2010 ch. 5):
+    unit slip from 0 to d gives B(d) + sum k^m [B(2mH + d) - B(2mH - d)] for d < H and
+    (1 - k) sum k^m B(d + 2mH) for d > H, B = atan(d / x) / pi, k = (mu1 - mu2)/(mu1 + mu2);
+    the taper is a superposition with weights -s'(d)."""
+    x = np.asarray(x, float)
+    k = (mu1 - mu2) / (mu1 + mu2)
+    m_max = 1 if k == 0 else int(np.ceil(np.log(1e-17) / np.log(abs(k)))) + 1
+
+    def B(d):
+        return np.arctan(d / x) / np.pi
+
+    def G(d):
+        if d < H:
+            return B(d) + sum(k**m * (B(2 * m * H + d) - B(2 * m * H - d)) for m in range(1, m_max))
+        return (1 - k) * sum(k**m * B(d + 2 * m * H) for m in range(m_max))
+
+    u = np.zeros_like(x)
+    g, w = np.polynomial.legendre.leggauss(n_quad)
+    edges = [0.0, D] if D < H else [0.0, H, D]
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        for d, wd in zip(0.5 * (lo + hi) + 0.5 * (hi - lo) * g, 0.5 * (hi - lo) * w):
+            u += wd * 0.5 * np.pi / D * np.sin(np.pi * d / D) * G(d)
+    return u
+
+
+def halfspace_fault_displacement(x, y, D, n_quad=300):
+    """Homogeneous half-space displacement of the tapered fault at x = 0 (jump +s across
+    x = 0, the fault elements' -n side being x < 0): fault plus free-surface image."""
+    g, w = np.polynomial.legendre.leggauss(n_quad)
+    d, wd = 0.5 * D * (g + 1), 0.5 * D * w
+    neg_ds = 0.5 * np.pi / D * np.sin(np.pi * d / D)
+    yp = -np.asarray(y, float)  # depth
+    return sum(wi * si * (np.arctan((di - yp) / x) + np.arctan((di + yp) / x)) / (2 * np.pi)
+               for di, wi, si in zip(d, wd, neg_ds))
+
+
+def contact_displacement(x, dist, y, D, mu1, mu2):
+    """The tapered fault at x = 0 near a vertical contact at x = dist (mu1 for x < dist, mu2
+    beyond): u = S(x) + k S(2 dist - x) for x < dist, (1 + k) S(x) beyond, S the half-space
+    field (`halfspace_fault_displacement`), k = (mu1 - mu2)/(mu1 + mu2). The contact mirror
+    commutes with the surface mirror, so there is no series. dist = 0: a bimaterial fault."""
+    k = (mu1 - mu2) / (mu1 + mu2)
+
+    def S(xx):
+        return halfspace_fault_displacement(xx, y, D)
+
+    return np.where(x < dist, S(x) + k * S(2 * dist - x), (1 + k) * S(x))
+
+
+# =============================================================================
+# Plane strain: a fault near a bimaterial interface, integrated over its slip profile
+# =============================================================================
+
+
+def dundurs_fault_stress(X, Y, centre, angle, half, slip, mu1, mu2, nu, n_quad=100):
+    """True stresses of a straight fault below the interface y = 0 (mu1 below, mu2 above):
+    slip cos^2(pi xi / 2 half) e along the fault (e = slip in the fault's local (t, n) frame)
+    as a dislocation density -s'(xi) e (`edge_dislocation_bimaterial`)."""
+    t = np.array([np.cos(angle), np.sin(angle)])
+    n = np.array([-t[1], t[0]])
+    e = slip[0] * t + slip[1] * n
+    g, w = np.polynomial.legendre.leggauss(n_quad)
+    out = 0.0
+    for gi, wi in zip(g, w):
+        xi = half * gi
+        ds = -(np.pi / (2 * half)) * np.sin(np.pi * xi / half)
+        p = centre + xi * t
+        out = out + half * wi * edge_dislocation_bimaterial(X, Y, p[0], p[1], tuple(-ds * e), mu1, mu2, nu)[0]
+    return out

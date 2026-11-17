@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 
 import bemcs
-from test_solve import _fault_and_interface
+from meshes import fault_and_interface
 
 NU = 0.27
 POINTS = (np.array([0.7, -0.5, 0.3, -2.0, 1.2]), np.array([-1.0, -0.3, -2.4, -2.5, -0.05]))
@@ -42,7 +42,7 @@ def _stresses(mesh, x, geometry):
 
 
 def _limit_mismatch(geometry, ratio, n_int):
-    els, n_f, n_i = _fault_and_interface(L=10.0, n_int=n_int)
+    els, n_f, n_i = fault_and_interface(L=10.0, n_int=n_int)
     value = _slip_bc(n_f, n_i, geometry)
     het = bemcs.Mesh(
         els, bc_type=["s"] * n_f + ["h"] * n_i, bc_value=value, mu_minus=1.0,
@@ -70,7 +70,7 @@ def test_high_contrast_limits_match_rigid_and_free_boundaries(geometry, limit, r
 
 
 def _bimaterial(geometry, mu_below, mu_above, *, reverse_interface=False, mirror=False, n_int=200):
-    els, n_f, n_i = _fault_and_interface(L=10.0, n_int=n_int)
+    els, n_f, n_i = fault_and_interface(L=10.0, n_int=n_int)
     x1, y1, x2, y2 = (np.array(getattr(els, k)) for k in ("x1", "y1", "x2", "y2"))
     if reverse_interface:  # interface elements run right to left: normal points down
         sl = slice(n_f, n_f + n_i)

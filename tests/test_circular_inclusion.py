@@ -22,24 +22,11 @@ from reference_solutions import (
     circular_inclusion_planestrain,
     inclusion_stress_closed_form,
 )
-
-A, NU, MU_M = 1.0, 0.27, 1.0
-STRESS = (0.6, -0.3, 0.45)  # remote true stress in the matrix (sxx, syy, sxy)
-
-
-def _inclusion_mesh(n, mu_i):
-    """n elements, clockwise (unit normal out of the inclusion: -n side = inclusion),
-    closed exactly (the last node is the first)."""
-    t = np.linspace(0, 2 * np.pi, n + 1)[:-1]
-    els = bemcs.initialize_els()
-    els.x1, els.y1 = A * np.cos(-t), A * np.sin(-t)
-    els.x2, els.y2 = np.roll(els.x1, -1), np.roll(els.y1, -1)
-    bemcs.standardize_els_geometry(els, reorder=False)
-    return bemcs.Mesh(els, bc_type=["h"] * n, mu_minus=mu_i, mu_plus=MU_M, basis={"force": "trapezoid"})
-
+from meshes import INCLUSION_A as A, INCLUSION_MU_M as MU_M, INCLUSION_NU as NU  # noqa: E402
+from meshes import INCLUSION_STRESS as STRESS, inclusion_mesh, ring  # noqa: E402
 
 def _bem_fields(n, mu_i, X, Y):
-    mesh = _inclusion_mesh(n, mu_i)
+    mesh = inclusion_mesh(n, mu_i)
     bg = bemcs.uniform_background(STRESS, geometry="planestrain", mu=1.0, nu=NU, mu_medium=MU_M)
     x = bemcs.solve(mesh, geometry="planestrain", mu=1.0, nu=NU, background=bg)
 
@@ -51,11 +38,6 @@ def _bem_fields(n, mu_i, X, Y):
     return np.array([f[k] for k in ("ux", "uy", "sxx", "syy", "sxy")])
 
 
-def _ring(r, n=12):
-    th = np.linspace(0.1, 2 * np.pi, n + 1)[:-1]
-    return r * np.cos(th), r * np.sin(th)
-
-
 # ----------------------------------------------------------------------------
 # the reference itself
 # ----------------------------------------------------------------------------
@@ -65,7 +47,7 @@ def _ring(r, n=12):
 def test_exact_solution_is_continuous_and_matches_the_closed_form(mu_i):
     _, residual = circular_inclusion_constants(A, STRESS, MU_M, mu_i, NU)
     assert residual < 1e-12  # the potentials satisfy continuity exactly on the circle
-    X, Y = _ring(0.5)
+    X, Y = ring(0.5)
     f = circular_inclusion_planestrain(X, Y, A, STRESS, MU_M, mu_i, NU)
     np.testing.assert_allclose(f[2:], np.repeat(inclusion_stress_closed_form(STRESS, MU_M, mu_i, NU)[:, None],
                                                 len(X), axis=1), rtol=1e-12)
@@ -104,8 +86,8 @@ def test_exact_solution_gives_kirsch_for_a_hole_and_is_elastic():
 def test_circular_inclusion_matches_the_exact_solution(mu_i, tol_in, tol_out):
     """128 elements: stresses inside (r <= 0.6 a) and outside (r >= 1.5 a), and
     displacements, against the exact solution."""
-    X, Y = np.r_[_ring(0.0, 1)[0], _ring(0.3)[0], _ring(0.6)[0], _ring(1.5)[0], _ring(2.5)[0], _ring(5.0)[0]], \
-        np.r_[_ring(0.0, 1)[1], _ring(0.3)[1], _ring(0.6)[1], _ring(1.5)[1], _ring(2.5)[1], _ring(5.0)[1]]
+    X, Y = np.r_[ring(0.0, 1)[0], ring(0.3)[0], ring(0.6)[0], ring(1.5)[0], ring(2.5)[0], ring(5.0)[0]], \
+        np.r_[ring(0.0, 1)[1], ring(0.3)[1], ring(0.6)[1], ring(1.5)[1], ring(2.5)[1], ring(5.0)[1]]
     got = _bem_fields(128, mu_i, X, Y)
     ref = circular_inclusion_planestrain(X, Y, A, STRESS, MU_M, mu_i, NU)
     inside = np.hypot(X, Y) < A
@@ -115,7 +97,7 @@ def test_circular_inclusion_matches_the_exact_solution(mu_i, tol_in, tol_out):
 
 
 def test_circular_inclusion_converges():
-    X, Y = np.r_[0.0, _ring(2.5)[0]], np.r_[0.0, _ring(2.5)[1]]
+    X, Y = np.r_[0.0, ring(2.5)[0]], np.r_[0.0, ring(2.5)[1]]
     ref = circular_inclusion_planestrain(X, Y, A, STRESS, MU_M, 4.0, NU)
     err = [np.abs(_bem_fields(n, 4.0, X, Y)[2:] - ref[2:]).max() for n in (32, 64, 128)]
     assert err[0] > err[1] > err[2]
@@ -194,4 +176,4 @@ def test_nearly_closed_loop_warns_and_degrades():
     # an exactly closed loop does not warn
     with warnings.catch_warnings():
         warnings.simplefilter("error", bemcs.MeshGapWarning)
-        _inclusion_mesh(32, 4.0)
+        inclusion_mesh(32, 4.0)

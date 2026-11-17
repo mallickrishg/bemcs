@@ -23,11 +23,9 @@ import pytest
 import bemcs
 import bemcs.bemAssembly as GF
 from reference_solutions import edge_dislocation_bimaterial
-
-NU, MU1 = 0.25, 1.0
-SLIP = (1.0, 0.5)  # local (t, n) slip amplitudes
-XC, A_LO, A_HI = 0.15, 0.7, 0.5  # crossing at (XC, 0); the fault runs from s = -A_LO to A_HI
-
+from meshes import CROSSING_A_HI as A_HI, CROSSING_A_LO as A_LO, CROSSING_MU1 as MU1  # noqa: E402
+from meshes import CROSSING_NU as NU, CROSSING_SLIP as SLIP, CROSSING_XC as XC  # noqa: E402
+from meshes import crossing_frame, crossing_mesh, crossing_profile, graded  # noqa: E402
 
 def _dislocation(X, Y, x0, y0, b, mu1, mu2):
     """Stresses of a dislocation on either side of the interface (mu1 below, mu2 above)."""
@@ -38,18 +36,8 @@ def _dislocation(X, Y, x0, y0, b, mu1, mu2):
     return np.array([s[0], s[1], -s[2]])
 
 
-def _frame(dip):
-    d = np.deg2rad(dip)
-    return np.array([XC, 0.0]), np.array([np.cos(d), np.sin(d)])
-
-
-def _profile(s):
-    c, a = 0.5 * (A_HI - A_LO), 0.5 * (A_HI + A_LO)
-    return np.cos(0.5 * np.pi * (s - c) / a) ** 2, -(np.pi / (2 * a)) * np.sin(np.pi * (s - c) / a)
-
-
 def _exact_stress(X, Y, dip, mu2, n_quad=60):
-    C, t = _frame(dip)
+    C, t = crossing_frame(dip)
     e = SLIP[0] * t + SLIP[1] * np.array([-t[1], t[0]])
     g, w = np.polynomial.legendre.leggauss(n_quad)
     out = 0.0
@@ -57,51 +45,12 @@ def _exact_stress(X, Y, dip, mu2, n_quad=60):
         for gi, wi in zip(g, w):
             s = 0.5 * (lo + hi) + 0.5 * (hi - lo) * gi
             p = C + s * t
-            out = out + 0.5 * (hi - lo) * wi * _dislocation(X, Y, p[0], p[1], tuple(-_profile(s)[1] * e), MU1, mu2)
+            out = out + 0.5 * (hi - lo) * wi * _dislocation(X, Y, p[0], p[1], tuple(-crossing_profile(s)[1] * e), MU1, mu2)
     return out
 
 
-def _graded(h, L=300.0, flat=2.0, ratio=1.08, h_max=5.0):
-    r, step = list(np.arange(0.0, flat + 1e-12, h)), h
-    while r[-1] < L:
-        r.append(r[-1] + step)
-        step = min(step * ratio, h_max)
-    r = np.round(np.array(r), 12)
-    return XC + np.r_[-r[:0:-1], r]
-
-
-def _mesh(dip, h, mu2, force="trapezoid", half_hats=True):
-    """Fault ("s", hats) through the interface ("h", spacing h near the fault, log-spaced to
-    300); the crossing is a node of both. Trapezoids from `split_force_trapezoids`;
-    half_hats=False drops the half-hats at the crossing (force tapered to zero there)."""
-    C, t = _frame(dip)
-    s = np.r_[np.linspace(-A_LO, 0, int(round(A_LO / h)) + 1)[:-1], np.linspace(0, A_HI, int(round(A_HI / h)) + 1)]
-    P = C + s[:, None] * t
-    P[s == 0] = C
-    xs = _graded(h)
-    n_f, n_i = len(s) - 1, len(xs) - 1
-    els = bemcs.initialize_els()
-    els.x1, els.y1 = np.r_[P[:-1, 0], xs[:-1]], np.r_[P[:-1, 1], np.zeros(n_i)]
-    els.x2, els.y2 = np.r_[P[1:, 0], xs[1:]], np.r_[P[1:, 1], np.zeros(n_i)]
-    bemcs.standardize_els_geometry(els, reorder=False)
-    sc = 0.5 * (s[:-1] + s[1:])
-    prof = _profile(sc)[0]
-    mu_f = np.where(sc > 0, mu2, MU1)
-    kw = dict(bc_type=["s"] * n_f + ["h"] * n_i,
-              bc_value=np.r_[np.c_[SLIP[0] * prof, SLIP[1] * prof], np.zeros((n_i, 2))],
-              mu_minus=np.r_[mu_f, np.full(n_i, MU1)], mu_plus=np.r_[mu_f, np.full(n_i, mu2)],
-              basis={"slip": "hat", "force": force})
-    mesh = bemcs.Mesh(els, **kw)
-    if force == "trapezoid":
-        conn = mesh.split_force_trapezoids()
-        if not half_hats:
-            conn = conn[~((conn[:, 0] == conn[:, 1]) & (conn[:, 1] == conn[:, 2]))]
-        mesh = bemcs.Mesh(els, connectivity={"force": conn}, **kw)
-    return mesh
-
-
 def _points(dip):
-    C, t = _frame(dip)
+    C, t = crossing_frame(dip)
     th = np.linspace(0, 2 * np.pi, 16, endpoint=False)
     P = np.r_[C + 0.9 * np.c_[np.cos(th), np.sin(th)], C + 0.4 * np.c_[np.cos(th), np.sin(th)],
               np.c_[np.linspace(-2, 2, 9), np.full(9, 0.5)], np.c_[np.linspace(-2, 2, 9), np.full(9, -0.5)]]
@@ -114,7 +63,7 @@ def _points(dip):
 def _error(dip, h, mu2, **kw):
     X, Y = _points(dip)
     ref = _exact_stress(X, Y, dip, mu2)
-    mesh = _mesh(dip, h, mu2, **kw)
+    mesh = crossing_mesh(dip, h, mu2, **kw)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", bemcs.TrapezoidCrossingWarning)
         x = bemcs.solve(mesh, geometry="planestrain", mu=1.0, nu=NU)
@@ -158,7 +107,7 @@ def test_reference_constants_stay_accurate_next_to_the_interface():
 
 
 def test_split_layout_has_a_half_hat_on_each_side_of_the_crossing():
-    mesh = _mesh(60, 0.1, 4.0)
+    mesh = crossing_mesh(60, 0.1, 4.0)
     conn = mesh.connectivity["force"]
     half = conn[(conn[:, 0] == conn[:, 1]) & (conn[:, 1] == conn[:, 2]), 0]
     assert len(half) == 2
@@ -214,11 +163,11 @@ def test_tapering_to_zero_at_the_crossing_is_much_worse():
 
 
 def _refined(dip, h, mu2, M):
-    """Like `_mesh`, with force elements h / M within |x - XC| < 1."""
-    base = _mesh(dip, h, mu2, force="nodal")
+    """Like `crossing_mesh`, with force elements h / M within |x - XC| < 1."""
+    base = crossing_mesh(dip, h, mu2, force="nodal")
     els0, nf = base.els, len(base.elements("slip"))
     r = np.round(np.arange(0, 1.0 + 1e-12, h / M), 12)
-    tail = _graded(h) - XC
+    tail = graded(h)
     r = np.r_[r, tail[tail > 1.0 + 1e-9]]
     xs = XC + np.r_[-r[:0:-1], r]
     els = bemcs.initialize_els()
@@ -234,8 +183,8 @@ def _refined(dip, h, mu2, M):
 
 def test_solve_recommends_refinement_at_a_crossing():
     with pytest.warns(bemcs.CrossingRefinementWarning, match=r"\(0.15, 0\) \[force 0.1, fault 0.1\]"):
-        bemcs.solve(_mesh(60, 0.1, 4.0), geometry="planestrain", mu=1.0, nu=NU)
+        bemcs.solve(crossing_mesh(60, 0.1, 4.0), geometry="planestrain", mu=1.0, nu=NU)
     with warnings.catch_warnings():
         warnings.simplefilter("error", bemcs.CrossingRefinementWarning)
-        bemcs.solve(_mesh(60, 0.1, 1.0), geometry="planestrain", mu=1.0, nu=NU)  # no contrast
+        bemcs.solve(crossing_mesh(60, 0.1, 1.0), geometry="planestrain", mu=1.0, nu=NU)  # no contrast
         bemcs.solve(_refined(60, 0.1, 4.0, 4), geometry="planestrain", mu=1.0, nu=NU)  # refined

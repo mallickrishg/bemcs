@@ -26,10 +26,16 @@ from reference_solutions import (
     edge_dislocation_bimaterial_constants,
     edge_dislocation_bimaterial_displacement,
 )
+from meshes import DUNDURS_MU1 as MU1, DUNDURS_NU as NU, DUNDURS_SLIP as SLIP  # noqa: E402
+from meshes import dundurs_fault, dundurs_mesh, dundurs_points  # noqa: E402
+from reference_solutions import dundurs_fault_stress  # noqa: E402
 
-NU, MU1 = 0.25, 1.0
+
+def _exact_stress(X, Y, case, mu2, n_quad=100):
+    c, ang, a = dundurs_fault(case)
+    return dundurs_fault_stress(X, Y, c, ang, a, SLIP, MU1, mu2, NU, n_quad)
+
 X0, Y0 = 0.3, -0.8
-SLIP = (1.0, 0.5)  # local (t, n) slip amplitudes on the fault
 
 
 # ----------------------------------------------------------------------------
@@ -91,70 +97,10 @@ def test_dislocation_reference_limits_free_surface_and_rigid_boundary():
 # ----------------------------------------------------------------------------
 
 
-def _fault(case):
-    if case == "horizontal":
-        return np.array([0.0, -0.6]), 0.0, 0.5  # centre, angle, half-length
-    return np.array([0.0, -0.9]), np.deg2rad(40.0), 0.5
-
-
-def _exact_stress(X, Y, case, mu2, n_quad=100):
-    """Slip cos^2(pi xi / 2a) e (e = SLIP in the fault's local frame) as a dislocation density
-    -s'(xi) e along the fault."""
-    c, ang, a = _fault(case)
-    t = np.array([np.cos(ang), np.sin(ang)])
-    n = np.array([-t[1], t[0]])
-    e = SLIP[0] * t + SLIP[1] * n
-    g, w = np.polynomial.legendre.leggauss(n_quad)
-    out = 0.0
-    for gi, wi in zip(g, w):
-        xi = a * gi
-        ds = -(np.pi / (2 * a)) * np.sin(np.pi * xi / a)
-        p = c + xi * t
-        out = out + a * wi * edge_dislocation_bimaterial(X, Y, p[0], p[1], tuple(-ds * e), MU1, mu2, NU)[0]
-    return out
-
-
-def _graded(h, L=300.0, flat=2.0, ratio=1.08, h_max=5.0):
-    r, step = list(np.arange(0.0, flat + 1e-12, h)), h
-    while r[-1] < L:
-        r.append(r[-1] + step)
-        step = min(step * ratio, h_max)
-    r = np.array(r)
-    return np.r_[-r[:0:-1], r]
-
-
-def _mesh(case, h, mu2):
-    c, ang, a = _fault(case)
-    t = np.array([np.cos(ang), np.sin(ang)])
-    n_f = int(round(2 * a / h))
-    xi = np.linspace(-a, a, n_f + 1)
-    P = c + xi[:, None] * t
-    xs = _graded(h)
-    n_i = len(xs) - 1
-    els = bemcs.initialize_els()
-    els.x1, els.y1 = np.r_[P[:-1, 0], xs[:-1]], np.r_[P[:-1, 1], np.zeros(n_i)]
-    els.x2, els.y2 = np.r_[P[1:, 0], xs[1:]], np.r_[P[1:, 1], np.zeros(n_i)]
-    bemcs.standardize_els_geometry(els, reorder=False)
-    profile = np.cos(0.5 * np.pi * (0.5 * (xi[:-1] + xi[1:])) / a) ** 2
-    value = np.r_[np.c_[SLIP[0] * profile, SLIP[1] * profile], np.zeros((n_i, 2))]
-    # interface elements run left to right: -n is below (material 1)
-    return bemcs.Mesh(els, bc_type=["s"] * n_f + ["h"] * n_i, bc_value=value, mu_minus=MU1,
-                      mu_plus=np.r_[np.full(n_f, MU1), np.full(n_i, mu2)],
-                      basis={"slip": "hat", "force": "trapezoid"})
-
-
-def _points(case):
-    c, _, _ = _fault(case)
-    th = np.linspace(0, 2 * np.pi, 12, endpoint=False)
-    P = np.r_[c + 0.9 * np.c_[np.cos(th), np.sin(th)], np.c_[np.linspace(-2, 2, 5), np.full(5, 0.5)]]
-    P = P[np.abs(P[:, 1]) > 0.2]
-    return P[:, 0], P[:, 1]
-
-
 def _error(case, h, mu2):
-    X, Y = _points(case)
+    X, Y = dundurs_points(case)
     ref = _exact_stress(X, Y, case, mu2)
-    mesh = _mesh(case, h, mu2)
+    mesh = dundurs_mesh(case, h, mu2)
     x = bemcs.solve(mesh, geometry="planestrain", mu=1.0, nu=NU)
     f = bemcs.evaluate_fields(mesh, x, X, Y, geometry="planestrain", mu=1.0, nu=NU,
                               mu_field=lambda x_, y_: np.where(y_ > 0, mu2, MU1))

@@ -480,9 +480,9 @@ def test_trapezoid_patches_may_share_at_most_one_element(els_curved, obs_points)
 
 
 def test_default_trapezoids_share_exactly_one_element():
-    from test_kernel_precision import _chain
+    from meshes import kinked_chain
 
-    els = _chain(0.0)  # 5 elements
+    els = kinked_chain(0.0)  # 5 elements
     conn = GF.trapezoid_connectivity(els)
     np.testing.assert_array_equal(conn, [[0, 1, 2], [2, 3, 4]])
     for a, b in zip(conn[:-1], conn[1:]):

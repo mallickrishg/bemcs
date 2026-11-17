@@ -6,7 +6,7 @@ import pytest
 
 import bemcs
 import bemcs.bemAssembly as GF
-from test_kernel_precision import _chain
+from meshes import kinked_chain
 
 
 def _els(segments):
@@ -23,8 +23,8 @@ def _branch(start, end, n):
 
 
 MESHES = {
-    "straight": lambda: _chain(0.0),
-    "kink30": lambda: _chain(30.0),
+    "straight": lambda: kinked_chain(0.0),
+    "kink30": lambda: kinked_chain(30.0),
     # main fault through J = (0, 0) plus a splay; orientations: 1 in, 2 out
     "splay_1in_2out": lambda: _els(
         _branch((-2, 0), (0, 0), 2) + _branch((0, 0), (2, 0), 2) + _branch((0, 0), (1.2, -1.6), 2)
@@ -43,7 +43,7 @@ def _flat(T, geometry):
 
 @pytest.mark.parametrize("geometry", GEOMETRIES)
 def test_equal_to_three_element_hats_on_a_straight_fault(geometry):
-    els = _chain(0.0)  # 5 elements: non-tip elements 1, 2, 3
+    els = kinked_chain(0.0)  # 5 elements: non-tip elements 1, 2, 3
     T1 = GF.hat_coefficients(els, geometry=geometry)
     T3 = GF.hat_coefficients(els, np.array([[0, 1, 2], [1, 2, 3], [2, 3, 4]]), geometry=geometry)
     np.testing.assert_array_equal(GF.hat_elements(els), [1, 2, 3])

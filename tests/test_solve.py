@@ -16,6 +16,7 @@ import pytest
 
 import bemcs
 import bemcs.bemAssembly as GF
+from meshes import fault_and_interface  # noqa: E402
 
 MU0, NU = 1.0, 0.27
 
@@ -27,21 +28,10 @@ def _els(x1, y1, x2, y2):
     return els
 
 
-def _fault_and_interface(n_fault=6, L=40.0, n_int=800, y_top=-0.6, y_bot=-1.8):
-    """Vertical fault (in the lower material) below a straight interface along y = 0
-    (elements left to right, normal +y)."""
-    yf = np.linspace(y_top, y_bot, n_fault + 1)
-    xi = np.linspace(-L, L, n_int + 1)
-    return _els(
-        np.r_[np.zeros(n_fault), xi[:-1]], np.r_[yf[:-1], np.zeros(n_int)],
-        np.r_[np.zeros(n_fault), xi[1:]], np.r_[yf[1:], np.zeros(n_int)],
-    ), n_fault, n_int
-
-
 def _bimaterial_mesh(mu_below, mu_above, geometry):
     # antiplane: long interface for the image solution; plane strain: smaller (speed)
     size = dict(L=40.0, n_int=800) if geometry == "antiplane" else dict(L=10.0, n_int=400)
-    els, n_f, n_i = _fault_and_interface(**size)
+    els, n_f, n_i = fault_and_interface(**size)
     bc_type = ["s"] * n_f + ["h"] * n_i
     slip = np.zeros((n_f + n_i, 2))
     slip[:n_f, 0] = 1.0  # unit shear slip on the fault
@@ -89,7 +79,7 @@ def _traction_mismatch(n_int, where):
     """Relative jump of the true traction across a plane-strain interface (y = 0)
     at the collocation centres or at quarter points of all interface elements."""
     mu1, mu2 = 5.0, 2.0
-    els, n_f, n_i = _fault_and_interface(L=10.0, n_int=n_int)
+    els, n_f, n_i = fault_and_interface(L=10.0, n_int=n_int)
     value = np.zeros((n_f + n_i, 2))
     value[:n_f] = [1.0, 0.3]
     mesh = bemcs.Mesh(
@@ -198,7 +188,7 @@ def test_general_and_one_ring_forms_agree(geometry):
 
 
 def test_solve_requires_moduli_on_both_sides():
-    els, n_f, n_i = _fault_and_interface(n_int=20, L=2.0)
+    els, n_f, n_i = fault_and_interface(n_int=20, L=2.0)
     mesh = bemcs.Mesh(els, bc_type=["s"] * n_f + ["h"] * n_i, bc_value=np.ones(n_f + n_i),
                       basis={"slip": "hat", "force": "trapezoid"})
     with pytest.raises(ValueError, match="both sides"):
@@ -206,7 +196,7 @@ def test_solve_requires_moduli_on_both_sides():
 
 
 def test_solve_requires_trapezoid_force():
-    els, n_f, n_i = _fault_and_interface(n_int=20, L=2.0)
+    els, n_f, n_i = fault_and_interface(n_int=20, L=2.0)
     mesh = bemcs.Mesh(els, bc_type=["s"] * n_f + ["h"] * n_i, bc_value=np.ones(n_f + n_i),
                       basis={"slip": "hat"}, mu_minus=1.0, mu_plus=2.0)
     with pytest.raises(ValueError, match="trapezoid"):
@@ -214,7 +204,7 @@ def test_solve_requires_trapezoid_force():
 
 
 def test_mesh_bc_validation():
-    els, n_f, n_i = _fault_and_interface(n_int=20, L=2.0)
+    els, n_f, n_i = fault_and_interface(n_int=20, L=2.0)
     with pytest.raises(ValueError, match="unknown bc_type"):
         bemcs.Mesh(els, bc_type=["q"] * (n_f + n_i))
     with pytest.raises(ValueError, match="not in"):  # 's' on a force element
@@ -262,7 +252,7 @@ def test_plots_run(geometry):
 @pytest.mark.parametrize("slip_basis", ["quadratic", "hat"])
 @pytest.mark.parametrize("geometry", ["antiplane", "planestrain"])
 def test_layout_and_helpers(geometry, slip_basis):
-    els, n_f, n_i = _fault_and_interface(n_int=20, L=2.0)
+    els, n_f, n_i = fault_and_interface(n_int=20, L=2.0)
     pe = 1 if geometry == "antiplane" else 2
     mesh = bemcs.Mesh(
         els, bc_type=["s"] * n_f + ["h"] * n_i, bc_value=np.r_[np.ones(n_f), np.zeros(n_i)],
@@ -331,7 +321,7 @@ def test_mesh_from_csv_per_component(tmp_path):
 def test_mixed_component_bcs_solve():
     """Per-component types in plane strain: traction-free in x and zero normal slip in y
     on a free surface element gives the same answer as setting each row by hand."""
-    els, n_f, n_i = _fault_and_interface(n_int=20, L=2.0)
+    els, n_f, n_i = fault_and_interface(n_int=20, L=2.0)
     n = n_f + n_i
     bc_type = np.array([["s", "s"]] * n_f + [["t", "s"]] * n_i)
     value = np.zeros((n, 2))
@@ -356,7 +346,7 @@ def test_plot_mesh_marks_every_modulus_used_by_the_solve():
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    els, n_f, n_i = _fault_and_interface(n_int=10, L=2.0)
+    els, n_f, n_i = fault_and_interface(n_int=10, L=2.0)
     xs = np.linspace(-2, 2, 9)  # free surface above the interface
     e2 = _els(np.r_[els.x1, xs[:-1]], np.r_[els.y1, np.full(8, 1.0)],
               np.r_[els.x2, xs[1:]], np.r_[els.y2, np.full(8, 1.0)])

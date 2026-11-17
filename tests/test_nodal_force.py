@@ -20,10 +20,12 @@ import pytest
 
 import bemcs
 import bemcs.bemAssembly as GF
-import test_circular_inclusion as CI
-import test_dundurs as TD
-import test_heterogeneous as TH
 from reference_solutions import circular_inclusion_planestrain
+from meshes import (CONTACT_D, CONTACT_MU1, CONTACT_MU2, CONTACT_SURFACE, DUNDURS_MU1, DUNDURS_NU, DUNDURS_SLIP,
+                    INCLUSION_A, INCLUSION_MU_M, INCLUSION_NU, INCLUSION_STRESS, LAYERED_H, LAYERED_MU1,
+                    LAYERED_MU2, LAYERED_SURFACE, contact_mesh, dundurs_fault, dundurs_mesh, dundurs_points,
+                    inclusion_mesh, layered_mesh, ring)
+from reference_solutions import contact_displacement, dundurs_fault_stress, layered_image_series
 
 
 def _rebase(mesh, force_basis="nodal"):
@@ -82,12 +84,12 @@ def test_nodal_transform_is_the_unit_global_force_at_a_node():
 
 
 def _dundurs_error(case, h, mu2, force_basis):
-    X, Y = TD._points(case)
-    ref = TD._exact_stress(X, Y, case, mu2)
-    mesh = _rebase(TD._mesh(case, h, mu2), force_basis)
-    x = bemcs.solve(mesh, geometry="planestrain", mu=1.0, nu=TD.NU)
-    f = bemcs.evaluate_fields(mesh, x, X, Y, geometry="planestrain", mu=1.0, nu=TD.NU,
-                              mu_field=lambda x_, y_: np.where(y_ > 0, mu2, TD.MU1))
+    X, Y = dundurs_points(case)
+    ref = dundurs_fault_stress(X, Y, *dundurs_fault(case), DUNDURS_SLIP, DUNDURS_MU1, mu2, DUNDURS_NU)
+    mesh = _rebase(dundurs_mesh(case, h, mu2), force_basis)
+    x = bemcs.solve(mesh, geometry="planestrain", mu=1.0, nu=DUNDURS_NU)
+    f = bemcs.evaluate_fields(mesh, x, X, Y, geometry="planestrain", mu=1.0, nu=DUNDURS_NU,
+                              mu_field=lambda x_, y_: np.where(y_ > 0, mu2, DUNDURS_MU1))
     return np.abs(np.array([f["sxx"], f["syy"], f["sxy"]]) - ref).max() / np.abs(ref).max()
 
 
@@ -103,23 +105,23 @@ def test_nodal_force_restarts_at_a_fault_crossing_automatically():
     """Antiplane layered half-space, fault through the interface: no connectivity needed."""
     errs = []
     for h in (0.1, 0.05):
-        mesh = _rebase(TH._layered_mesh(1.63, h, lopsided=True))  # the plain mesh; nodal ignores trapezoid layouts
+        mesh = _rebase(layered_mesh(1.63, h, lopsided=True))  # the plain mesh; nodal ignores trapezoid layouts
         x = bemcs.solve(mesh, geometry="antiplane", mu=1.0)
-        u = bemcs.evaluate_fields(mesh, x, TH._XS, np.full_like(TH._XS, -1e-9), geometry="antiplane", mu=1.0)["uz"]
-        errs.append(np.abs(u - TH._image_series(TH._XS, 1.63)).max())
+        u = bemcs.evaluate_fields(mesh, x, LAYERED_SURFACE, np.full_like(LAYERED_SURFACE, -1e-9), geometry="antiplane", mu=1.0)["uz"]
+        errs.append(np.abs(u - layered_image_series(LAYERED_SURFACE, 1.63, LAYERED_H, LAYERED_MU1, LAYERED_MU2)).max())
     assert errs[1] < 5e-5  # measured 1.1e-4 -> 3.3e-5
 
 
 def test_nodal_force_on_a_curved_interface_needs_the_kink_offset():
-    X, Y = np.r_[0.0, CI._ring(2.5)[0]], np.r_[0.0, CI._ring(2.5)[1]]
-    ref = circular_inclusion_planestrain(X, Y, CI.A, CI.STRESS, CI.MU_M, 4.0, CI.NU)
+    X, Y = np.r_[0.0, ring(2.5)[0]], np.r_[0.0, ring(2.5)[1]]
+    ref = circular_inclusion_planestrain(X, Y, INCLUSION_A, INCLUSION_STRESS, INCLUSION_MU_M, 4.0, INCLUSION_NU)
 
     def err(n, **kw):
-        mesh = _rebase(CI._inclusion_mesh(n, 4.0))
-        bg = bemcs.uniform_background(CI.STRESS, geometry="planestrain", mu=1.0, nu=CI.NU, mu_medium=CI.MU_M)
-        x = bemcs.solve(mesh, geometry="planestrain", mu=1.0, nu=CI.NU, background=bg, **kw)
-        f = bemcs.evaluate_fields(mesh, x, X, Y, geometry="planestrain", mu=1.0, nu=CI.NU, background=bg,
-                                  mu_field=lambda a, b: np.where(np.hypot(a, b) < CI.A, 4.0, CI.MU_M))
+        mesh = _rebase(inclusion_mesh(n, 4.0))
+        bg = bemcs.uniform_background(INCLUSION_STRESS, geometry="planestrain", mu=1.0, nu=INCLUSION_NU, mu_medium=INCLUSION_MU_M)
+        x = bemcs.solve(mesh, geometry="planestrain", mu=1.0, nu=INCLUSION_NU, background=bg, **kw)
+        f = bemcs.evaluate_fields(mesh, x, X, Y, geometry="planestrain", mu=1.0, nu=INCLUSION_NU, background=bg,
+                                  mu_field=lambda a, b: np.where(np.hypot(a, b) < INCLUSION_A, 4.0, INCLUSION_MU_M))
         return np.abs(np.array([f["sxx"], f["syy"], f["sxy"]]) - ref[2:]).max()
 
     e64, e128 = err(64), err(128)
@@ -129,10 +131,10 @@ def test_nodal_force_on_a_curved_interface_needs_the_kink_offset():
 
 def test_nodal_force_at_a_contact_meeting_the_free_surface():
     """Rybicki: the same as the trapezoids with an open end (corner-limited, tasks.md P3)."""
-    mesh = _rebase(TH._contact_mesh(0.5, 0.05))
+    mesh = _rebase(contact_mesh(0.5, 0.05))
     x = bemcs.solve(mesh, geometry="antiplane", mu=1.0)
-    u = bemcs.evaluate_fields(mesh, x, TH._XV, np.full_like(TH._XV, -1e-9), geometry="antiplane", mu=1.0)["uz"]
-    assert np.abs(u - TH._contact_exact(TH._XV, 0.5)).max() < 8e-3  # measured 6.1e-3
+    u = bemcs.evaluate_fields(mesh, x, CONTACT_SURFACE, np.full_like(CONTACT_SURFACE, -1e-9), geometry="antiplane", mu=1.0)["uz"]
+    assert np.abs(u - contact_displacement(CONTACT_SURFACE, 0.5, 0.0, CONTACT_D, CONTACT_MU1, CONTACT_MU2)).max() < 8e-3  # measured 6.1e-3
 
 
 # ----------------------------------------------------------------------------

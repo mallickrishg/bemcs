@@ -24,7 +24,8 @@ import pytest
 
 import bemcs
 import bemcs.bemAssembly as GF
-from test_kernel_precision import _chain, _mp_version
+from meshes import kinked_chain
+from reference_kernels import mp_version
 
 mp.mp.dps = 50
 MU, NU = 1.3, 0.27
@@ -37,10 +38,10 @@ NODES = ["start of el1", "el1/el2", "el2/el3", "end of el3"]  # the kink (if any
 GEOMETRIES = ["planestrain", "antiplane"]
 KINDS = ["slip", "force"]
 
-_SLIP_PS = _mp_version(GF._quadratic_slip_f)
-_FORCE_PS = _mp_version(GF._linear_force_g)
-_SLIP_AP = _mp_version(GF._antiplane_slip_point)
-_FORCE_AP = _mp_version(GF._antiplane_force_point)
+_SLIP_PS = mp_version(GF._quadratic_slip_f)
+_FORCE_PS = mp_version(GF._linear_force_g)
+_SLIP_AP = mp_version(GF._antiplane_slip_point)
+_FORCE_AP = mp_version(GF._antiplane_force_point)
 _MIRROR = [2, 1, 0, 5, 4, 3, 8, 7, 6]
 _MIRROR_SIGN = [1, 1, 1, -1, -1, -1, 1, 1, 1]
 
@@ -171,7 +172,7 @@ _CACHE = {}
 def _sweep(geometry, kind, kink):
     key = (geometry, kind, kink)
     if key not in _CACHE:
-        els = _chain(kink)
+        els = kinked_chain(kink)
         T = _patch_T(geometry, kind, els)
         rows = []
         for name in NODES:
@@ -261,7 +262,7 @@ def test_kink_node_is_log_singular_and_other_nodes_stay_bounded(geometry, kind):
 
 @pytest.mark.parametrize("geometry", GEOMETRIES)
 def test_control_single_quadratic_node_is_one_over_d(geometry):
-    els = _chain(0.0)
+    els = kinked_chain(0.0)
     T = np.zeros((15, 1 if geometry == "antiplane" else 2))
     T[3 * 2 + 2, 0] = 1.0  # end node of element 2, alone
     p, theta = _node(els, "el2/el3")
@@ -274,7 +275,7 @@ def test_control_single_quadratic_node_is_one_over_d(geometry):
 
 @pytest.mark.parametrize("geometry", GEOMETRIES)
 def test_control_single_force_ramp_is_log_singular(geometry):
-    els = _chain(0.0)
+    els = kinked_chain(0.0)
     T = np.zeros((10, 1 if geometry == "antiplane" else 2))
     T[2 * 2 + 0, 0] = 1.0  # ramp 0 of element 2: force 1 at its end node, 0 beyond
     p, theta = _node(els, "el2/el3")
