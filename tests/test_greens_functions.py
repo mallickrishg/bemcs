@@ -134,3 +134,27 @@ def test_options_and_errors():
         bemcs.get_greens_functions(layered_mesh(0.6, 0.1), xo, yo, geometry="antiplane")  # quadratic
     with pytest.raises(ValueError, match="a Mesh already has them"):
         bemcs.get_greens_functions(mesh, xo, yo, geometry="antiplane", connectivity={"slip": "x.csv"})
+
+
+def test_tractions_project_the_stress_kernels():
+    """gf.tractions = sigma . n per source; local frame with the tangent; K @ a = traction of gf(a)."""
+    mesh = crossing_mesh(60, 0.1, 4.0)
+    xo, yo = np.array([-0.5, 0.7, 1.2]), np.array([0.4, -0.5, 0.6])
+    nx, ny = np.array([0.0, 0.6, 1.0]), np.array([1.0, 0.8, 0.0])
+    sx, sy = ny, -nx
+    gf = _quiet(bemcs.get_greens_functions, mesh, xo, yo, geometry="planestrain", nu=CROSSING_NU)
+    a = np.random.default_rng(0).normal(size=gf.n_sources)
+    f = gf(a)
+    tx, ty = f["sxx"] * nx + f["sxy"] * ny, f["sxy"] * nx + f["syy"] * ny
+    np.testing.assert_allclose(gf.tractions(nx, ny) @ a, np.c_[tx, ty], atol=1e-12)
+    np.testing.assert_allclose(gf.tractions(nx, ny, sx, sy) @ a, np.c_[tx * sx + ty * sy, tx * nx + ty * ny],
+                               atol=1e-12)
+    np.testing.assert_allclose(gf.tractions(nx[1:], ny[1:], index=slice(1, None)) @ a, np.c_[tx, ty][1:], atol=1e-12)
+    anti = _quiet(bemcs.get_greens_functions, _hats(layered_mesh(0.6, 0.1)), xo, -np.abs(yo), geometry="antiplane")
+    fa = anti(np.ones(anti.n_sources))
+    np.testing.assert_allclose(anti.tractions(nx, ny) @ np.ones(anti.n_sources), fa["sxz"] * nx + fa["syz"] * ny,
+                               atol=1e-12)
+    only_u = _quiet(bemcs.get_greens_functions, mesh, xo, yo, geometry="planestrain", nu=CROSSING_NU,
+                    components=["ux"])
+    with pytest.raises(ValueError, match="stress components"):
+        only_u.tractions(nx, ny)

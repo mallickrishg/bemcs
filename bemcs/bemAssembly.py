@@ -4426,6 +4426,39 @@ class GreensFunctions:
         `mesh.values_on_elements(x, ...)`."""
         return self.coefficients @ np.asarray(amplitudes, dtype=float).ravel()
 
+    def tractions(self, nx, ny, sx=None, sy=None, index=None):
+        """Traction kernels sigma . n (true stresses) at observation points, on planes with unit
+        normal (nx, ny) given per point, e.g. the fault's normal at points on the fault: the
+        stress-interaction kernels of earthquake-cycle models (`traction_kernels`).
+
+        Parameters
+        ----------
+        nx, ny : array_like
+            Unit normal of the plane at each selected observation point.
+        sx, sy : array_like, optional
+            Unit tangent (plane strain): returns the traction in the local frame.
+        index : index array or slice, optional
+            Which observation points (into the flattened points; default all), matching the
+            length of nx, ny.
+
+        Returns
+        -------
+        ndarray
+            Antiplane (n, n_sources). Plane strain (n, 2, n_sources): global (tx, ty), or with
+            the tangent, local (shear = t . s, normal = t . n). For hat amplitudes a, the
+            tractions are ``K @ a``.
+        """
+        names = _COMPONENTS[self.geometry][1]
+        missing = [n for n in names if n not in self.fields]
+        if missing:
+            raise ValueError(f"tractions need the stress components {list(names)}; {missing} were not computed")
+        idx = slice(None) if index is None else index
+        S = np.stack([self.fields[n][idx] for n in names], axis=2)  # (n, n_sources, n_comp)
+        if self.geometry == "antiplane":
+            return traction_kernels(S, nx, ny)[:, :, 0]
+        T = traction_kernels(S[..., None], nx, ny, sx, sy)  # (n, n_sources, 2, 1)
+        return T[..., 0].transpose(0, 2, 1)
+
     def __repr__(self):
         return (f"GreensFunctions({self.geometry}: {self.n_sources} sources on {len(self.fault_elements)} "
                 f"fault elements, {self.x_obs.size} observation points, fields {list(self.fields)})")
