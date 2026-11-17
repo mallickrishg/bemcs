@@ -18,7 +18,9 @@
    CollocationProximityWarning
    TrapezoidCrossingWarning
    HatConnectivityWarning
+   PinnedForceWarning
    one_ring_connectivity
+   force_junctions
    uniform_background
 ```
 

@@ -77,8 +77,12 @@ Line forces follow the same pattern with one order lower. Each force element car
 the element basis. The unknowns of the solve are **trapezoids**: a trapezoid spans three elements, with unit force
 on its middle element, falling linearly to zero over the two outer elements, and continuous force at the two
 internal nodes (Figure 3b). Trapezoids are centred on every other element along a chain of force elements, so
-neighbouring trapezoids share exactly one element (where hats share two). Force ends taper to zero, so force
-elements never form triple junctions. The force kernels are the integrated Kelvin solution (plane strain) or its
+neighbouring trapezoids share exactly one element (where hats share two). Unlike slip, force has no continuity
+conditions across branches: where the force density can jump, the chain is broken and the element next to the break
+gets a half-hat (a single linear ramp with a free value at the break). Breaks are placed at force chains ending on a
+free surface, at fault crossings, at the ends of slip/force overlaps, and at **force junctions**, where three or
+more force elements meet (for example a layer interface meeting a vertical contact); there every branch ends with
+its own free value. The force kernels are the integrated Kelvin solution (plane strain) or its
 antiplane counterpart.
 
 ```{figure} ../figures/force_bases.png

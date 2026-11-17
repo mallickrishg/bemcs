@@ -114,6 +114,29 @@ smallest angle with the point, and a point exactly on an element gets `mu_minus`
 `"u_local"` elements are ignored, since `solve` does not use them either. So the regions must be closed by `"h"`, `"t"`
 and `"t_local"` elements, as `plot_mesh` checks.
 
+### Plotting on a grid
+
+`plot_fields` evaluates the fields on a regular grid with `evaluate_fields` and draws one filled-contour panel per
+component, with the mesh on top. It returns `(fig, axes, fields)`; `axes[i, 0]` is panel `i`, so you can add to the
+plots.
+
+- **`n=(nx, ny)` is the number of grid points**, not the spacing: the spacing is `(xlim[1] - xlim[0]) / (nx - 1)` in
+  $x$, and likewise in $y$. Use the same spacing in both, since the panels have an equal aspect ratio.
+- **`mask(X, Y)` returns True where the fields are plotted.** For example `mask=lambda X, Y: Y < 0` hides
+  everything above a flat free surface. The mask affects the plots only.
+- **`fields`** holds every field of the geometry and every `derived` quantity on the whole grid, unmasked, plus the
+  grid coordinates `"x"` and `"y"`.
+- **`derived={name: function}`** adds quantities computed from the fields, for example
+  `{"pressure": lambda f: (1 + nu) * (f["sxx"] + f["syy"]) / 3}`; list the name in `components` to plot it.
+- **Background fields are not added.** A remote field passed to `solve` as `background` is not included; for total
+  fields call `evaluate_fields(..., background=bg)`.
+- **Memory:** every grid point is evaluated against every unknown at once, about 40 bytes per point per unknown in
+  plane strain (24 in antiplane). For 9000 points and 1000 unknowns that is about 360 MB. For larger grids, call
+  `evaluate_fields` on parts of the grid in turn.
+- Grid points on or very close to an element can show spikes (displacement jumps across slip elements, traction
+  across force elements, and stress is singular at element ends). Mask them, or shift the grid so that no grid line
+  runs exactly along an element.
+
 ## Lower-level API
 
 `bemcs.get_kernels`, `get_slip_kernels` and `get_force_kernels` return displacement and stress kernels for any

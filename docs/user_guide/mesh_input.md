@@ -215,14 +215,29 @@ table.to_csv("slip_connectivity.csv", index=False)
 - **`TrapezoidCrossingWarning`** (at `solve`): a force trapezoid spans a node where a fault crosses the force chain,
   or where a stretch of overlapping slip and force elements ends. The force density changes regime there, so a
   trapezoid across it misrepresents the force and leaves a spurious net force on the interface.
+- **`PinnedForceWarning`** (at `solve`): an interior node of a force chain is covered by no trapezoid, so its force is
+  pinned to zero. See "Break points" below.
 
-### Fault crossings and force trapezoids
+### Break points: fault crossings, force junctions and open ends
 
-The default trapezoid layout restarts at every fault crossing and at the end of every slip/force overlap
-(`mesh.trapezoid_restart_points()`). On each side of such a point the stride is counted from the point, and the
-element next to it gets a half-hat `[e, e, e]`, so the force can take a different value on each side: the force
-density jumps where a fault crosses an interface. If you give your own force connectivity, start from
+The force density can jump at some nodes of a force chain, so the default trapezoid layout breaks the chain there
+(`mesh.trapezoid_restart_points()`):
+
+- **fault crossings**, where a fault crosses an interface (`mesh.fault_crossings`);
+- **ends of slip/force overlaps**, where a stretch of coincident slip and force elements ends;
+- **force junctions**, nodes where three or more force elements meet, for example a layer interface meeting a
+  vertical contact (`bemcs.force_junctions(els, labels)`, `mesh.force_junctions`);
+- **open force ends**, force chains ending on a free surface.
+
+On each side of a break the stride is counted from the break, and the element next to it gets a half-hat
+`[e, e, e]`, so each side (each branch, at a junction) takes its own free force value there. If you give your own force connectivity, start from
 `mesh.split_force_trapezoids()` to get the same layout.
 
 In plane strain, also refine the force elements around a crossing, for example 4 times finer within about one fault
 length of it.
+
+**Use an odd number of elements between break points.** Stride-2 trapezoids cover every interior node of a segment
+with an odd number of elements. With an even number, the node next to one end is left uncovered and its force is
+pinned to zero, which gave about 5 times larger errors in a layered-medium test. `solve` then issues a
+`PinnedForceWarning`. Fix it with an odd count (refining by a factor 3 keeps an odd count odd), a force connectivity
+that covers every interior node, or the nodal force basis.

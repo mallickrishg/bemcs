@@ -15,8 +15,9 @@ reference medium.
 
 The force is represented by trapezoids: linear force over 3-element patches, by default centred on every other
 element along each chain of interface elements. Neighbouring trapezoids share exactly one element. Where a fault
-crosses the interface the stride restarts and each side gets its own free force value; in plane strain, refine the
-interface around the crossing (see {doc}`mesh_input`).
+crosses the interface, or where interfaces meet (a force junction, for example a layer interface meeting a vertical
+contact), the stride restarts and each side gets its own free force value. Use an odd number of interface elements
+between such break points, and in plane strain refine the interface around a fault crossing (see {doc}`mesh_input`).
 
 ## What is solved
 
