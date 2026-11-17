@@ -250,43 +250,58 @@ def write_files(name="subduction"):
 
 
 # %% plots of the mesh
+PART_COLOURS = {"surface_left": "tab:blue", "surface_right": "tab:blue", "fault": "k",
+                "slab_top": "tab:red", "slab_bottom": "tab:orange"}
+PART_NAMES = {"surface_left": "free surface (t)", "fault": "fault (s and h)",
+              "slab_top": "slab top (h)", "slab_bottom": "slab bottom (h)"}
+
+
+def _draw_lines(ax, t, nodes=True):
+    for part, c in PART_COLOURS.items():
+        sel = (t.part == part).to_numpy()
+        x = np.c_[t.x1[sel], t.x2[sel], np.full(sel.sum(), np.nan)].ravel()
+        z = np.c_[t.z1[sel], t.z2[sel], np.full(sel.sum(), np.nan)].ravel()
+        ax.plot(x, z, "-", color=c, lw=1.2, label=PART_NAMES.get(part))
+        if nodes:
+            ax.plot(t.x1[sel], t.z1[sel], ".", color=c, ms=3)
+
+
+def plot_geometry(t=None, ax=None, xlim=(-200, 350), ylim=(-160, 10)):
+    """The region of interest at true scale: the mesh lines (dots: nodes) over the shear modulus."""
+    t = element_table() if t is None else t
+    if ax is None:
+        _, ax = plt.subplots(figsize=(14, 5))
+    xg, zg = np.meshgrid(np.linspace(*xlim, 551), np.linspace(*ylim, 171))
+    mu = np.where(slab_region(build_lines()[0]).contains_points(np.c_[xg.ravel(), zg.ravel()]),
+                  MU_SLAB, MU_OUT).reshape(xg.shape)
+    mu = np.where(zg > topography(xg), np.nan, mu)
+    im = ax.pcolormesh(xg, zg, mu, cmap="Greys", vmin=0, vmax=4, shading="auto", alpha=0.5)
+    _draw_lines(ax, t)
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+    ax.set_aspect("equal")
+    ax.figure.colorbar(im, ax=ax, label=r"$\mu$", shrink=0.7)
+    ax.legend(loc="lower left", fontsize=8)
+    ax.set_xlabel("x (km)")
+    ax.set_ylabel("z (km)")
+    ax.set_title("region of interest (true scale)")
+    return ax
+
+
 def plot_review(t, m, tables):
     fault = ((t.part == "fault") & (t.label == "s")).to_numpy()
-    colours = {"surface_left": "tab:blue", "surface_right": "tab:blue", "fault": "k",
-               "slab_top": "tab:red", "slab_bottom": "tab:orange"}
-    names = {"surface_left": "free surface (t)", "fault": "fault (s and h)",
-             "slab_top": "slab top (h)", "slab_bottom": "slab bottom (h)"}
-
-    def lines(ax, nodes=True):
-        for part, c in colours.items():
-            sel = (t.part == part).to_numpy()
-            x = np.c_[t.x1[sel], t.x2[sel], np.full(sel.sum(), np.nan)].ravel()
-            z = np.c_[t.z1[sel], t.z2[sel], np.full(sel.sum(), np.nan)].ravel()
-            ax.plot(x, z, "-", color=c, lw=1.2, label=names.get(part))
-            if nodes:
-                ax.plot(t.x1[sel], t.z1[sel], ".", color=c, ms=3)
+    colours = PART_COLOURS
 
     fig = plt.figure(figsize=(14, 13))
     ax = fig.add_subplot(3, 2, (1, 2))
-    lines(ax, nodes=True)
+    _draw_lines(ax, t, nodes=True)
     ax.set_xlim(-L * 1.02, L * 1.02)
     ax.set_title(f"whole mesh: {len(t)} elements (dots: nodes); vertical exaggeration none")
     ax.set_aspect("equal")
     ax.legend(loc="lower left", fontsize=8)
 
-    ax = fig.add_subplot(3, 2, (3, 4))
-    xg, zg = np.meshgrid(np.linspace(-200, 350, 551), np.linspace(-160, 5, 166))
-    mu = np.where(slab_region(build_lines()[0]).contains_points(np.c_[xg.ravel(), zg.ravel()]),
-                  MU_SLAB, MU_OUT).reshape(xg.shape)
-    mu = np.where(zg > topography(xg), np.nan, mu)
-    im = ax.pcolormesh(xg, zg, mu, cmap="Greys", vmin=0, vmax=4, shading="auto", alpha=0.5)
-    lines(ax)
+    plot_geometry(t, ax=fig.add_subplot(3, 2, (3, 4)))
     xc, zc = 0.5 * (t.x1 + t.x2), 0.5 * (t.z1 + t.z2)
-    ax.set_xlim(-200, 350)
-    ax.set_ylim(-160, 10)
-    ax.set_aspect("equal")
-    fig.colorbar(im, ax=ax, label=r"$\mu$ (shading: slab region)", shrink=0.7)
-    ax.set_title("region of interest (true scale)")
 
     ax = fig.add_subplot(3, 2, 5)
     bemcs.plot_mesh(m, ax=ax, show_moduli=True, offset=0.4)

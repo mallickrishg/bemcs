@@ -45,6 +45,13 @@ mesh = bemcs.Mesh.from_csv(
     },
 )
 print(mesh)
+
+# %% the geometry: free surface, megathrust, slab top and bottom, over the shear modulus
+fig, ax = plt.subplots(figsize=(14, 5))
+C.plot_geometry(ax=ax)
+plt.show()
+
+# %% solve
 x = bemcs.solve(mesh, geometry=geometry, nu=nu)
 
 # %% the same fault and topography in a homogeneous medium: the slip elements only, mu = 1
