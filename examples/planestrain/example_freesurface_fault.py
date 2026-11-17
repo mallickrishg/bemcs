@@ -92,8 +92,7 @@ table.to_csv("freesurface_fault_connectivity.csv", index=False)
 mesh = bemcs.Mesh.from_csv("freesurface_fault.csv", basis={"slip": "hat"},
                            connectivity={"slip": "freesurface_fault_connectivity.csv"})
 print(mesh)
-x, (A, b, rows) = bemcs.solve(mesh, geometry=geometry, mu=mu, nu=nu, return_system=True)
-print(f"{A.shape[0]} unknowns (2 per hat), condition number {np.linalg.cond(A):.3g}")
+x = bemcs.solve(mesh, geometry=geometry, mu=mu, nu=nu)
 
 fig, ax = plt.subplots(figsize=(10, 4))
 bemcs.plot_mesh(mesh, ax=ax, show_moduli=False)
@@ -106,19 +105,6 @@ ax.set_aspect("equal", adjustable="box")
 ax.legend(loc="lower left", fontsize=9)
 ax.set_title("mesh, unit normals, and the triple-junction hats")
 plt.show()
-
-# %% Check: the same problem with per-element conditions and bemcs's default layout
-bc_type = np.where(fault, "s", "t")
-bc_value = np.zeros((n_els, 2))
-bc_value[centre, :] = table[["value_1", "value_2"]].to_numpy()
-for name, basis in (("default one-ring hats", "hat"), ("quadratic elements", "quadratic")):
-    ref = bemcs.Mesh(els, bc_type=bc_type, bc_value=bc_value, mu_minus=mu, mu_plus=mu,
-                     basis={"slip": basis})
-    x_ref = bemcs.solve(ref, geometry=geometry, mu=mu, nu=nu)
-    xo, yo = np.linspace(-3, 3, 25), np.full(25, -1.5)
-    u = bemcs.evaluate_fields(mesh, x, xo, yo, geometry=geometry, mu=mu, nu=nu)
-    u_ref = bemcs.evaluate_fields(ref, x_ref, xo, yo, geometry=geometry, mu=mu, nu=nu)
-    print(f"  vs {name}: max |du| = {max(np.abs(u[c] - u_ref[c]).max() for c in ('ux', 'uy')):.1e}")
 
 # %% Slip on the fault, and the surface displacement jump at the junction
 n_eval = 10
