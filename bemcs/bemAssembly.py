@@ -1083,8 +1083,22 @@ _BASES = {
     "force": ("linear", "constant", "trapezoid", "nodal"),
 }
 _PATCH_BASES = ("hat", "trapezoid")
-_BC_TYPES = ("s", "u", "t", "t_local", "h")
-_BC_FOR = {"slip": ("s", "u", "t", "t_local"), "force": ("h", "u", "t", "t_local")}
+_BC_TYPES = ("s", "u", "u_local", "t", "t_local", "h")
+_BC_FOR = {"slip": ("s", "u", "u_local", "t", "t_local"), "force": ("h", "u", "u_local", "t", "t_local")}
+# accepted spellings of the global types; stored (and written back) as "u" and "t"
+_BC_ALIASES = {"u_global": "u", "t_global": "t"}
+
+
+def _canonical_bc_types(bc_type, source):
+    """Map the aliases ("u_global", "t_global") to "u", "t" and check the types."""
+    bc_type = np.asarray(bc_type).astype(str)
+    for a, c in _BC_ALIASES.items():
+        bc_type = np.where(bc_type == a, c, bc_type)
+    bad = sorted(set(bc_type.ravel().tolist()) - set(_BC_TYPES))
+    if bad:
+        raise ValueError(f"{source}: unknown bc_type {bad}; choose from {_BC_TYPES} "
+                         f"(or the aliases {tuple(_BC_ALIASES)})")
+    return bc_type
 _HAS_NUMBA_KERNEL = {
     ("antiplane", "slip"): True,
     ("antiplane", "force"): True,
@@ -1253,9 +1267,7 @@ def _connectivity_table(d, source):
         bc_value = np.stack((d["value"].to_numpy(float), v2), axis=1)
     else:
         return conn, None
-    bad = sorted(set(bc_type.ravel().tolist()) - set(_BC_TYPES))
-    if bad:
-        raise ValueError(f"{source}: unknown BC_type {bad}; choose from {_BC_TYPES}")
+    bc_type = _canonical_bc_types(bc_type, source)
     return conn, (bc_type, np.nan_to_num(bc_value))
 
 
@@ -2588,9 +2600,14 @@ class Mesh:
         type per component in plane strain (component 1/2: x/y for global types,
         t/n for local types). Boundary condition of each element, used by `solve`:
         "s": slip (local t, n) at the element centre (slip elements);
-        "u": displacement (global x, y; antiplane z);
-        "t": traction (global x, y; antiplane sigma.n);
+        "u" (alias "u_global"): displacement (global x, y; antiplane z);
+        "u_local": displacement (local shear, normal; antiplane z, same as "u");
+        "t" (alias "t_global"): traction (global x, y; antiplane sigma.n);
         "t_local": traction (local shear, normal);
+        Local and global types may be mixed across the two components, e.g.
+        ["u_local", "t_local"] with values (0, 0) is a roller: no normal displacement,
+        no shear traction. "u" / "u_local" are sampled on the -n side (`solve(side=)`),
+        which must be the inside of the body on a boundary.
         "h": material interface (force elements; needs mu_minus != mu_plus).
     bc_value : (n_els,) or (n_els, 2) array
         Prescribed values (ignored for "h").
@@ -2613,9 +2630,7 @@ class Mesh:
                 bc_type = np.stack((bc_type, bc_type), axis=1)
             if bc_type.shape != (n_els, 2):
                 raise ValueError(f"bc_type must have shape ({n_els},) or ({n_els}, 2), got {bc_type.shape}")
-            bad = sorted(set(bc_type.ravel().tolist()) - set(_BC_TYPES))
-            if bad:
-                raise ValueError(f"unknown bc_type {bad}; choose from {_BC_TYPES}")
+            bc_type = _canonical_bc_types(bc_type, "Mesh")
         # connectivity first: its rows may carry boundary conditions (and so the labels)
         connectivity = dict(connectivity or {})
         unknown = set(connectivity) - set(_KINDS)
@@ -2760,7 +2775,7 @@ class Mesh:
 
         - plane strain, one type and value per component:
           BC_type_1, value_1, BC_type_2, value_2. Component 1/2 is x/y for global
-          types ("u", "t") and t/n for local types ("s", "t_local"); "h" must be
+          types ("u", "t") and t/n for local types ("s", "u_local", "t_local"); "h" must be
           on both components;
         - antiplane (one component): BC_type, value;
         - shorthand, the same type on both components: BC_type, value[, value2].
@@ -3547,6 +3562,54 @@ def _warn_crossing_refinement(mesh, tol=1e-9, ratio=0.5, stacklevel=3):
         )
 
 
+_U_TYPES, _T_TYPES = ("u", "u_local"), ("t", "t_local", "h")
+
+
+def _needs_side(mesh, rec, colloc, tol=1e-9):
+    """Boolean per collocation point: its rows sample a quantity that jumps there, so
+    the point must move to side `side` (by dr element lengths along n).
+
+    - Slip elements: displacement jumps (by the slip). The traction on the slip
+      element's own plane is continuous, but the stress tensor is not (the stress along
+      the element jumps with the slip gradient), so the traction on any other plane jumps.
+    - Force elements: traction jumps (by the force density), displacement is continuous.
+
+    So a point needs the side if it has
+    - a displacement row ("u", "u_local") and lies on a slip element, or
+    - a traction/interface row ("t", "t_local", "h") and lies on a force element (its
+      own, or a coincident one), or on a slip element not parallel to its own element
+      (e.g. a crack passing through another crack's collocation point).
+    Otherwise the kernels are evaluated exactly on the element, where they take the
+    continuous value. Prescribed-slip ("s") rows sample no kernel."""
+    n = len(colloc)
+    if n == 0 or mesh.bc_type is None:
+        return np.ones(n, dtype=bool)
+    els = mesh.els
+    bc = mesh.bc_type[colloc]
+    pts = np.c_[rec["x"], rec["y"]].astype(float)
+    s_idx = mesh.elements("slip") if "slip" in mesh.kinds else np.zeros(0, dtype=int)
+    f_idx = mesh.elements("force") if "force" in mesh.kinds else np.zeros(0, dtype=int)
+    own_slip = mesh.labels[colloc] == "s"
+    on_slip = own_slip | _on_slip(pts, els, s_idx, tol)
+    on_force = ~own_slip | _on_slip(pts, els, f_idx, tol)
+    # on a slip element at an angle to the point's own normal
+    on_oblique = np.zeros(n, dtype=bool)
+    t_rows = np.flatnonzero(np.isin(bc, _T_TYPES).any(axis=1))
+    if len(t_rows) and len(s_idx):
+        p = pts[t_rows]
+        ax, ay = np.asarray(els.x1)[s_idx], np.asarray(els.y1)[s_idx]
+        dx, dy = np.asarray(els.x2)[s_idx] - ax, np.asarray(els.y2)[s_idx] - ay
+        L2 = dx**2 + dy**2
+        tt = np.clip(((p[:, :1] - ax) * dx + (p[:, 1:] - ay) * dy) / L2, 0.0, 1.0)
+        hit = np.hypot(p[:, :1] - ax - tt * dx, p[:, 1:] - ay - tt * dy) < tol * np.sqrt(L2)  # (n_t, n_s)
+        dots = np.abs(np.asarray(els.x_normals)[s_idx] * rec["nx"][t_rows, None]
+                      + np.asarray(els.y_normals)[s_idx] * rec["ny"][t_rows, None])
+        on_oblique[t_rows] = (hit & (dots < 1 - 1e-9)).any(axis=1)
+    has_u = np.isin(bc, _U_TYPES).any(axis=1)
+    has_t = np.isin(bc, _T_TYPES).any(axis=1)
+    return (has_u & on_slip) | (has_t & (on_force | on_oblique))
+
+
 def _close_collocation_records(mesh, rec, tol):
     """Close pairs for the kernel-sampling collocation points `rec` (`_collocation_points`)."""
     if len(rec["owner"]) == 0:
@@ -3592,7 +3655,7 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None,
     """Linear system A x = b for a mesh with boundary conditions (see `solve`).
 
     Returns (A, b, rows) with rows a dict of per-row arrays: element, component,
-    type ("s", "u", "t", "t_local", "h" or "continuity").
+    type ("s", "u", "u_local", "t", "t_local", "h" or "continuity").
     """
     use_numba = _check_numba(use_numba)
     _check_material(geometry, mu, nu)
@@ -3657,7 +3720,7 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None,
     L = rec["L"] if len(colloc) else np.zeros(0)
     nx, ny = (rec["nx"], rec["ny"]) if len(colloc) else (np.zeros(0), np.zeros(0))
     sx, sy = (rec["sx"], rec["sy"]) if len(colloc) else (np.zeros(0), np.zeros(0))
-    off = dr * L
+    off = dr * L * _needs_side(mesh, rec, colloc)
     if len(colloc) and kink_offset:
         # at a kink the force layer of straight elements has a log-singular stress at the node
         # (a polygon artefact): sample a finite distance away
@@ -3694,6 +3757,12 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None,
                 row = ops[i][c]
             elif t == "u":
                 row = flat(U, i, c)
+            elif t == "u_local":  # (R^T U)_c: along the element (c = 0) or its normal (c = 1)
+                if pe == 1:
+                    row = flat(U, i, 0)
+                else:
+                    dx, dy = (sx[i], sy[i]) if c == 0 else (nx[i], ny[i])
+                    row = dx * flat(U, i, 0) + dy * flat(U, i, 1)
             elif t == "t":
                 row = mu_side[i] / mu * flat(Tg, i, c)
             elif t == "t_local":
@@ -3713,6 +3782,12 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None,
             if background is not None:
                 if t == "u":
                     rhs -= u_bg[i, c]
+                elif t == "u_local":
+                    if pe == 1:
+                        rhs -= u_bg[i, 0]
+                    else:
+                        dx, dy = (sx[i], sy[i]) if c == 0 else (nx[i], ny[i])
+                        rhs -= dx * u_bg[i, 0] + dy * u_bg[i, 1]
                 elif t == "t":
                     rhs -= mu_side[i] / mu * t_bg[i, c]
                 elif t == "t_local":
@@ -3783,10 +3858,16 @@ def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None, retu
       of each trapezoid's middle element.
 
     Rows are exact: slip ("s") and force density ("h") at a collocation centre come
-    from the basis transforms; "u" and "t" are sampled just off the element on side
-    `side` (default the -n side) at distance dr times the element length; tractions
-    are true tractions, (mu_side / mu) S.n, using the modulus on that side; "h" rows
-    impose the exact sharp-interface condition (`interface_kappa`).
+    from the basis transforms. "u", "u_local", "t", "t_local" and "h" rows sample the
+    kernels at the collocation point itself where the sampled quantity is continuous, and
+    just off the element on side `side` (default the -n side, at dr element lengths) only
+    where it jumps (`_needs_side`): displacement jumps across slip elements (force
+    elements leave it continuous); traction jumps across force elements, and across a slip
+    element at an angle to the row's element (on its own plane a slip element's traction
+    is continuous). So e.g. a free surface ("t" on slip elements) is sampled on the surface
+    and a displacement condition on a slip element on its -n side. Tractions are true
+    tractions, (mu_side / mu) S.n, using the modulus on that side; "h" rows impose the
+    exact sharp-interface condition (`interface_kappa`).
 
     Parameters
     ----------
@@ -3815,7 +3896,7 @@ def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None, retu
         interfaces converge at first order either way (tasks.md P1c).
     background : callable, optional
         A known reference-medium field (e.g. `uniform_background` for a remote
-        stress). The total field is background + BEM: boundary conditions ("u", "t",
+        stress). The total field is background + BEM: boundary conditions ("u", "u_local", "t",
         "t_local") and interface conditions ("h") apply to the total field. Pass the
         same background to `evaluate_fields` to get total fields.
     solver : {"auto", "lu", "lstsq"}
@@ -3904,7 +3985,7 @@ def plot_mesh(mesh, ax=None, *, show_normals=True, show_moduli=True, offset=0.2,
     - traction ("t", "t_local") elements with equal sides: one square at the centre,
       the modulus of the material that boundary belongs to.
 
-    Elements with "s" or "u" conditions are not marked (their rows do not use mu).
+    Elements with "s", "u" or "u_local" conditions are not marked (their rows do not use mu).
     Check that every closed polygon of "t" and "h" elements encloses one uniform
     modulus: a traction element's mu must equal the adjacent interface side.
     """

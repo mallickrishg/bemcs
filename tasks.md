@@ -866,6 +866,20 @@ spatially varying nu (T4), wiki updates.
     O(1) off on those two elements. In the symmetric example the error stays local, but without the symmetry the
     local error carries a net force.
   - **Option:** split the chain at the crossing with a non-tapering end basis (a half-trapezoid) on each side.
+- [x] **Displacement BCs in local and global frames** (2026-11-17, `tests/test_displacement_bc.py`).
+  - `"u_local"` (local shear, normal displacement) added next to `"u"`; `"u_global"` and `"t_global"` are accepted
+    aliases of `"u"` and `"t"` (stored under the plain names). Mixed components work, e.g. a roller
+    ["t_local", "u_local"] = (0, 0).
+  - Checked: global and local forms give the same solution (1e-10), with and without a background; a line
+    prescribed with the fault's own displacement gets no slip; the roller holds between collocation points
+    (normal displacement 4e-5, shear traction 1.2e-3 of the fault's field).
+- [x] **Sample rows on the element unless the sampled quantity jumps** (user, 2026-11-17; `_needs_side`).
+  - Force kernels: displacement continuous, traction jumps. Slip kernels: displacement jumps; traction continuous on
+    the element's own plane, but the stress tensor jumps, so traction on another plane jumps too.
+  - So the `dr` shift to `side` is applied only to: displacement rows on slip elements; traction/"h" rows on force
+    elements (own or coincident) or on a slip element at an angle (a crack through another crack's collocation
+    point). Free surfaces ("t" on slip) and displacement rows on force elements are sampled on the element.
+  - Before, every row moved by dr = 1e-9 L; the solutions agree to ~1e-7 (the dr error itself).
 - [ ] **Far-field quadrature for r/a > 100 (later stage).**
   - **Problem:** the closed-form element kernels are differences of endpoint terms (log r1 - log r2, polynomial x
     log terms). Far away these terms are large while their difference, the kernel, is small, so float64 cancellation
@@ -929,6 +943,32 @@ spatially varying nu (T4), wiki updates.
     1e-12 in both geometries. Examples: `planestrain/example_freesurface_fault.py`, and
     `antiplane/ConstructMesh.py` with `HeterogeneousElasticity_forces.py` (now slip hats, three files per mesh;
     same results as the per-element version to 1e-14).
+- [ ] **Heterogeneous Green's functions: `get_kernels` for a whole mesh** (added 2026-11-17; likely the most used
+  feature of the library). The user gives a mesh with `s` elements (the fault, where slip is the input) and the rest
+  of the problem (`t` free surfaces, `u` clamped boundaries, `h` material interfaces), plus observation points. The
+  function returns the displacement and stress at the observation points due to a unit one-ring hat on each `s` hat,
+  with every other boundary condition made homogeneous: `t` and `u` values set to 0, `h` interfaces continuous.
+  - **Method:** the matrix of the full solve is the same for every hat; only the right-hand side changes. Assemble
+    and factor it once (as `solve(..., return_system=True)` does). Each `s` hat (one per slip component in plane
+    strain) gives one right-hand side, and the non-`s` unknowns follow from one multi-RHS solve. The kernel is
+    `G_obs,s + G_obs,other @ X`, built with the existing level-2 kernels.
+  - **API:** shaped like `get_kernels(x_obs, y_obs, mesh, *, geometry, nu, ...)`. It returns the same field
+    components (`ux, uy, sxx, ...` or `uz, sxz, syz`), each shaped `(n_obs, n_hats)`, plus the hat table (centre
+    element, slip component), so that `fields = K @ slip_at_hat_centres`. The BC values given on `s` elements and
+    on `t`/`u` elements are ignored, with a note in the docstring. Optionally, return the particular solution for
+    the non-zero `t`/`u` values (for example a remote load) as a separate background term.
+  - **Open points:**
+    - stress at an observation point needs the shear modulus of the region it lies in. Either look it up from the
+      mesh (point-in-region) or have the user pass `mu_obs`.
+    - a shortcut for the stress kernel at the `s` hat centres (self-interaction), which earthquake-cycle codes need.
+    - storage for large meshes: `n_obs x n_hats` per component; maybe a `components=` argument.
+    - keep the one-ring / connectivity-file hats (incl. `e4` junction rows), so the hat layout is the user's.
+  - **Tests:**
+    - column j equals `solve` + `evaluate_fields` with only hat j slipping;
+    - `K @ s` equals the full solve for a smooth slip profile;
+    - a homogeneous mesh (no `h`, no `t`) equals `get_kernels` with hat basis;
+    - the layered antiplane example matches its image-series solution;
+    - fault through a free surface (triple junction) in plane strain.
 
 ### T3. Tests and docs
 - [x] Extend `tests/` with the T1 validation cases (`tests/test_validation.py`). Optional: a plane-strain Dundurs
