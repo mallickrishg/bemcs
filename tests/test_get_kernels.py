@@ -377,8 +377,9 @@ def test_get_kernels_requires_mesh_and_keywords(els_curved, obs_points):
         bemcs.get_kernels(*obs_points, els_curved, geometry="antiplane", mu=1.0)
     with pytest.raises(TypeError):
         bemcs.get_kernels(*obs_points, mesh, mu=1.0)
-    with pytest.raises(TypeError):
-        bemcs.get_kernels(*obs_points, mesh, geometry="antiplane")
+    # mu is the reference modulus of the kernels: optional, default 1
+    U1 = bemcs.get_kernels(*obs_points, mesh, geometry="antiplane")[0]
+    np.testing.assert_array_equal(U1, bemcs.get_kernels(*obs_points, mesh, geometry="antiplane", mu=1.0)[0])
     with pytest.raises(TypeError, match="nu"):
         bemcs.get_kernels(*obs_points, mesh, geometry="planestrain", mu=1.0)
 

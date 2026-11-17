@@ -1227,6 +1227,19 @@ def _check_material(geometry, mu, nu):
             raise ValueError(f"nu must be a scalar in (-1, 0.5), got {nu!r}")
 
 
+def _reference_mu(mu, background=None):
+    """The reference shear modulus of the kernels: `mu` if given, else that of the
+    background field (`uniform_background` records it), else 1. The solution of a mesh
+    with element moduli does not depend on it (only the units of the kernels do)."""
+    bg_mu = getattr(background, "mu", None)
+    if mu is None:
+        return 1.0 if bg_mu is None else float(bg_mu)
+    if bg_mu is not None and not np.isclose(float(mu), float(bg_mu)):
+        raise ValueError(f"mu = {mu} differs from the reference modulus of the background field "
+                         f"({bg_mu}); build both with the same mu, or leave mu out")
+    return mu
+
+
 _ELEMENT_COLUMN = re.compile(r"^e(\d+)$")
 
 
@@ -2605,8 +2618,8 @@ class Mesh:
         "t" (alias "t_global"): traction (global x, y; antiplane sigma.n);
         "t_local": traction (local shear, normal);
         Local and global types may be mixed across the two components, e.g.
-        ["u_local", "t_local"] with values (0, 0) is a roller: no normal displacement,
-        no shear traction. "u" / "u_local" are sampled on the -n side (`solve(side=)`),
+        ["t_local", "u_local"] with values (0, 0) is a roller: no shear traction
+        (component 1, along the element), no normal displacement (component 2). "u" / "u_local" are sampled on the -n side (`solve(side=)`),
         which must be the inside of the body on a boundary.
         "h": material interface (force elements; needs mu_minus != mu_plus).
     bc_value : (n_els,) or (n_els, 2) array
@@ -3107,8 +3120,64 @@ class Mesh:
         c = self.element_coefficients(x, kind, geometry=geometry)
         return values_on_elements(sub, c, kind=kind, geometry=geometry, n_eval=n_eval, frame=frame)
 
+    def modulus_at(self, x, y, *, chunk=4096):
+        """Shear modulus of the material at points (x, y), from the element moduli.
 
-def get_kernels(x_obs, y_obs, mesh, *, geometry, mu, nu=None, use_numba=None):
+        The element nearest to a point lies on the boundary of the point's region: the
+        segment from the point to its nearest point on the mesh crosses no other element.
+        The modulus is that element's mu_minus or mu_plus, by the side the point is on.
+        When the nearest point is a node shared by several elements, the element whose
+        direction from the node makes the smallest angle with the point is used (it bounds
+        the angular sector the point is in, on the point's side of its line).
+
+        Only elements whose conditions use the modulus ("h", "t", "t_local") are used:
+        the moduli of "s", "u" and "u_local" elements do not enter `solve`, so they are
+        not trusted (see `plot_mesh`). If the mesh has none, every element is used.
+        A point on an element (within 1e-12 element lengths) takes its -n side, mu_minus,
+        the side `solve` samples by default. Returns an array shaped like x.
+        """
+        if self.mu_minus is None or self.mu_plus is None:
+            raise ValueError("the mesh has no moduli: Mesh(..., mu_minus=..., mu_plus=...)")
+        shape = np.shape(x)
+        xo, yo = _obs(x, y)
+        els = self.els
+        use = np.ones(self.n_els, bool)
+        if self.bc_type is not None:
+            uses_mu = np.isin(self.bc_type, ("h", "t", "t_local")).any(axis=1)
+            if uses_mu.any():
+                use = uses_mu
+        idx = np.flatnonzero(use)
+        x1, y1 = np.asarray(els.x1, float)[idx], np.asarray(els.y1, float)[idx]
+        x2, y2 = np.asarray(els.x2, float)[idx], np.asarray(els.y2, float)[idx]
+        nx, ny = np.asarray(els.x_normals, float)[idx], np.asarray(els.y_normals, float)[idx]
+        dx, dy = x2 - x1, y2 - y1
+        L2 = dx * dx + dy * dy
+        L = np.sqrt(L2)
+        mm, mp = self.mu_minus[idx], self.mu_plus[idx]
+        out = np.empty(xo.size)
+        for s in range(0, xo.size, chunk):
+            px, py = xo[s : s + chunk, None], yo[s : s + chunk, None]
+            t = np.clip(((px - x1) * dx + (py - y1) * dy) / L2, 0.0, 1.0)
+            qx, qy = x1 + t * dx, y1 + t * dy
+            d = np.hypot(px - qx, py - qy)
+            k = np.argmin(d, axis=1)
+            r = np.arange(k.size)
+            dmin = d[r, k]
+            tie = d <= (dmin + 1e-12 * L.max())[:, None]
+            for i in np.flatnonzero(tie.sum(axis=1) > 1):
+                cand = np.flatnonzero(tie[i])
+                # direction of each candidate element away from the shared nearest point
+                ax_ = np.where(t[i, cand] > 0.5, -dx[cand], dx[cand]) / L[cand]
+                ay_ = np.where(t[i, cand] > 0.5, -dy[cand], dy[cand]) / L[cand]
+                vx, vy = px[i, 0] - qx[i, k[i]], py[i, 0] - qy[i, k[i]]
+                k[i] = cand[np.argmax(ax_ * vx + ay_ * vy)]  # smallest angle
+            side = (px[:, 0] - x1[k]) * nx[k] + (py[:, 0] - y1[k]) * ny[k]
+            on = np.abs(side) <= 1e-12 * L[k]
+            out[s : s + chunk] = np.where((side > 0) & ~on, mp[k], mm[k])
+        return out.reshape(shape)
+
+
+def get_kernels(x_obs, y_obs, mesh, *, geometry, mu=1.0, nu=None, use_numba=None):
     """Displacement and stress kernels of every source in a mesh.
 
     Parameters
@@ -3120,7 +3189,7 @@ def get_kernels(x_obs, y_obs, mesh, *, geometry, mu, nu=None, use_numba=None):
     geometry : {"antiplane", "planestrain"}
         Required.
     mu : float
-        Required reference shear modulus of the kernels (any value works).
+        Reference shear modulus of the kernels (default 1; any value works).
         Heterogeneity is mesh data, not a kernel argument: every element lists the
         shear modulus on its -n and +n side (`Mesh(mu_minus=..., mu_plus=...)`), and
         `solve` imposes continuity of the true traction across interface ("h")
@@ -3217,12 +3286,16 @@ def plane_strain_compliance(sxx, syy, sxy, mu, nu):
 # =============================================================================
 
 
-def uniform_background(stress, *, geometry, mu, nu=None, mu_medium=None):
+def uniform_background(stress, *, geometry, mu=None, nu=None, mu_medium=None):
     """A uniform remote (background) field for `solve` / `evaluate_fields`.
 
     stress : the true remote stress, (sxx, syy, sxy) in plane strain or (sxz, syz)
         in antiplane, in the material with shear modulus mu_medium (default mu, the
         reference modulus of the kernels).
+    mu : float, optional
+        Reference modulus of the kernels (default 1). Leave it out, as in `solve`, and
+        give mu_medium: `solve` and `evaluate_fields` then take the reference modulus from
+        the background (`bg.mu`).
 
     Returns a callable bg(x, y) -> dict of reference-medium fields (displacement and
     stress, keys as in `evaluate_fields`): the stress is stress * mu / mu_medium, so
@@ -3230,6 +3303,10 @@ def uniform_background(stress, *, geometry, mu, nu=None, mu_medium=None):
     matching uniform strain times position (no rigid rotation). The total field of a
     solve with this background is background + BEM.
     """
+    if mu is None and mu_medium is None:
+        raise ValueError("uniform_background needs mu_medium, the shear modulus of the material "
+                         "the remote stress acts in")
+    mu = 1.0 if mu is None else mu
     _check_material(geometry, mu, nu)
     m = mu if mu_medium is None else float(mu_medium)
     S = np.asarray(stress, dtype=float) * mu / m
@@ -3242,6 +3319,7 @@ def uniform_background(stress, *, geometry, mu, nu=None, mu_medium=None):
             return {"uz": (S[0] * x + S[1] * y) / mu, "sxz": np.full(x.shape, S[0]),
                     "syz": np.full(x.shape, S[1])}
 
+        bg.mu = mu
         return bg
     if S.shape != (3,):
         raise ValueError("plane-strain background stress is (sxx, syy, sxy)")
@@ -3252,6 +3330,7 @@ def uniform_background(stress, *, geometry, mu, nu=None, mu_medium=None):
         return {"ux": exx * x + exy * y, "uy": exy * x + eyy * y, "sxx": np.full(x.shape, S[0]),
                 "syy": np.full(x.shape, S[1]), "sxy": np.full(x.shape, S[2])}
 
+    bg.mu = mu
     return bg
 
 
@@ -3650,7 +3729,7 @@ def _warn_close_collocation(mesh, rec, tol, stacklevel=3):
     )
 
 
-def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None,
+def assemble(mesh, *, geometry, mu=None, nu=None, side=-1, dr=1e-9, use_numba=None,
              proximity_tol=0.1, background=None, kink_offset=0.5, _stacklevel=3):
     """Linear system A x = b for a mesh with boundary conditions (see `solve`).
 
@@ -3658,6 +3737,7 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None,
     type ("s", "u", "u_local", "t", "t_local", "h" or "continuity").
     """
     use_numba = _check_numba(use_numba)
+    mu = _reference_mu(mu, background)
     _check_material(geometry, mu, nu)
     if mesh.bc_type is None:
         raise ValueError("mesh has no bc_type")
@@ -3837,7 +3917,7 @@ def _linear_solve(A, b, solver):
     return np.linalg.lstsq(A, b, rcond=None)[0]
 
 
-def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None, return_system=False,
+def solve(mesh, *, geometry, mu=None, nu=None, side=-1, dr=1e-9, use_numba=None, return_system=False,
           return_info=False, proximity_tol=0.1, solver="auto", background=None, kink_offset=0.5):
     """Solve a BEM problem defined by a Mesh with boundary conditions.
 
@@ -3874,8 +3954,11 @@ def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None, retu
     mesh : Mesh
         With bc_type, bc_value, mu_minus and mu_plus.
     geometry : {"antiplane", "planestrain"}
-    mu : float
-        Reference shear modulus of the kernels.
+    mu : float, optional
+        Reference shear modulus of the kernels; leave it out. The moduli are mesh data
+        (mu_minus, mu_plus on every element) and the solution does not depend on mu: the
+        default is 1, or the reference modulus of `background`. Pass the same mu to
+        `evaluate_fields` if you pass one here.
     nu : float
         Uniform Poisson's ratio (plane strain).
     proximity_tol : float or None
@@ -3946,23 +4029,43 @@ def solve(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None, retu
 # =============================================================================
 
 
-def evaluate_fields(mesh, x, x_obs, y_obs, *, geometry, mu, nu=None, mu_field=None, use_numba=None,
+def evaluate_fields(mesh, x, x_obs, y_obs, *, geometry, mu=None, nu=None, mu_field=None, use_numba=None,
                     background=None):
     """Displacement and stress components at observation points from a solution x.
 
-    Returns a dict: antiplane "u", "sxz", "syz"; plane strain "ux", "uy", "sxx",
-    "syy", "sxy" (arrays shaped like x_obs). Stresses are those of the reference
-    medium (mu) unless mu_field(x, y) gives the true shear modulus, in which case
-    they are scaled to the true stress (uniform nu). background: the field passed
-    to `solve`, added to give total fields.
+    Returns a dict: antiplane "uz", "sxz", "syz"; plane strain "ux", "uy", "sxx",
+    "syy", "sxy" (arrays shaped like x_obs).
+
+    mu : the reference modulus passed to `solve` (default: the same default, 1 or that
+        of `background`).
+    mu_field : the true shear modulus at the observation points, which the stresses are
+        scaled to (uniform nu):
+
+        - None (default): from the mesh, `mesh.modulus_at(x, y)` (the material of the
+          region each point is in). A mesh without moduli gives reference stresses.
+        - a callable mu_field(x, y), or a number;
+        - "reference": the stresses of the reference medium (mu), unscaled.
+
+    background : the field passed to `solve`, added to give total fields.
     """
     shape = np.shape(x_obs)
     xo, yo = _obs(x_obs, y_obs)
+    mu = _reference_mu(mu, background)
     U, S, _ = get_kernels(xo, yo, mesh, geometry=geometry, mu=mu, nu=nu, use_numba=use_numba)
     x = np.asarray(x, dtype=float).ravel()
     names_u, names_s, _ = _COMPONENTS[geometry]
     names_s = tuple(n if geometry == "planestrain" else n for n in names_s)
-    scale = 1.0 if mu_field is None else np.asarray(mu_field(xo, yo), dtype=float) / mu
+    if isinstance(mu_field, str):
+        if mu_field != "reference":
+            raise ValueError(f'mu_field must be None, a callable, a number or "reference", got {mu_field!r}')
+        scale = 1.0
+    elif mu_field is None:
+        has_moduli = mesh.mu_minus is not None and mesh.mu_plus is not None
+        scale = mesh.modulus_at(xo, yo) / mu if has_moduli else 1.0
+    elif callable(mu_field):
+        scale = np.asarray(mu_field(xo, yo), dtype=float) / mu
+    else:
+        scale = np.broadcast_to(np.asarray(mu_field, dtype=float), xo.shape) / mu
     bg = background(xo, yo) if background is not None else None
     out = {}
     for k, name in enumerate(names_u):
@@ -4031,14 +4134,15 @@ def plot_mesh(mesh, ax=None, *, show_normals=True, show_moduli=True, offset=0.2,
     return ax
 
 
-def plot_fields(mesh, x, *, geometry, mu, nu=None, xlim, ylim, n=(100, 100), components=None,
+def plot_fields(mesh, x, *, geometry, mu=None, nu=None, xlim, ylim, n=(100, 100), components=None,
                 derived=None, mu_field=None, mask=None, cmap="RdBu_r", levels=21, use_numba=None):
     """Evaluate and plot the fields of a solution x on a regular grid.
 
     Components default to all of the geometry (antiplane: uz, sxz, syz; plane
     strain: ux, uy, sxx, syy, sxy). derived = {name: f(fields)} adds quantities
     computed from them (e.g. pressure), which can then be listed in components.
-    mask(X, Y) -> bool hides grid points (e.g. outside the domain). Returns
+    mask(X, Y) -> bool hides grid points (e.g. outside the domain). mu and mu_field as
+    in `evaluate_fields` (default: true stresses, moduli from the mesh). Returns
     (fig, axes, fields) with fields on the grid, including "x" and "y".
     """
     import matplotlib.pyplot as plt

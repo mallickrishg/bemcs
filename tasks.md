@@ -943,6 +943,23 @@ spatially varying nu (T4), wiki updates.
     1e-12 in both geometries. Examples: `planestrain/example_freesurface_fault.py`, and
     `antiplane/ConstructMesh.py` with `HeterogeneousElasticity_forces.py` (now slip hats, three files per mesh;
     same results as the per-element version to 1e-14).
+- [x] **`mu` is optional (default 1); moduli are mesh data** (2026-11-17). Every element has `mu_minus`/`mu_plus`, and
+  the reference modulus of the kernels cancels from the solution.
+  - `solve`, `assemble`, `evaluate_fields`, `plot_fields`, and `get_kernels` (with a Mesh) take `mu=None` or 1. The
+    reference is then 1, or the modulus a `uniform_background` records (`bg.mu`). An explicit `mu` that differs from
+    `bg.mu` raises. `uniform_background` without `mu` needs `mu_medium`.
+  - `evaluate_fields` / `plot_fields` give **true stresses by default**: `mu_field=None` uses
+    `Mesh.modulus_at(x, y)`. `mu_field` can still be a callable or a number, or `"reference"` for the old unscaled
+    output. A mesh without moduli gives reference stresses.
+  - `Mesh.modulus_at`: the nearest element bounds the point's region (the segment to it crosses no other element),
+    so its `mu_minus` / `mu_plus` on the point's side is the region's modulus. At a shared node, the element
+    making the smallest angle with the point is used: it bounds the point's angular sector, with the point on the
+    sector's side of its line. Only "h", "t" and "t_local" elements are used, because the moduli of "s" and "u"
+    elements do not enter `solve`. A point on an element takes mu_minus.
+  - Tests: `tests/test_reference_mu.py`: mu = 1 vs 3.7 in both geometries; layers; the corners of a square
+    inclusion; untrusted fault moduli; background reference.
+  - Not changed: exactly on a fault node, the kernels are singular. There, the evaluated stress differs between
+    reference moduli (0.64 vs 0.70 for a value of 0.677 just off the node). Same cause as section 8.
 - [ ] **Heterogeneous Green's functions: `get_kernels` for a whole mesh** (added 2026-11-17; likely the most used
   feature of the library). The user gives a mesh with `s` elements (the fault, where slip is the input) and the rest
   of the problem (`t` free surfaces, `u` clamped boundaries, `h` material interfaces), plus observation points. The
@@ -957,9 +974,13 @@ spatially varying nu (T4), wiki updates.
     element, slip component), so that `fields = K @ slip_at_hat_centres`. The BC values given on `s` elements and
     on `t`/`u` elements are ignored, with a note in the docstring. Optionally, return the particular solution for
     the non-zero `t`/`u` values (for example a remote load) as a separate background term.
+  - **Moduli come from the mesh only; no system `mu` argument.** Every element carries `mu_minus`/`mu_plus`, and
+    the reference modulus of the kernels cancels. Checked 2026-11-17 on the layered antiplane mesh: `solve` with
+    mu = 1 and mu = 3.7 gives the same `uz`, and the same true stresses (with `mu_field`), to 1e-14. So the
+    reference is fixed internally at mu = 1.
+    - **Stress at an observation point:** `Mesh.modulus_at(x, y)` (done, see below) gives the region's modulus;
+      allow a `mu_obs` override, as `evaluate_fields` does with `mu_field`.
   - **Open points:**
-    - stress at an observation point needs the shear modulus of the region it lies in. Either look it up from the
-      mesh (point-in-region) or have the user pass `mu_obs`.
     - a shortcut for the stress kernel at the `s` hat centres (self-interaction), which earthquake-cycle codes need.
     - storage for large meshes: `n_obs x n_hats` per component; maybe a `components=` argument.
     - keep the one-ring / connectivity-file hats (incl. `e4` junction rows), so the hat layout is the user's.
