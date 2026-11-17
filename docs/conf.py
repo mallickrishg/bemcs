@@ -60,23 +60,31 @@ EXAMPLES = [
     ("planestrain", "example_freesurface_fault.py", None, []),
     ("antiplane", "example_Rybicki_bimaterial.py", None, []),
     ("planestrain", "example_subduction_bimaterial.py", None, ["ConstructMesh_subduction.py"]),
+    ("", "example_greens_functions.py", None, []),  # examples/ itself; built under docs/examples/general/
 ]
 GITHUB = "https://github.com/mallickrishg/bemcs/blob/main/examples"
 
 
 def _example_page(text, folder, script, title):
     """The script as a docs page: a title cell (given, or the script's first H1), a link to the
-    source, and every later H1 demoted to H2 so the page has one title."""
+    source, every later H1 demoted to H2 so the page has one title, and a "# %%" before code that
+    follows a markdown cell directly."""
     out, in_md, seen_title = [], False, title is not None
     for line in text.splitlines():
         if line.startswith("# %%"):
             in_md = "[markdown]" in line
+        elif in_md and line.strip() and not line.startswith("#"):
+            # code right after a markdown cell without its own "# %%": start a code cell, or the
+            # notebook would take the code as part of the text and never run it
+            out.append("# %%")
+            in_md = False
         elif in_md and line.startswith("# # "):
             if seen_title:
                 line = "# ## " + line[4:]
             seen_title = True
         out.append(line)
-    source = f"*Source: [`examples/{folder}/{script}`]({GITHUB}/{folder}/{script})*"
+    path = f"{folder}/{script}" if folder else script
+    source = f"*Source: [`examples/{path}`]({GITHUB}/{path})*"
     head = ["# %% [markdown]", f"# # {title}", "#", f"# {source}", ""] if title else []
     body = "\n".join(out)
     if not title:  # put the source link right after the first markdown cell's title line
@@ -90,7 +98,7 @@ def _copy_examples():
 
     dest = DOCS / "examples"
     for folder, script, title, extra in EXAMPLES:
-        src, out = ROOT / "examples" / folder, dest / folder
+        src, out = ROOT / "examples" / folder, dest / (folder or "general")
         out.mkdir(parents=True, exist_ok=True)
         page = _example_page((src / script).read_text(), folder, script, title)
         target = out / script
@@ -101,7 +109,7 @@ def _copy_examples():
 
 
 _copy_examples()
-exclude_patterns += [f"examples/{d}/{f}" for d, _, _, extra in EXAMPLES for f in extra]  # support files, not pages
+exclude_patterns += [f"examples/{d or 'general'}/{f}" for d, _, _, extra in EXAMPLES for f in extra]  # support files, not pages
 
 nb_custom_formats = {".py": "percent_reader.reads"}
 nb_execution_mode = "cache"

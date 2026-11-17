@@ -20,3 +20,11 @@ examples/antiplane/example_Rybicki_bimaterial
 examples/planestrain/example_freesurface_fault
 examples/planestrain/example_subduction_bimaterial
 ```
+
+## Both geometries
+
+```{toctree}
+:maxdepth: 1
+
+examples/general/example_greens_functions
+```
