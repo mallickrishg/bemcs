@@ -3,7 +3,7 @@
 [![DOI](https://zenodo.org/badge/651550360.svg)](https://zenodo.org/doi/10.5281/zenodo.10676299)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-≥3.9-blue.svg)
-[![Docs](https://img.shields.io/badge/docs-Wiki-blue?logo=github)](https://github.com/mallickrishg/bemcs/wiki)
+[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue?logo=github)](https://mallickrishg.github.io/bemcs/)
 
 Solutions to various boundary value problems in linear elasticity using quadratic polynomial slip boundary elements that are continuous in slip gradient at element boundaries. We also offer linear polynomial force boundary elements or distributed forces as constant sources over triangular elements. 
 
@@ -38,19 +38,30 @@ conda activate bemcs
 pip install --no-use-pep517 -e .
 ```
 
-For a full step-by-step walkthrough, see the
-
-👉 [**Tutorial: Setting up and solving an elastostatic plane strain problem**](https://github.com/mallickrishg/bemcs/wiki/Tutorial-on-setting-up-and-solving-an-elastostatic-problem-using-the-Boundary-Element-Method)
-
-👉 [**Tutorial: Solving an antiplane problem in a heterogeneous elastic medium**](https://github.com/mallickrishg/bemcs/wiki/Tutorial-on-antiplane-slip-In-a-heterogeneous-elastic-medium)
+Then follow 👉 [**Getting started**](https://mallickrishg.github.io/bemcs/getting_started.html) in the documentation: a first solve in a few lines.
 
 ---
 
 ## 📘 Documentation
 
-* **[Wiki Home](https://github.com/mallickrishg/bemcs/wiki)** — overview, setup, and examples
-* **[Elastostatic BEM tutorial](https://github.com/mallickrishg/bemcs/wiki/Tutorial-on-setting-up-and-solving-an-elastostatic-problem-using-the-Boundary-Element-Method)**
-* (More tutorials coming soon…)
+The documentation is at **[https://mallickrishg.github.io/bemcs/](https://mallickrishg.github.io/bemcs/)**:
+
+* **[Getting started](https://mallickrishg.github.io/bemcs/getting_started.html)**: installation and a first solve
+* **[User guide](https://mallickrishg.github.io/bemcs/user_guide/index.html)**: mesh input and boundary conditions, connectivity files, solving,
+  heterogeneous materials
+* **[Theory](https://mallickrishg.github.io/bemcs/theory/index.html)**: continuous slip and force sources, the heterogeneous formulation
+* **[API reference](https://mallickrishg.github.io/bemcs/api.html)**
+
+The sources are in `docs/`. The site is rebuilt and published on every push to `main`. To build it locally:
+
+```
+pip install -r docs/requirements.txt
+sphinx-build -b html docs docs/_build/html
+open docs/_build/html/index.html
+```
+
+The older [wiki tutorials](https://github.com/mallickrishg/bemcs/wiki) predate the current `Mesh` / `solve`
+interface.
 
 ## 🧩 Package Structure
 
