@@ -7,13 +7,9 @@ Build locally from the repository root:
 
 The site is built and published to GitHub Pages by .github/workflows/docs.yml on every push to main.
 
-Examples are not in the docs yet (which examples to share is undecided). To add them later:
-switch "myst_parser" to "myst_nb", copy the chosen example folders into docs/examples/ at build
-time, and read the percent-format scripts as notebooks with
-    nb_custom_formats = {".py": "percent_reader.reads"}
-(docs/_ext/percent_reader.py keeps commented-out IPython magics as comments and adds kernel
-metadata). Each example then needs a Markdown title cell, and examples that read generated CSV
-meshes need those generated first.
+Examples: the scripts listed in EXAMPLES are copied into docs/examples/ at build time (with the
+files they read) and run as notebooks by MyST-NB (percent-format "# %%" cells, read by
+docs/_ext/percent_reader.py). Each runs in its own folder, so relative paths work as in the repo.
 """
 
 import sys
@@ -42,7 +38,7 @@ version = release = bemcs.__version__
 
 # -- Extensions ----------------------------------------------------------------
 extensions = [
-    "myst_parser",
+    "myst_nb",
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
     "sphinx.ext.napoleon",
@@ -52,11 +48,67 @@ extensions = [
     "sphinx_copybutton",
 ]
 
-source_suffix = {".rst": "restructuredtext", ".md": "markdown"}
-exclude_patterns = ["_build", "_ext", "**.ipynb_checkpoints"]
+exclude_patterns = ["_build", "_ext", "figures", "conf.py", "**.ipynb_checkpoints"]
 
 myst_enable_extensions = ["dollarmath", "amsmath", "colon_fence", "deflist"]
 myst_heading_anchors = 3
+
+# -- Examples ------------------------------------------------------------------
+# (folder, script, page title or None to keep the script's own, extra files it reads)
+EXAMPLES = [
+    ("antiplane", "antiplane101.py", "Antiplane basics: a strike-slip fault below a free surface", ["example_mesh.csv"]),
+    ("planestrain", "example_freesurface_fault.py", None, []),
+    ("antiplane", "example_Rybicki_bimaterial.py", None, []),
+    ("planestrain", "example_subduction_bimaterial.py", None, ["ConstructMesh_subduction.py"]),
+]
+GITHUB = "https://github.com/mallickrishg/bemcs/blob/main/examples"
+
+
+def _example_page(text, folder, script, title):
+    """The script as a docs page: a title cell (given, or the script's first H1), a link to the
+    source, and every later H1 demoted to H2 so the page has one title."""
+    out, in_md, seen_title = [], False, title is not None
+    for line in text.splitlines():
+        if line.startswith("# %%"):
+            in_md = "[markdown]" in line
+        elif in_md and line.startswith("# # "):
+            if seen_title:
+                line = "# ## " + line[4:]
+            seen_title = True
+        out.append(line)
+    source = f"*Source: [`examples/{folder}/{script}`]({GITHUB}/{folder}/{script})*"
+    head = ["# %% [markdown]", f"# # {title}", "#", f"# {source}", ""] if title else []
+    body = "\n".join(out)
+    if not title:  # put the source link right after the first markdown cell's title line
+        i = body.index("\n", body.index("# # ")) + 1
+        body = body[:i] + f"#\n# {source}\n#\n" + body[i:]
+    return "\n".join(head) + body + "\n"
+
+
+def _copy_examples():
+    import shutil
+
+    dest = DOCS / "examples"
+    for folder, script, title, extra in EXAMPLES:
+        src, out = ROOT / "examples" / folder, dest / folder
+        out.mkdir(parents=True, exist_ok=True)
+        page = _example_page((src / script).read_text(), folder, script, title)
+        target = out / script
+        if not target.exists() or target.read_text() != page:  # keep mtimes, so the cache holds
+            target.write_text(page)
+        for f in extra:
+            shutil.copy2(src / f, out / f)
+
+
+_copy_examples()
+exclude_patterns += [f"examples/{d}/{f}" for d, _, _, extra in EXAMPLES for f in extra]  # support files, not pages
+
+nb_custom_formats = {".py": "percent_reader.reads"}
+nb_execution_mode = "cache"
+nb_execution_timeout = 900
+nb_execution_raise_on_error = True
+nb_execution_show_tb = True
+nb_merge_streams = True
 
 # -- API reference -------------------------------------------------------------
 autosummary_generate = True

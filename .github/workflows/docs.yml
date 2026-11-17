@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    paths: ["docs/**", "bemcs/**", ".github/workflows/docs.yml"]
+    paths: ["docs/**", "bemcs/**", "examples/**", "environment.yml", ".github/workflows/docs.yml"]
   workflow_dispatch:
 
 permissions:
@@ -21,16 +21,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: mamba-org/setup-micromamba@v2
         with:
-          python-version: "3.12"
-      - name: Install bemcs and the docs requirements
-        run: |
-          python -m pip install --upgrade pip
-          pip install numpy scipy matplotlib pandas addict
-          pip install --no-deps -e .
-          pip install -r docs/requirements.txt
-      - name: Build the HTML (warnings are errors)
+          environment-file: environment.yml
+          cache-environment: true
+      - name: Install the docs requirements
+        shell: bash -el {0}
+        run: pip install -r docs/requirements.txt
+      - name: Build the HTML and run the examples (warnings are errors)
+        shell: bash -el {0}
         run: sphinx-build -W --keep-going -b html docs docs/_build/html
       - uses: actions/upload-pages-artifact@v3
         with:

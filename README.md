@@ -70,7 +70,7 @@ fig, axes, fields = bemcs.plot_fields(mesh, x, geometry="planestrain", nu=0.25,
 ```
 
 Then read 👉 [**Getting started**](https://mallickrishg.github.io/bemcs/getting_started.html) and the [user guide](https://mallickrishg.github.io/bemcs/user_guide/index.html).
-Worked examples are in `examples/antiplane` and `examples/planestrain`.
+Worked [examples](https://mallickrishg.github.io/bemcs/examples_index.html) are in `examples/antiplane` and `examples/planestrain`.
 
 Run the tests with `pytest` (`pytest --no-numba` for the plain-numpy kernels).
 
@@ -83,6 +83,7 @@ The documentation is at **[https://mallickrishg.github.io/bemcs/](https://mallic
 * **[Getting started](https://mallickrishg.github.io/bemcs/getting_started.html)**: installation and a first solve
 * **[User guide](https://mallickrishg.github.io/bemcs/user_guide/index.html)**: mesh input and boundary conditions, connectivity files, solving,
   heterogeneous materials
+* **[Examples](https://mallickrishg.github.io/bemcs/examples_index.html)**: worked antiplane and plane-strain problems, run on every build
 * **[Theory](https://mallickrishg.github.io/bemcs/theory/index.html)**: continuous slip and force sources, the heterogeneous formulation
 * **[API reference](https://mallickrishg.github.io/bemcs/api.html)**
 

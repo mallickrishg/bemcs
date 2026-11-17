@@ -35,4 +35,6 @@ examples/hrf/
 # documentation build outputs (the sources in docs/ are tracked)
 docs/_build/
 docs/generated/
+docs/examples/
+docs/jupyter_execute/
 !docs/figures/*.png
