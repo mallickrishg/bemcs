@@ -178,12 +178,24 @@ err1 = [np.abs(surface_displacement(layered_medium_mesh([MU_L1, MU_L2], [C * MU_
 
 fig, axes = plt.subplots(1, 3, figsize=(16, 4.5))
 ax = axes[0]
-bemcs.plot_mesh(mesh1, ax=ax, show_normals=False, offset=0.15)
-ax.set_xlim(-1.5, 1.5)
-ax.set_ylim(-1.6, 0.2)
-ax.set_aspect("equal", adjustable="box")
-ax.set_title("(a) mesh near the fault (black: slip, red: force)\n"
-             r"dots: $\mu$ on each side of the force elements", fontsize=10)
+Xm, Ym = np.meshgrid(np.linspace(-1.5, 1.5, 301), np.linspace(-1.5, 0.0, 151))
+mu1_map = np.where(Ym > -H1, MU_L1, MU_L2) * np.where(Xm < 0, 1.0, C)
+im = ax.pcolormesh(Xm, Ym, mu1_map, cmap="viridis", shading="auto")
+fig.colorbar(im, ax=ax, label=r"shear modulus $\mu$", shrink=0.8)
+ax.plot([0, 0], [0, -D], "w-", lw=2.5, label="fault, on the contact (slip + force)")
+ax.plot([0, 0], [-D, -1.5], "w:", lw=1.2, label="contact below the fault (force)")
+ax.axhline(-H1, color="w", lw=0.8, ls="--", label="layer interface (force)")
+ax.plot(0, -H1, "o", mfc="none", mec="r", ms=9, mew=1.5, label="junction")
+for xq, yq, m in ((-0.75, -0.5 * H1, MU_L1), (0.75, -0.5 * H1, C * MU_L1),
+                  (-0.75, -1.1, MU_L2), (0.75, -1.1, C * MU_L2)):
+    ax.text(xq, yq, rf"$\mu$ = {m:g}", ha="center", va="center", color="w" if m < 6 else "k", fontsize=10)
+ax.set_aspect("equal")
+ax.set_xlabel("x / D")
+ax.set_ylabel("depth / D")
+ax.legend(fontsize=7, loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=2, facecolor="0.35",
+          labelcolor="w", framealpha=1)
+ax.set_title(f"(a) the model: layer over half-space on the left,\nthe same stack x {C:g} on the right",
+             fontsize=10)
 ax = axes[1]
 ax.plot(xs, exact_proportional(xs), "k-", lw=1.5, label="exact")
 ax.plot(xs[::5], u1[::5], "o", color="C0", ms=3.5, label="BEM")
