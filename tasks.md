@@ -992,55 +992,30 @@ spatially varying nu (T4), wiki updates.
     inclusion; untrusted fault moduli; background reference.
   - Not changed: exactly on a fault node, the kernels are singular. There, the evaluated stress differs between
     reference moduli (0.64 vs 0.70 for a value of 0.677 just off the node). Same cause as section 8.
-- [ ] **Heterogeneous Green's functions: `get_kernels` for a whole mesh** (added 2026-11-17; likely the most used
-  feature of the library). **First version done 2026-11-17 on branch `heteroGF`:**
-  `get_greens_functions(mesh_or_file, x_obs, y_obs, *, geometry, nu, connectivity=None, basis=None, mu_obs=None,
-  components=None)` returning a `GreensFunctions` result (user's choices: that name; one source per slip hat).
-  - **Source:** one slip hat with unit amplitude (one per component in plane strain): a smooth, non-negative bump
-    over three elements; every other condition homogeneous. `gf(a)` gives the fields for hat amplitudes a,
-    `gf.solution(a)` the BEM coefficients, `gf.amplitudes(slip)` converts slip at the collocation points into
-    amplitudes (`gf.point_slip`: hats are 1/6 at their neighbours' centres). (First version: unit slip at one
-    collocation point and zero at the others, which is a combination of hats with negative side lobes; changed
-    2026-11-17 at the user's request.)
+- [x] ~~**Heterogeneous Green's functions: `get_kernels` for a whole mesh**~~ **Done 2026-11-17** (branch `heteroGF`,
+  merged into main). `get_greens_functions(mesh_or_file, x_obs, y_obs, *, geometry, nu, connectivity=None, basis=None,
+  mu_obs=None, components=None)` returns a `GreensFunctions` result (user's choices: that name; one source per slip
+  hat). User guide: docs `greens_functions.md`; example: `examples/example_greens_functions.py`.
+  - **Source:** one slip hat with unit amplitude, per component in plane strain: a smooth, non-negative bump over three
+    elements; every other condition homogeneous ("t"/"u" values 0, "h" interfaces continuous). `gf(a)` gives the
+    fields for hat amplitudes a, `gf.solution(a)` the BEM coefficients, `gf.amplitudes(slip)` converts slip at the
+    collocation points into amplitudes (`gf.point_slip`: hats are 1/6 at their neighbours' centres). (A first version
+    used unit slip at one collocation point and zero at the others: a combination of hats with negative side lobes.)
   - **Returns:** `fields` (n_obs, n_sources) per component, true stresses from `mesh.modulus_at`; `slip_average`
-    (n_fault, pe, n_sources) and `slip_coefficients` (n_fault, 3, pe, n_sources) on the 's' elements; `matrix`,
-    `rhs`, `coefficients`, `rows`; the `sources` table.
-  - **Input:** a Mesh or a mesh file; connectivity None (bemcs builds it), one file, a list (kind inferred from
-    the BC columns or the labels) or a dict. One factorisation, one multi-RHS solve.
-  - **Checked** (`tests/test_greens_functions.py`): `gf(s)` equals `solve` to 1e-15 (antiplane layered, plane-strain
-    crossing, plane-strain fault through a free surface); a column equals a solve with one unit source; from
-    the example files it matches Rybicki to 6e-5.
-  - **Still open:** traction/stress at the source collocation points (self-interaction, for earthquake-cycle
-    codes); the particular solution for non-zero t/u values; a per-element-average source option if wanted.
-  Original plan: The user gives a mesh with `s` elements (the fault, where slip is the input) and the rest
-  of the problem (`t` free surfaces, `u` clamped boundaries, `h` material interfaces), plus observation points. The
-  function returns the displacement and stress at the observation points due to a unit one-ring hat on each `s` hat,
-  with every other boundary condition made homogeneous: `t` and `u` values set to 0, `h` interfaces continuous.
-  - **Method:** the matrix of the full solve is the same for every hat; only the right-hand side changes. Assemble
-    and factor it once (as `solve(..., return_system=True)` does). Each `s` hat (one per slip component in plane
-    strain) gives one right-hand side, and the non-`s` unknowns follow from one multi-RHS solve. The kernel is
-    `G_obs,s + G_obs,other @ X`, built with the existing level-2 kernels.
-  - **API:** shaped like `get_kernels(x_obs, y_obs, mesh, *, geometry, nu, ...)`. It returns the same field
-    components (`ux, uy, sxx, ...` or `uz, sxz, syz`), each shaped `(n_obs, n_hats)`, plus the hat table (centre
-    element, slip component), so that `fields = K @ slip_at_hat_centres`. The BC values given on `s` elements and
-    on `t`/`u` elements are ignored, with a note in the docstring. Optionally, return the particular solution for
-    the non-zero `t`/`u` values (for example a remote load) as a separate background term.
-  - **Moduli come from the mesh only; no system `mu` argument.** Every element carries `mu_minus`/`mu_plus`, and
-    the reference modulus of the kernels cancels. Checked 2026-11-17 on the layered antiplane mesh: `solve` with
-    mu = 1 and mu = 3.7 gives the same `uz`, and the same true stresses (with `mu_field`), to 1e-14. So the
-    reference is fixed internally at mu = 1.
-    - **Stress at an observation point:** `Mesh.modulus_at(x, y)` (done, see below) gives the region's modulus;
-      allow a `mu_obs` override, as `evaluate_fields` does with `mu_field`.
-  - **Open points:**
-    - a shortcut for the stress kernel at the `s` hat centres (self-interaction), which earthquake-cycle codes need.
-    - storage for large meshes: `n_obs x n_hats` per component; maybe a `components=` argument.
-    - keep the one-ring / connectivity-file hats (incl. `e4` junction rows), so the hat layout is the user's.
-  - **Tests:**
-    - column j equals `solve` + `evaluate_fields` with only hat j slipping;
-    - `K @ s` equals the full solve for a smooth slip profile;
-    - a homogeneous mesh (no `h`, no `t`) equals `get_kernels` with hat basis;
-    - the layered antiplane example matches its image-series solution;
-    - fault through a free surface (triple junction) in plane strain.
+    (n_fault, pe, n_sources) and `slip_coefficients` (n_fault, 3, pe, n_sources) on the fault; `matrix`, `rhs`,
+    `coefficients`, `rows`; the `sources` table. `gf.tractions(nx, ny, sx, sy, index=...)` projects the stresses on
+    given planes (`traction_kernels`).
+  - **Input:** a Mesh or a mesh file; connectivity None (bemcs builds it), one file, a list (kind inferred) or a dict.
+    Moduli come from the mesh only (the kernels' reference modulus cancels). One factorisation, one multi-RHS solve.
+  - **Checked** (`tests/test_greens_functions.py`): `gf(gf.amplitudes(s))` equals `solve` to 1e-15 (antiplane
+    layered, plane-strain crossing, plane-strain fault through a free surface); a column equals a solve with that hat
+    alone; every source is one non-negative hat; from the example files it matches Rybicki to 6e-5.
+  - **Decided (user, 2026-11-17):** the Green's functions give the full fields everywhere; on a fault the user converts
+    stresses to tractions (`gf.tractions` with the fault's normals; the raw stress on the fault is the average of its
+    two sides). No dedicated fault-traction output, and no per-element-average source option.
+  - [ ] **Open: non-zero boundary values.** The Green's functions set every non-fault condition to zero, so a remote
+    load or a prescribed displacement on a boundary is not included; today the user adds a separate `solve` for it.
+    Option: return that particular solution as a background term.
 
 ### T3. Tests and docs
 - [x] Extend `tests/` with the T1 validation cases (`tests/test_validation.py`). Optional: a plane-strain Dundurs
