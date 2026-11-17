@@ -573,13 +573,40 @@ checked by:
   because the inclusion is the cleanest exact solution. The typical heterogeneous problem is an imposed slip source
   with prescribed tractions elsewhere (a free surface), so the remaining checks (P1b, P2, P3, P6) should use that
   setup, without a background.
-- [ ] **P2. A fault crossing an interface in plane strain.**
-  - **Gap:** no exact solution, and no symmetry to rely on. The antiplane result (about 2.5e-5 once the trapezoids
-    restart at the crossing) depended partly on antisymmetry. With a dipping fault, or mixed shear/opening, the step
-    in force density at the crossing (open task in T2) may again leave a net force error.
-  - **Plan:** a convergence study, plus a residual net-force or traction check on a dipping fault through a planar
-    interface. If it converges only at first order with a visible far-field offset, do the step task (a half-trapezoid
-    on each side of the crossing) before relying on such geometries.
+- [x] ~~**P2. A fault crossing an interface in plane strain.**~~ **Done 2026-11-17** (`tests/test_fault_crossing.py`).
+  - **Exact reference after all (full space):** a dislocation above the interface is the mirror image of one below
+    with the materials swapped (the reflection also reverses the Burgers circuit: b -> (-bx, by)), so the Dundurs
+    solution integrates along a fault that runs through the interface. The image-constant fit was ill-conditioned
+    within 1e-3 of the interface (residual 1e-2 at 1e-4); column scaling in
+    `edge_dislocation_bimaterial_constants` brings it to round-off.
+  - **Setup:** fault through (0.15, 0), s from -0.7 to 0.5 along dip, cos^2 slip (shear 1, opening 0.5), dips
+    90/60/30; interface out to 300 (log-spaced). Stress error at points >= 0.15 from the fault and the interface,
+    relative to the largest; h = 0.1, 0.05, 0.025.
+
+    | layout | no contrast | mu2/mu1 = 4 or 1/4 |
+    |---|---|---|
+    | any | 2.7e-4, 1.3e-5, 6.7e-7 (all dips) | |
+    | trapezoids tapered to zero at the crossing (old) | | first order, 3e-2 to 1e-1 at h = 0.025, worse at gentle dips |
+    | trapezoids + free half-hat each side (new default split) | | 3e-3 to 5e-3 at h = 0.025 (ratios 2.3-3.6) |
+    | nodal | | 1e-3 to 2e-3 |
+  - **Zero contrast, half-space (free surface + layer):** identical to the mesh without the interface (1e-15).
+  - **Half-space with contrast (self-convergence of surface displacement vs nodal at h = 0.00625, dip 60):**
+    the surface sees a net-force error as a near-rigid offset (log L), invisible in stresses.
+    - trapezoids, uniform: 7.3e-2 (stiff layer, mu 4) and 1.1e-2 (soft layer) at h = 0.025. Net interface force
+      decays at first order (full space: 2.3e-2 -> 2.9e-3 for h = 0.1 -> 0.0125; nodal -> 4e-4);
+    - the error is spread over |x - xc| < 0.5, where the force density changes by ~5 over ~0.2 (it jumps at the
+      crossing and has a cusp-like approach, ~r^0.7): the known first-order plane-strain trapezoid error, scaled by a
+      steep gradient. Grading only at the crossing node, or refining the fault, does not help;
+    - **remedy (meshing, the user's choice):** refine the trapezoids over a zone around the crossing. M = 4 within
+      |x - xc| < 1: 1.2e-2 / 2.6e-3 (dip 60), 2.0e-2 / 4.6e-3 (dip 90), 9.1e-3 / 1.6e-3 (dip 30) at h = 0.025 for the
+      stiff / soft layer, on par with or better than nodal (1.1e-2 / 7.7e-3 at dip 60).
+  - **Antiplane cost:** in the antisymmetric layered case the exact force at the crossing is zero, so the half-hats
+    cost a little: 6.1e-5 vs 2.6e-5 at h = 0.05, 2.3e-5 vs 1.8e-5 at 0.025.
+  - **Warning (user, 2026-11-17):** `solve` issues `CrossingRefinementWarning` at a true crossing (not an overlap
+    end) of an interface with a contrast when the force elements there are longer than half the fault elements,
+    recommending ~4x finer force elements within about one fault length. It does not change the mesh.
+  - **Open:** document zone refinement near crossings in the user docs; a stiff layer over a soft half-space is the
+    hardest case (1-2e-2 at h = 0.025 even refined; a finer zone or M = 8 would be the next thing to try).
 - [x] ~~**P3. An interface that meets the free surface**~~ **Done 2026-11-16**: the force chain has an open (free)
   end at the free surface. The remaining first-order corner error is handled by refining towards the corner
   (documented in the Rybicki example). Below, the original item (outcropping or dipping layers, basins). **Confirmed
@@ -829,7 +856,9 @@ spatially varying nu (T4), wiki updates.
   - **Tests:**
     - `tests/test_get_kernels.py`: breaks, closed loop, warning, suggested fix, connectivity file;
     - `tests/test_heterogeneous.py`: the lopsided case warns and is off by percent; the split case is exact.
-- [ ] **Let the interface force density step where a fault crosses an interface.**
+- [x] ~~**Let the interface force density step where a fault crosses an interface.**~~ **Done 2026-11-17** (P2):
+  `trapezoid_connectivity` adds a free half-hat [e, e, e] on each side of every interior break; the coefficients
+  find its free node from the break points (`Mesh.transform` passes `trapezoid_restart_points()`).
   - **Cause:** across a fault the normal traction on an interface steps in proportion to the slip gradient, and
     the step differs on the two sides (mu1 vs mu2). So the equivalent force density steps at the crossing.
   - **Effect:** continuous trapezoids cannot represent the step. With the symmetric layout the force is zero at the
@@ -882,6 +911,24 @@ spatially varying nu (T4), wiki updates.
   that names the junction coordinates and the 3 element indices, with their orientation (start/end at J). It should say
   that one branch must be reversed, and that its BC values change sign with it. Add a test for both bad cases, and
   check that 1-in/2-out and 2-in/1-out still pass.
+- [x] **Triple junctions in connectivity files, and boundary conditions on connectivity rows** (2026-11-17).
+  A 3-element chain cannot describe the hat of an element next to a triple junction (a fault breaking the free
+  surface): every variant was wrong by up to 7e-2 in displacement, or singular.
+  - **Rows:** columns `e1, e2, e3[, e4, ...]`, centre `e2`. `e4` is the third branch at a junction (-1 elsewhere);
+    such a row is the one-ring hat of `e2` (`_ring_hat`, shared with `one_ring_hat_coefficients`). Force trapezoids
+    stay 3 columns.
+  - **BC columns** on a row (`BC_type_1, value_1, BC_type_2, value_2` or `BC_type, value`) apply at the centre of
+    `e2`. The mesh file can then hold geometry and moduli only (`Mesh.from_csv` makes its BC columns optional, and
+    reads an optional `label` column). Elements in rows of kind k are labelled k. Element BCs given as well must
+    agree. Tips get no condition, so there is no silently ignored per-element value.
+  - **Helpers:** `one_ring_connectivity`, `one_ring_support`, `Mesh.patch_connectivity`,
+    `Mesh.connectivity_table(kind, geometry=...)` (writes a ready-to-save table with the mesh's BCs).
+  - **Checks:** `HatConnectivityWarning` for a missing hat, a hat on a tip, or a hat that does not span the one-ring
+    of its centre (e.g. a junction row without `e4`), with the suggested row. A repeated centre raises.
+  - **Tests:** `tests/test_junction_connectivity.py`; explicit junction rows equal the general (quadratic) solve to
+    1e-12 in both geometries. Examples: `planestrain/example_freesurface_fault.py`, and
+    `antiplane/ConstructMesh.py` with `HeterogeneousElasticity_forces.py` (now slip hats, three files per mesh;
+    same results as the per-element version to 1e-14).
 
 ### T3. Tests and docs
 - [x] Extend `tests/` with the T1 validation cases (`tests/test_validation.py`). Optional: a plane-strain Dundurs

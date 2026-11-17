@@ -182,7 +182,12 @@ def edge_dislocation_bimaterial_constants(z0, b, mu1, mu2, nu, n_points=200):
     n_q = 2 * (7 + 9)
     r0 = fields(np.zeros(n_q))
     M = np.stack([fields(np.eye(n_q)[k]) - r0 for k in range(n_q)], axis=1)
-    q, *_ = np.linalg.lstsq(M, -r0, rcond=None)
+    # the columns scale like d^-k (terms (z - p)^-k with |z - p| ~ d): equilibrate them, or
+    # the least squares loses the small-scale terms for a dislocation close to the interface
+    scale = np.linalg.norm(M, axis=0)
+    scale[scale == 0] = 1.0
+    q, *_ = np.linalg.lstsq(M / scale, -r0, rcond=None)
+    q = q / scale
     rel = np.abs(M @ q + r0).max() / np.abs(r0).max()
     return A, _unpack(q), rel
 

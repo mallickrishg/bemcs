@@ -502,16 +502,23 @@ def _straight(n, x0=0.0, y=0.0):
     return [((x0 + i, y), (x0 + i + 1, y)) for i in range(n)]
 
 
+def _traps(conn):
+    """The trapezoid rows (not the [e, e, e] half-hats)."""
+    conn = np.asarray(conn)
+    return conn[~((conn[:, 0] == conn[:, 1]) & (conn[:, 1] == conn[:, 2]))]
+
+
 def test_trapezoids_restart_at_a_break_symmetrically():
     """8 elements on [0, 8], break at x = 4: collocation (middle) elements 2 and 5, 1.5
-    elements from the break on both sides; the two trapezoids there share nothing."""
+    elements from the break on both sides; the two trapezoids there share nothing. A half-hat
+    on each side ([3, 3, 3], [4, 4, 4]) gives the force a free value at the break (tasks.md P2)."""
     els = _line_els(_straight(8))
     conn = GF.trapezoid_connectivity(els, breaks=[[4.0, 0.0]])
-    np.testing.assert_array_equal(conn, [[1, 2, 3], [4, 5, 6]])
+    np.testing.assert_array_equal(conn, [[3, 3, 3], [1, 2, 3], [4, 4, 4], [4, 5, 6]])
     GF._check_trapezoid_overlap(conn)
     # longer: every other element counted from the break on each side
     els = _line_els(_straight(12))
-    conn = GF.trapezoid_connectivity(els, breaks=[[6.0, 0.0]])
+    conn = _traps(GF.trapezoid_connectivity(els, breaks=[[6.0, 0.0]]))
     np.testing.assert_array_equal(conn[:, 1], [2, 4, 7, 9])
     centres = els.x_centers[conn[:, 1]]
     np.testing.assert_allclose(np.sort(6 - centres[centres < 6]), np.sort(centres[centres > 6] - 6))  # 1.5, 3.5
@@ -523,7 +530,9 @@ def test_trapezoids_restart_at_two_breaks_and_on_closed_loops():
     els = _line_els(_straight(11))
     conn = GF.trapezoid_connectivity(els, breaks=[[3.0, 0.0], [8.0, 0.0]])
     GF._check_trapezoid_overlap(conn)
-    mids = conn[:, 1].tolist()
+    halves = sorted(r[0] for r in conn.tolist() if r[0] == r[1] == r[2])
+    assert halves == [2, 3, 7, 8]  # a half-hat on each side of each break
+    mids = _traps(conn)[:, 1].tolist()
     assert 1 in mids and 2 not in mids  # left segment [0, 1, 2], counted from the break at 3
     assert 4 in mids and 9 in mids  # both sides of the break at 8 flanked 1.5 elements away
     # a closed square loop of 8 elements with a break at one corner
@@ -532,6 +541,8 @@ def test_trapezoids_restart_at_two_breaks_and_on_closed_loops():
     els = _line_els(sq)
     conn = GF.trapezoid_connectivity(els, breaks=[[0.0, 0.0]])
     GF._check_trapezoid_overlap(conn)
+    assert sorted(r[0] for r in conn.tolist() if r[0] == r[1] == r[2]) == [0, 7]
+    conn = _traps(conn)
     # 8 elements between the break and itself: an even segment can be flanked at 1.5 elements on
     # one side of the break only (the other gets 2.5)
     d = np.hypot(els.x_centers[conn[:, 1]], els.y_centers[conn[:, 1]])
@@ -557,7 +568,7 @@ def test_mesh_warns_about_trapezoids_across_fault_crossings(tmp_path):
     with pytest.warns(bemcs.TrapezoidCrossingWarning, match=r"\(0, -1\) between elements 6 and 7"):
         bemcs.solve(mesh, geometry="antiplane", mu=1.0)
     fix = mesh.split_force_trapezoids()
-    np.testing.assert_array_equal(fix, 3 + np.array([[1, 2, 3], [4, 5, 6]]))
+    np.testing.assert_array_equal(fix, 3 + np.array([[3, 3, 3], [1, 2, 3], [4, 4, 4], [4, 5, 6]]))
     # the fix, given as a connectivity file: no warning
     path = tmp_path / "connectivity.csv"
     np.savetxt(path, fix, fmt="%d", delimiter=",", header="e1,e2,e3", comments="")
@@ -575,10 +586,10 @@ def test_mesh_warns_about_trapezoids_across_fault_crossings(tmp_path):
         bemcs.solve(mesh, geometry="antiplane", mu=1.0)
 
 
-def test_connectivity_file_needs_three_integer_columns(tmp_path):
+def test_connectivity_file_needs_three_element_columns(tmp_path):
     path = tmp_path / "bad.csv"
     path.write_text("0,1\n2,3\n")
-    with pytest.raises(ValueError, match="three integer columns"):
+    with pytest.raises(ValueError, match="e1, e2, e3"):
         GF._read_connectivity(path)
 
 
@@ -615,8 +626,10 @@ def test_force_chain_ending_on_slip_elements_has_an_open_end():
 
 def test_open_end_patch_needs_a_chain_tip():
     els = _line_els(_straight(5))
-    with pytest.raises(ValueError, match="exactly one chain-tip node"):
+    with pytest.raises(ValueError, match="chain tip or a break point"):
         GF.trapezoid_coefficients(els, np.array([[2, 2, 2]]), geometry="antiplane")  # interior element
+    # with a break at one of its nodes it is a half-hat next to that break
+    GF.trapezoid_coefficients(els, np.array([[2, 2, 2]]), geometry="antiplane", breaks=[[2.0, 0.0]])
 
 
 def test_open_ends_only_at_the_free_surface_not_at_faults():

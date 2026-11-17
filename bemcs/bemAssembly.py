@@ -1,4 +1,5 @@
 import os
+import re
 import warnings
 from dataclasses import dataclass, field
 
@@ -1212,27 +1213,94 @@ def _check_material(geometry, mu, nu):
             raise ValueError(f"nu must be a scalar in (-1, 0.5), got {nu!r}")
 
 
+_ELEMENT_COLUMN = re.compile(r"^e(\d+)$")
+
+
+def _connectivity_table(d, source):
+    """(conn, bc) from a connectivity table (pandas DataFrame with named columns).
+
+    Element columns e1, e2, e3[, e4, ...]: the patch, centre in e2; e4 and up are the extra
+    branches at a triple junction (-1 or empty where unused). Optional boundary-condition
+    columns, applied at the centre element e2, named as in a mesh file:
+    BC_type_1, value_1, BC_type_2, value_2 (plane strain, per component), or
+    BC_type, value[, value2] (the same type on both components; antiplane uses one).
+    bc is None without BC columns, else (bc_type (n, 2) str, bc_value (n, 2) float)."""
+    d = d.rename(columns=lambda c: str(c).strip())
+    ecols = sorted((c for c in d.columns if _ELEMENT_COLUMN.match(c)),
+                   key=lambda c: int(_ELEMENT_COLUMN.match(c).group(1)))
+    if [int(_ELEMENT_COLUMN.match(c).group(1)) for c in ecols] != list(range(1, len(ecols) + 1)) \
+            or len(ecols) < 3:
+        raise ValueError(f"{source}: element columns must be e1, e2, e3[, e4, ...], got {ecols}")
+    e = d[ecols].apply(pd.to_numeric, errors="coerce").fillna(-1).to_numpy(float)
+    if not np.all(e == np.round(e)):
+        raise ValueError(f"{source}: element indices must be integers")
+    conn = e.astype(int)
+    per_component = {"BC_type_1", "value_1", "BC_type_2", "value_2"}
+    if per_component & set(d.columns):
+        missing = per_component - set(d.columns)
+        if missing or "BC_type" in d.columns:
+            raise ValueError(f"{source}: give BC_type_1, value_1, BC_type_2, value_2 (all four), "
+                             "or BC_type, value")
+        bc_type = np.stack((d["BC_type_1"].astype(str).str.strip().to_numpy(),
+                            d["BC_type_2"].astype(str).str.strip().to_numpy()), axis=1)
+        bc_value = np.stack((d["value_1"].to_numpy(float), d["value_2"].to_numpy(float)), axis=1)
+    elif "BC_type" in d.columns:
+        if "value" not in d.columns:
+            raise ValueError(f"{source}: a BC_type column needs a value column")
+        t = d["BC_type"].astype(str).str.strip().to_numpy()
+        bc_type = np.stack((t, t), axis=1)
+        v2 = d["value2"].to_numpy(float) if "value2" in d.columns else np.zeros(len(d))
+        bc_value = np.stack((d["value"].to_numpy(float), v2), axis=1)
+    else:
+        return conn, None
+    bad = sorted(set(bc_type.ravel().tolist()) - set(_BC_TYPES))
+    if bad:
+        raise ValueError(f"{source}: unknown BC_type {bad}; choose from {_BC_TYPES}")
+    return conn, (bc_type, np.nan_to_num(bc_value))
+
+
 def _read_connectivity(path):
-    """(n, 3) int array from a CSV file: one patch per row, three 0-based element
-    indices, optional header line."""
-    import pandas as pd
+    """(conn, bc) from a connectivity CSV file, one patch per row (see `_connectivity_table`).
+    A file without a header holds element indices only: three columns, or more for
+    triple-junction hats (-1 where unused)."""
+    with open(path) as fh:
+        first = next((ln for ln in fh if ln.strip() and not ln.lstrip().startswith("#")), "")
+    cells = [c.strip() for c in first.split(",")]
+    if all(pd.to_numeric(pd.Series(cells), errors="coerce").notna()):  # no header
+        d = pd.read_csv(path, header=None, comment="#")
+        d.columns = [f"e{k + 1}" for k in range(d.shape[1])]
+    else:
+        d = pd.read_csv(path, comment="#")
+    return _connectivity_table(d, path)
 
-    d = pd.read_csv(path, header=None, comment="#")
-    d = d[pd.to_numeric(d.iloc[:, 0], errors="coerce").notna()]  # drop a header row
-    conn = d.to_numpy(dtype=float)
-    if conn.ndim != 2 or conn.shape[1] != 3 or not np.all(conn == np.round(conn)):
-        raise ValueError(f"{path}: a connectivity file needs three integer columns per row")
-    return conn.astype(int)
+
+def _connectivity_input(v, kind):
+    """(conn, bc) from a Mesh connectivity value: a CSV path, a DataFrame, or an int array."""
+    if isinstance(v, (str, os.PathLike)):
+        return _read_connectivity(v)
+    if isinstance(v, pd.DataFrame):
+        return _connectivity_table(v, f"connectivity[{kind!r}]")
+    return v, None
 
 
-def _check_connectivity(conn, n_els):
+def _check_connectivity(conn, n_els, kind="slip"):
+    """(n_patches, k) int array, k >= 3: the patch e1, e2 (centre), e3, and for slip hats
+    the extra branches at a triple junction in columns 4 and up (-1 where unused). Extra
+    columns that are all -1 are dropped."""
     c = np.asarray(conn)
-    if c.ndim != 2 or c.shape[1] != 3 or not np.issubdtype(c.dtype, np.integer):
+    if c.ndim != 2 or c.shape[1] < 3 or not np.issubdtype(c.dtype, np.integer):
         raise ValueError(
-            f"connectivity must be an (n_patches, 3) int array, got shape {c.shape} {c.dtype}"
+            f"connectivity must be an (n_patches, 3) int array (or more columns for triple-junction "
+            f"hats), got shape {c.shape} {c.dtype}"
         )
-    if c.size and (c.min() < 0 or c.max() >= n_els):
-        raise ValueError("connectivity has element indices out of range")
+    keep = 3 + max([j + 1 for j in range(c.shape[1] - 3) if (c[:, 3 + j] >= 0).any()], default=0)
+    c = c[:, :keep]
+    if c.size and ((c[:, :3] < 0).any() or c.max() >= n_els or (c < -1).any()):
+        raise ValueError("connectivity has element indices out of range (e1, e2, e3 must be "
+                         "elements; extra columns an element or -1)")
+    if c.shape[1] > 3 and kind != "slip":
+        raise ValueError("only slip hats take extra (triple-junction) columns; force trapezoids "
+                         "are chains of 3 elements")
     return c
 
 
@@ -1305,6 +1373,50 @@ def hat_elements(els, connectivity=None):
     return _check_connectivity(connectivity, len(els.x_centers))[:, 1]
 
 
+def _nodes_to_elements(els):
+    """{(x, y): set of elements with an end node there}."""
+    x1, y1 = np.asarray(els.x1, dtype=float), np.asarray(els.y1, dtype=float)
+    x2, y2 = np.asarray(els.x2, dtype=float), np.asarray(els.y2, dtype=float)
+    at_point = {}
+    for e in range(len(x1)):
+        for pt in ((x1[e], y1[e]), (x2[e], y2[e])):
+            at_point.setdefault(pt, set()).add(e)
+    return at_point
+
+
+def one_ring_support(els, e, at_point=None):
+    """Elements of the one-ring hat of element e: e plus every element sharing one of its
+    end nodes (3 on a chain, 4 next to a triple junction), as a connectivity row:
+    [neighbour at e's start node, e, neighbour at its end node, extra branches...]."""
+    at_point = _nodes_to_elements(els) if at_point is None else at_point
+    start = sorted(at_point[(float(els.x1[e]), float(els.y1[e]))] - {e})
+    end = sorted(at_point[(float(els.x2[e]), float(els.y2[e]))] - {e})
+    if not start or not end:
+        raise ValueError(f"element {e} is a tip element (an open end node): it has no hat")
+    return [start[0], e, end[0]] + start[1:] + end[1:]
+
+
+def _ring_hat(els, support, e, geometry):
+    """Hat of element e on `support` (element indices): unit slip at e's centre, the
+    `continuity_rows` of the sub-mesh (overlaps, triple junctions; slip and gradient zero
+    at open nodes). (len(support), 3, pe, pe) element coefficients."""
+    pe = 1 if geometry == "antiplane" else 2
+    sub = _subset_els(els, support)
+    le = list(support).index(e)
+    A_sub, _ = continuity_rows(sub, kind="slip", geometry=geometry)
+    m_local, _ = slip_node_matrices(sub, geometry=geometry, reference="local")
+    M = np.vstack((m_local[pe * (3 * le + 1) : pe * (3 * le + 1) + pe], A_sub))
+    n_unknowns = 3 * pe * len(support)
+    if M.shape != (n_unknowns, n_unknowns):
+        raise ValueError(
+            f"the hat of element {e} on elements {list(support)} gives a {M.shape[0]} x {n_unknowns} "
+            "system: the elements must be e and all its neighbours (its one-ring)"
+        )
+    rhs = np.zeros((n_unknowns, pe))
+    rhs[:pe, :] = np.eye(pe)
+    return np.linalg.solve(M, rhs).reshape(len(support), 3, pe, pe)
+
+
 def one_ring_hat_coefficients(els, *, geometry):
     """One-ring hats (tasks.md 7.4): one hat per non-tip element of the mesh.
 
@@ -1322,33 +1434,24 @@ def one_ring_hat_coefficients(els, *, geometry):
     n_els = len(els.x_centers)
     pe = 1 if geometry == "antiplane" else 2
     centres = hat_elements(els)
-    x1, y1 = np.asarray(els.x1, dtype=float), np.asarray(els.y1, dtype=float)
-    x2, y2 = np.asarray(els.x2, dtype=float), np.asarray(els.y2, dtype=float)
-    at_point = {}
-    for e in range(n_els):
-        for pt in ((x1[e], y1[e]), (x2[e], y2[e])):
-            at_point.setdefault(pt, set()).add(e)
+    at_point = _nodes_to_elements(els)
     T = np.zeros((n_els * 3, pe, len(centres), pe))
     for p, e in enumerate(centres):
-        support = sorted(at_point[(x1[e], y1[e])] | at_point[(x2[e], y2[e])])
-        sub = _subset_els(els, support)
-        le = support.index(e)
-        A_sub, _ = continuity_rows(sub, kind="slip", geometry=geometry)
-        m_local, _ = slip_node_matrices(sub, geometry=geometry, reference="local")
-        centre_rows = m_local[pe * (3 * le + 1) : pe * (3 * le + 1) + pe]
-        M = np.vstack((centre_rows, A_sub))
-        n_unknowns = 3 * pe * len(support)
-        if M.shape != (n_unknowns, n_unknowns):
-            raise ValueError(
-                f"one-ring patch of element {e} (support {support}) gives a "
-                f"{M.shape[0]} x {n_unknowns} system"
-            )
-        rhs = np.zeros((n_unknowns, pe))
-        rhs[:pe, :] = np.eye(pe)
-        coefs = np.linalg.solve(M, rhs).reshape(len(support), 3, pe, pe)
+        support = sorted(one_ring_support(els, e, at_point))
+        coefs = _ring_hat(els, support, e, geometry)
         for k, g in enumerate(support):
             T[3 * g : 3 * g + 3, :, p, :] = coefs[k]
     return T[:, 0, :, 0] if geometry == "antiplane" else T
+
+
+def one_ring_connectivity(els):
+    """Connectivity rows of the one-ring hats, one per non-tip element (`one_ring_support`),
+    padded with -1 to a common width: 3 columns on chains, 4 where a hat touches a triple
+    junction. The explicit form of the default slip layout, e.g. to start a connectivity file."""
+    at_point = _nodes_to_elements(els)
+    rows = [one_ring_support(els, e, at_point) for e in hat_elements(els)]
+    width = max([3] + [len(r) for r in rows])
+    return np.array([r + [-1] * (width - len(r)) for r in rows], dtype=int).reshape(-1, width)
 
 
 def hat_coefficients(els, connectivity=None, *, geometry):
@@ -1360,7 +1463,12 @@ def hat_coefficients(els, connectivity=None, *, geometry):
     unit slip (t or n, local frame) at the centre of the middle element, zero slip
     and slip gradient at the open ends, and continuous slip and slip gradient
     (global frame) at the two internal nodes; on a straight run this equals the
-    one-ring hat of the middle element. Returns (3 n_els, n_patches) in antiplane
+    one-ring hat of the middle element.
+    connectivity (n_patches, k > 3): rows with elements in columns 4 and up (-1 where
+    unused) are triple-junction hats: the centre e2 with all its neighbours, e.g.
+    [e1, e2, e3, e4] when three elements meet at one end of e2. Their hat is the
+    one-ring hat of e2 (`_ring_hat`: the junction continuity rows inside the support).
+    Returns (3 n_els, n_patches) in antiplane
     and (3 n_els, 2, n_patches, 2) [dof, direction_in, patch, direction_out] in plane strain.
     """
     if connectivity is None:
@@ -1373,7 +1481,13 @@ def hat_coefficients(els, connectivity=None, *, geometry):
     n_unknowns = 9 * pe
     T = np.zeros((n_els * 3, pe, n_p, pe))
     for p in range(n_p):
-        sub = _subset_els(els, conn[p])
+        if conn.shape[1] > 3 and (conn[p, 3:] >= 0).any():  # triple-junction hat
+            support = [int(g) for g in conn[p] if g >= 0]
+            coefs = _ring_hat(els, support, int(conn[p, 1]), geometry)
+            for local, e in enumerate(support):
+                T[3 * e : 3 * e + 3, :, p, :] = coefs[local]
+            continue
+        sub = _subset_els(els, conn[p, :3])
         index_open, index_overlap, _ = _core.label_nodes(sub, verbose=False)
         m_slip, m_grad = slip_node_matrices(sub, geometry=geometry, reference="global")
         m_local, _ = slip_node_matrices(sub, geometry=geometry, reference="local")
@@ -1396,12 +1510,13 @@ def hat_coefficients(els, connectivity=None, *, geometry):
         A = np.array(rows)
         if A.shape != (n_unknowns, n_unknowns):
             raise ValueError(
-                f"patch {p} ({conn[p].tolist()}) is not a chain of 3 connected elements"
+                f"patch {p} ({conn[p, :3].tolist()}) is not a chain of 3 connected elements; next to a "
+                "triple junction, list the extra branch in a 4th column (see one_ring_support)"
             )
         rhs = np.zeros((n_unknowns, pe))
         rhs[:pe, :] = np.eye(pe)  # unit slip along each local direction
         coefs = np.linalg.solve(A, rhs).reshape(3, 3, pe, pe)  # (element, node, l_in, m_out)
-        for local, e in enumerate(conn[p]):
+        for local, e in enumerate(conn[p, :3]):
             T[3 * e : 3 * e + 3, :, p, :] = coefs[local]
     return T[:, 0, :, 0] if geometry == "antiplane" else T
 
@@ -1459,8 +1574,13 @@ def trapezoid_connectivity(els, breaks=None, tol=1e-9):
         (`Mesh.fault_crossings`; `Mesh.split_force_trapezoids` builds the global
         connectivity from them). The chain is split there; on each side the stride is
         counted from the break, so collocation points flank it symmetrically (1.5
-        elements away) and the two trapezoids next to it share no element (the force
-        is zero at the break node). Without this, a stride that runs through a
+        elements away) and the two trapezoids next to it share no element (each is
+        zero at the break node). Each side also gets a half-hat [e, e, e] on the element
+        next to the break (collocated at its centre), so the force takes a free value
+        there on either side: the force density jumps at a fault crossing, and tapering
+        it to zero cost a factor 10-20 in accuracy in plane strain (tasks.md P2,
+        tests/test_fault_crossing.py). A one-element segment between two breaks gets no
+        half-hat. Without the restart, a stride that runs through a
         crossing has a collocation point on one side of it only: the interface then
         carries a spurious net force whose far field (log r in antiplane) pollutes
         the whole solution (tasks.md; examples/antiplane/HeterogeneousElasticity_forces.py).
@@ -1526,6 +1646,15 @@ def trapezoid_connectivity(els, breaks=None, tol=1e-9):
             seg = chain[a:b]
             break_start = j > 0 or open_start
             break_end = j < len(bounds) - 2 or open_end
+            # interior breaks: a free force value on each side (half-hats), like an open end.
+            # A one-element segment between two breaks gets none (one element cannot carry
+            # two half-hats); its force stays zero.
+            cut_start, cut_end = j > 0 or closed, j < len(bounds) - 2 or closed
+            if len(seg) > 1 or not (cut_start and cut_end):
+                if cut_start:
+                    rows.append((seg[0],) * 3)
+                if cut_end:
+                    rows.append((seg[-1],) * 3)
             for m in _segment_middles(len(seg), from_end=break_end and not break_start):
                 rows.append((seg[m - 1], seg[m], seg[m + 1]))
     return np.array(rows, dtype=int).reshape(-1, 3)
@@ -1602,9 +1731,11 @@ def fault_crossings(els, labels, tol=1e-9):
 
     These are where the force density changes regime and the trapezoid stride should
     restart (`TrapezoidCrossingWarning`):
+
     - a fault crossing an interface (neither neighbouring force element on the fault);
     - the end of an overlap (one neighbouring force element on slip elements, the other
       not), e.g. a crack tip on an interface or the bottom of a fault on a contact.
+
     Nodes with all neighbouring force elements on slip elements (inside an overlap) and
     force-chain ends (see `force_open_ends`) are not included."""
     labels = np.asarray(labels).astype(str)
@@ -1767,7 +1898,7 @@ def patch_elements(els, basis, connectivity=None):
     return trapezoid_connectivity(els)[:, 1]
 
 
-def trapezoid_coefficients(els, connectivity=None, *, geometry):
+def trapezoid_coefficients(els, connectivity=None, *, geometry, breaks=None, tol=1e-9):
     """Transform from linear-force element DOFs to trapezoid patches (one per row of
     connectivity; connectivity=None: `trapezoid_connectivity`, every other element).
 
@@ -1775,10 +1906,13 @@ def trapezoid_coefficients(els, connectivity=None, *, geometry):
     element) at both nodes of its middle element, zero force at the two open ends
     of the patch, and continuous force (global frame) at the two internal nodes.
     A row [e, e, e] is an open-end patch: a half-hat on element e alone, unit force
-    at e's chain-tip node (the node no other force element uses) and zero at its other
-    node, collocated at e's centre. It gives the force a free value at a chain end
-    that touches slip elements (`Mesh.force_open_ends`), where tapering to zero would
-    be wrong; the neighbouring trapezoid keeps its usual zero at the tip.
+    at e's free node and zero at its other node, collocated at e's centre. The free
+    node is the one that is a chain tip (no other force element uses it) or lies on
+    one of `breaks` (`Mesh.trapezoid_restart_points`: fault crossings, overlap ends,
+    open ends); exactly one of e's nodes must qualify. It gives the force a free value
+    where tapering to zero would be wrong: a chain end that touches slip elements
+    (`Mesh.force_open_ends`), or either side of a fault crossing, where the force
+    density jumps. The neighbouring trapezoid keeps its usual zero at that node.
     Returns (2 n_els, n_patches) in antiplane and
     (2 n_els, 2, n_patches, 2) [dof, direction_in, patch, direction_out] in plane strain.
     """
@@ -1801,14 +1935,21 @@ def trapezoid_coefficients(els, connectivity=None, *, geometry):
         for pt in ((float(els.x1[e]), float(els.y1[e])), (float(els.x2[e]), float(els.y2[e]))):
             use[pt] = use.get(pt, 0) + 1
 
+    breaks = np.zeros((0, 2)) if breaks is None else np.asarray(breaks, float).reshape(-1, 2)
+    L_max = 2 * np.max(np.asarray(els.half_lengths)) if n_els else 1.0
+
+    def free(x, y):
+        return use[(float(x), float(y))] == 1 or (
+            len(breaks) > 0 and np.hypot(breaks[:, 0] - x, breaks[:, 1] - y).min() < tol * L_max)
+
     T = np.zeros((n_els * 2, pe, n_p, pe))
     for p in range(n_p):
-        if conn[p, 0] == conn[p, 1] == conn[p, 2]:  # open-end patch: half-hat at the tip node
+        if conn[p, 0] == conn[p, 1] == conn[p, 2]:  # open-end patch: half-hat at the free node
             e = int(conn[p, 0])
-            start_tip = use[(float(els.x1[e]), float(els.y1[e]))] == 1
-            end_tip = use[(float(els.x2[e]), float(els.y2[e]))] == 1
+            start_tip, end_tip = free(els.x1[e], els.y1[e]), free(els.x2[e], els.y2[e])
             if start_tip == end_tip:
-                raise ValueError(f"open-end patch [{e}, {e}, {e}]: element {e} must have exactly one chain-tip node")
+                raise ValueError(f"open-end patch [{e}, {e}, {e}]: exactly one node of element {e} must be a "
+                                 "chain tip or a break point (fault crossing, open end)")
             # ramp 0 is 1 at the element's end node (x2, y2), ramp 1 at its start node (x1, y1);
             # unit force along each local direction of e (element coefficients are in e's frame)
             k = 1 if start_tip else 0
@@ -1859,7 +2000,7 @@ def basis_transform(els, *, kind, basis, geometry, connectivity=None, breaks=Non
         return hat_coefficients(els, connectivity, geometry=geometry)
     if basis == "nodal":
         return nodal_force_coefficients(els, nodal_force_layout(els, breaks), geometry=geometry)
-    return trapezoid_coefficients(els, connectivity, geometry=geometry)
+    return trapezoid_coefficients(els, connectivity, geometry=geometry, breaks=breaks)
 
 
 def _apply_transform(U, S, T, geometry):
@@ -2136,7 +2277,7 @@ def _source_kernels(kind, x_obs, y_obs, els, geometry, mu, nu, basis, connectivi
         raise ValueError(f"basis {basis!r} is not available for {kind}; choose from {_BASES[kind]}")
     n_els = len(els.x_centers)
     if basis in _PATCH_BASES and connectivity is not None:  # None: one-ring patches
-        connectivity = _check_connectivity(connectivity, n_els)
+        connectivity = _check_connectivity(connectivity, n_els, kind)
     elif connectivity is not None:
         raise ValueError(f"connectivity is only used with patch bases, not {basis!r}")
     use_numba = _check_numba(use_numba)
@@ -2318,6 +2459,93 @@ class CoefficientLayout:
         return "\n".join(lines)
 
 
+
+def hat_connectivity_issues(els, conn, index=None):
+    """Problems with explicit slip-hat rows (`conn` in `els` indices, -1 padded), as messages.
+
+    - a non-tip element that is the centre of no row: the slip space misses its hat;
+    - a row centred on a tip element (tips get no hat: their slip tapers to zero);
+    - a row whose elements are not the one-ring of its centre (`one_ring_support`), e.g. a
+      3-element chain that runs through a triple junction without the third branch.
+
+    `index` maps els indices to the caller's (global) element numbers in the messages."""
+    index = np.arange(len(els.x_centers)) if index is None else np.asarray(index)
+    at_point = _nodes_to_elements(els)
+    tips = set(tip_elements(els).tolist())
+    conn = np.asarray(conn)
+    out = []
+    missing = sorted(set(range(len(els.x_centers))) - tips - set(conn[:, 1].tolist()))
+    if missing:
+        out.append(f"no row is centred on element(s) {index[missing].tolist()} (their hats are missing, so the "
+                   "slip space is too small)")
+    for r, row in enumerate(conn):
+        e = int(row[1])
+        if e in tips:
+            out.append(f"row {r} is centred on tip element {index[e]} (tips have no hat)")
+            continue
+        want = one_ring_support(els, e, at_point)
+        if set(row[row >= 0].tolist()) != set(want):
+            out.append(f"row {r} {index[row[row >= 0]].tolist()}: the hat of element {index[e]} must span its "
+                       f"neighbours, e.g. {index[want].tolist()}")
+    return out
+
+
+def _merge_connectivity_bcs(conn, conn_bc, n_els, bc_type, bc_value, labels):
+    """Element boundary conditions (bc_type, bc_value, labels) from connectivity rows with BC
+    columns: each row's condition applies at its centre element e2. Elements in a row of kind
+    k are labelled k. An element that is the centre of no row gets no condition row in
+    `solve`; for bookkeeping (plots, open-end detection) it takes the type of a row it belongs
+    to. Given bc_type / bc_value must agree with the rows at their centres."""
+    row_label = np.full(n_els, "", dtype=object)
+    for k, c in conn.items():
+        if c is None:
+            continue
+        members = c[c >= 0]
+        clash = (row_label[members] != "") & (row_label[members] != k[0])
+        if clash.any():
+            raise ValueError(f"element(s) {np.unique(members[clash]).tolist()} are in both slip and force rows")
+        row_label[members] = k[0]
+    new_type = np.full((n_els, 2), "", dtype=object)
+    new_value = np.zeros((n_els, 2))
+    for k, (t, v) in conn_bc.items():
+        c = conn[k]
+        new_type[c[:, 1]] = t
+        new_value[c[:, 1]] = v
+    for k, (t, v) in conn_bc.items():  # non-centre members: type of their row
+        for r, row in enumerate(conn[k]):
+            for g in row[row >= 0]:
+                if new_type[g, 0] == "":
+                    new_type[g] = t[r]
+    has = new_type[:, 0] != ""
+    if labels is not None:
+        labels = np.full(n_els, labels[0]) if isinstance(labels, str) else np.asarray(labels).astype(str)
+        # a force element in no trapezoid (e.g. at a chain end of a stride-2 layout) carries no force
+        new_type[~has & (labels == "f")] = "h"
+        has = new_type[:, 0] != ""
+    elif bc_type is not None:
+        labels = np.where(row_label != "", row_label, np.where((bc_type == "h").any(axis=1), "f", "s")).astype(str)
+    else:
+        labels = np.where(row_label != "", row_label, "s").astype(str)
+    if bc_type is None:
+        if not has.all():
+            raise ValueError(
+                f"element(s) {np.flatnonzero(~has)[:10].tolist()} are in no connectivity row with BC columns, "
+                "so neither their source type nor their boundary condition is known. Add them to a "
+                "connectivity file, give bc_type / bc_value for the whole mesh, or give labels (a `label` column "
+                "of s/f in a mesh file; a force element in no trapezoid then carries no force)")
+        return new_type.astype(str), new_value, labels
+    centres = np.unique(np.concatenate([conn[k][:, 1] for k in conn_bc]))
+    bad = centres[(bc_type[centres] != new_type[centres].astype(str)).any(axis=1)]
+    if bc_value is not None:
+        check = centres[(new_type[centres] != "h").all(axis=1)]
+        bad = np.union1d(bad, check[~np.isclose(bc_value[check], new_value[check]).all(axis=1)])
+    if len(bad):
+        raise ValueError(
+            f"element(s) {bad[:10].tolist()}: the boundary condition in the connectivity rows differs from "
+            "bc_type / bc_value (give each condition in one place)")
+    return bc_type, bc_value, labels
+
+
 class Mesh:
     """A boundary mesh: elements, their source type, and the basis used for each type.
 
@@ -2341,8 +2569,17 @@ class Mesh:
         free surface, `mesh.force_open_ends`) the force is open there: the default
         layout adds an open-end patch [e, e, e] (a free force value at the tip, see
         `trapezoid_coefficients`) and counts the trapezoid stride from that end.
-        Each value may also be the path of a CSV file with one patch per row: three
-        0-based element indices (rows of the mesh file), with or without a header.
+        Slip hats next to a triple junction (three slip elements sharing a node, e.g. a
+        fault breaking the free surface) need all neighbours of their centre: give such
+        rows a 4th element (columns 4 and up, -1 where unused), e.g. [e1, e2, e3, e4]
+        with e2 the centre and e4 the third branch at the junction (`one_ring_support`).
+        Each value may also be the path of a CSV file, or a pandas DataFrame, with one
+        patch per row: element columns e1, e2, e3[, e4] (0-based rows of the mesh file),
+        and optionally boundary-condition columns BC_type_1, value_1, BC_type_2, value_2
+        (or BC_type, value), which apply at the centre element e2: the condition of each
+        patch is then given with the patch rather than per element (bc_type / bc_value
+        may be left out; given ones must agree). A file without a header holds element
+        indices only. `connectivity_table` writes such a table from a mesh.
         The connectivity is the user's choice; `solve` warns about layouts that
         cause known problems (a trapezoid spanning a node where a fault crosses
         the chain, `TrapezoidCrossingWarning`) and `split_force_trapezoids`
@@ -2379,6 +2616,24 @@ class Mesh:
             bad = sorted(set(bc_type.ravel().tolist()) - set(_BC_TYPES))
             if bad:
                 raise ValueError(f"unknown bc_type {bad}; choose from {_BC_TYPES}")
+        # connectivity first: its rows may carry boundary conditions (and so the labels)
+        connectivity = dict(connectivity or {})
+        unknown = set(connectivity) - set(_KINDS)
+        if unknown:
+            raise ValueError(f"connectivity keys must be 'slip'/'force', got {sorted(unknown)}")
+        conn_bc = {}
+        for k, v in list(connectivity.items()):
+            c, bc = _connectivity_input(v, k)
+            connectivity[k] = None if c is None else _check_connectivity(c, n_els, k)
+            if bc is not None:
+                conn_bc[k] = bc
+        if bc_value is not None:
+            bc_value = np.asarray(bc_value, dtype=float)
+            if bc_value.ndim == 1:
+                bc_value = np.stack((bc_value, np.zeros(n_els)), axis=1)
+        if conn_bc:
+            bc_type, bc_value, labels = _merge_connectivity_bcs(
+                connectivity, conn_bc, n_els, bc_type, bc_value, labels)
         if labels is None:
             if bc_type is None:
                 raise TypeError("Mesh needs labels or bc_type")
@@ -2395,12 +2650,9 @@ class Mesh:
             raise ValueError(f"labels must be 's' or 'f', got {bad}")
 
         basis = dict(basis or {})
-        connectivity = {k: (_read_connectivity(v) if isinstance(v, (str, os.PathLike)) else v)
-                        for k, v in dict(connectivity or {}).items()}
-        for name, d in (("basis", basis), ("connectivity", connectivity)):
-            unknown = set(d) - set(_KINDS)
-            if unknown:
-                raise ValueError(f"{name} keys must be 'slip'/'force', got {sorted(unknown)}")
+        unknown = set(basis) - set(_KINDS)
+        if unknown:
+            raise ValueError(f"basis keys must be 'slip'/'force', got {sorted(unknown)}")
 
         self.els = els
         self.labels = labels
@@ -2413,15 +2665,33 @@ class Mesh:
                 raise ValueError(f"basis {b!r} is not available for {k}; choose from {_BASES[k]}")
             c = connectivity.get(k)
             if b in _PATCH_BASES and c is not None:  # None: one-ring patches
-                c = _check_connectivity(c, n_els)
-                if not (labels[c] == k[0]).all():
+                if not (labels[c[c >= 0]] == k[0]).all():
                     raise ValueError(f"{k} connectivity refers to elements not labelled {k[0]!r}")
+                centres, counts = np.unique(c[:, 1], return_counts=True)
+                if (counts > 1).any():
+                    raise ValueError(f"{k} connectivity: element(s) {centres[counts > 1].tolist()} are the "
+                                     "centre (e2) of more than one row (each element is the centre of at most "
+                                     "one patch; repeated patches make the system singular)")
             elif c is not None:
                 raise ValueError(f"connectivity[{k!r}] is only used with patch bases, not {b!r}")
             self.basis[k], self.connectivity[k] = b, c
         for k in set(basis) | set(connectivity):
             if k not in self.kinds:
                 raise ValueError(f"basis/connectivity given for {k!r} but no element is labelled {k[0]!r}")
+        if self.basis.get("slip") == "hat" and self.connectivity.get("slip") is not None:
+            idx = np.flatnonzero(labels == "s")
+            g2l = np.full(n_els, -1)
+            g2l[idx] = np.arange(len(idx))
+            c = self.connectivity["slip"]
+            issues = hat_connectivity_issues(_subset_els(els, idx), np.where(c >= 0, g2l[c], -1), index=idx)
+            if issues:
+                warnings.warn(
+                    "slip hat connectivity: " + "; ".join(issues[:6])
+                    + (f"; ... ({len(issues)} issues)" if len(issues) > 6 else "")
+                    + ". mesh.connectivity_table('slip', ...) writes the default (one-ring) rows to start from.",
+                    HatConnectivityWarning,
+                    stacklevel=2,
+                )
         # nodes where a fault crosses a force chain: `solve` warns if a trapezoid spans one
         self.fault_crossings = fault_crossings(els, labels)
         # force-chain ends on a slip element (e.g. an interface meeting the free surface): open,
@@ -2495,18 +2765,24 @@ class Mesh:
         - antiplane (one component): BC_type, value;
         - shorthand, the same type on both components: BC_type, value[, value2].
 
+        The boundary-condition columns may be left out when the connectivity files carry
+        them instead (BC columns on each patch row, applied at its centre element; see
+        `Mesh` and `connectivity_table`); then every element must be in a row of one of
+        the connectivity files, which also gives its source type. An optional `label`
+        column ("s" slip, "f" force) gives the source type explicitly, e.g. for a force
+        element that is in no trapezoid (it then carries no force).
+
         Coordinates are divided by length_scale (e.g. 1e3 for metres -> km).
         """
-        import pandas as pd
-
         d = pd.read_csv(path)
         missing = {"x1", "z1", "x2", "z2", "mu_minus", "mu_plus"} - set(d.columns)
         per_component = {"BC_type_1", "BC_type_2", "value_1", "value_2"}
+        has_bc = bool((per_component | {"BC_type", "value"}) & set(d.columns))
         if per_component & set(d.columns):
             missing |= per_component - set(d.columns)
             if "BC_type" in d.columns:
                 raise ValueError(f"{path}: give either BC_type or BC_type_1 / BC_type_2, not both")
-        else:
+        elif has_bc:
             missing |= {"BC_type", "value"} - set(d.columns)
         if missing:
             raise ValueError(f"{path}: missing columns {sorted(missing)}")
@@ -2514,7 +2790,9 @@ class Mesh:
         els.x1, els.y1 = d["x1"].to_numpy(float) / length_scale, d["z1"].to_numpy(float) / length_scale
         els.x2, els.y2 = d["x2"].to_numpy(float) / length_scale, d["z2"].to_numpy(float) / length_scale
         _core.standardize_els_geometry(els, reorder=reorder)
-        if "BC_type_1" in d.columns:
+        if not has_bc:
+            bc_type = value = None
+        elif "BC_type_1" in d.columns:
             bc_type = np.stack((d["BC_type_1"].to_numpy(str), d["BC_type_2"].to_numpy(str)), axis=1)
             value = np.stack((d["value_1"].to_numpy(float), d["value_2"].to_numpy(float)), axis=1)
         else:
@@ -2522,8 +2800,9 @@ class Mesh:
             value = d["value"].to_numpy(float)
             if "value2" in d.columns:
                 value = np.stack((value, d["value2"].to_numpy(float)), axis=1)
+        labels = d["label"].astype(str).str.strip().to_numpy() if "label" in d.columns else None
         return cls(
-            els, basis=basis, connectivity=connectivity, bc_type=bc_type,
+            els, labels=labels, basis=basis, connectivity=connectivity, bc_type=bc_type,
             bc_value=value, mu_minus=d["mu_minus"].to_numpy(float), mu_plus=d["mu_plus"].to_numpy(float),
         )
 
@@ -2566,6 +2845,43 @@ class Mesh:
             pts.append((px, py))
         return np.r_[np.array(pts, dtype=float).reshape(-1, 2), self.force_open_ends]
 
+    def patch_connectivity(self, kind):
+        """The patches in use for one source type with a patch basis, as connectivity rows
+        (global element indices, -1 padded): the given connectivity, or the default layout
+        (one-ring hats, `one_ring_connectivity`; trapezoids, `trapezoid_connectivity` with
+        the open-end patches)."""
+        b = self.basis[kind]
+        if b not in _PATCH_BASES:
+            raise ValueError(f"{kind} uses the {b!r} basis, which has no patches")
+        if self.connectivity[kind] is not None:
+            return self.connectivity[kind].copy()
+        sub, idx, _ = self.subset(kind)
+        local = one_ring_connectivity(sub) if b == "hat" else trapezoid_connectivity(sub)
+        return np.where(local >= 0, idx[local], -1)
+
+    def connectivity_table(self, kind, *, geometry, bc=True):
+        """The patches of one source type as a connectivity table (pandas DataFrame), ready
+        for `to_csv(path, index=False)`: element columns e1, e2 (centre), e3[, e4 ...] (-1
+        where unused; e4 holds the third branch of a triple junction), and with bc=True the
+        boundary condition of each centre element from this mesh: BC_type, value
+        (antiplane) or BC_type_1, value_1, BC_type_2, value_2 (plane strain). A mesh file
+        with only geometry and moduli, plus these files, describes the whole problem."""
+        if geometry not in _GEOMETRIES:
+            raise ValueError(f"geometry must be one of {_GEOMETRIES}, got {geometry!r}")
+        conn = self.patch_connectivity(kind)
+        t = pd.DataFrame({f"e{j + 1}": conn[:, j] for j in range(conn.shape[1])})
+        if bc:
+            if self.bc_type is None:
+                raise ValueError("this mesh has no boundary conditions (bc=False writes the elements only)")
+            c = conn[:, 1]
+            value = np.zeros((self.n_els, 2)) if self.bc_value is None else self.bc_value
+            if geometry == "antiplane":
+                t["BC_type"], t["value"] = self.bc_type[c, 0], value[c, 0]
+            else:
+                for j in range(2):
+                    t[f"BC_type_{j + 1}"], t[f"value_{j + 1}"] = self.bc_type[c, j], value[c, j]
+        return t
+
     def split_force_trapezoids(self, points=None, tol=1e-9):
         """Force trapezoids (global element indices) with the stride restarted at
         `points` (default: `self.trapezoid_restart_points()`), a suggestion for the connectivity
@@ -2594,8 +2910,9 @@ class Mesh:
             if self.basis[kind] == "nodal":
                 self._cache[key] = nodal_force_coefficients(sub, self.nodal_layout(), geometry=geometry)
             else:
+                breaks = self.trapezoid_restart_points() if self.basis[kind] == "trapezoid" else None
                 self._cache[key] = basis_transform(sub, kind=kind, basis=self.basis[kind], geometry=geometry,
-                                                   connectivity=conn)
+                                                   connectivity=conn, breaks=breaks)
         return self._cache[key]
 
     def _subset(self, kind):
@@ -2605,7 +2922,7 @@ class Mesh:
         if conn is not None:
             g2l = np.full(self.n_els, -1)
             g2l[idx] = np.arange(len(idx))
-            conn = g2l[conn]
+            conn = np.where(conn >= 0, g2l[conn], -1)
         return sub, idx, conn
 
     def __repr__(self):
@@ -3104,6 +3421,12 @@ def overlap_refinement_issues(els, labels, tol=1e-9):
     return np.array(bad, dtype=float).reshape(-1, 2)
 
 
+class HatConnectivityWarning(UserWarning):
+    """Explicit slip-hat connectivity that does not match the mesh: missing hats, hats on tip
+    elements, or a hat that does not span all neighbours of its centre (a triple junction
+    needs the 4-column row; see `hat_connectivity_issues`)."""
+
+
 class MeshGapWarning(UserWarning):
     """Two element end points nearly coincide but are not identical. Topology (shared
     nodes, chains, closed loops, hats, trapezoids, continuity) uses exact node
@@ -3163,6 +3486,63 @@ def _warn_trapezoids_across_crossings(mesh, tol=1e-9, stacklevel=3):
             "density there is poorly represented and the interface can carry a spurious net force. Fix the force connectivity so the stride restarts at the "
             "crossing: mesh.split_force_trapezoids() suggests one (save it as your connectivity file).",
             TrapezoidCrossingWarning,
+            stacklevel=stacklevel,
+        )
+
+
+class CrossingRefinementWarning(UserWarning):
+    """A fault crosses a material interface (a force chain with a modulus contrast) and
+    the force elements there are not finer than the fault elements. At a crossing the
+    interface force density jumps and varies steeply within about half a fault length;
+    the trapezoids resolve that at first order, and the error surfaces as a net force
+    on the interface: a near-rigid offset of the displacement (growing like log L with
+    the mesh extent) that stresses do not show. Measured (tasks.md P2, plane strain, layer
+    over a half-space, h = fault element length = 0.025): 1e-2 to 7e-2 with uniform
+    elements, 2e-3 to 2e-2 with force elements 4x finer within about one fault length
+    of the crossing. Refinement is the user's choice; the warning does not change the mesh."""
+
+
+def _warn_crossing_refinement(mesh, tol=1e-9, ratio=0.5, stacklevel=3):
+    """Warn at true fault crossings (not overlap ends) of force chains with a contrast,
+    where a neighbouring force element is longer than `ratio` times the neighbouring
+    fault elements."""
+    if "force" not in mesh.kinds or "slip" not in mesh.kinds or not len(mesh.fault_crossings):
+        return
+    els = mesh.els
+    f, s = mesh.elements("force"), mesh.elements("slip")
+    L = 2 * np.asarray(els.half_lengths)
+    coincident = set(coincident_force_elements(els, mesh.labels, tol).tolist())
+    scale = L[f].max()
+
+    def touching(idx, px, py):
+        return [int(e) for e in idx
+                if min(np.hypot(els.x1[e] - px, els.y1[e] - py), np.hypot(els.x2[e] - px, els.y2[e] - py)) < tol * scale]
+
+    bad = []
+    for px, py in mesh.fault_crossings:
+        fe = touching(f, px, py)
+        if not fe or any(e in coincident for e in fe):
+            continue  # an overlap end, not a crossing
+        if mesh.mu_minus is not None and mesh.mu_plus is not None and np.allclose(
+                mesh.mu_minus[fe], mesh.mu_plus[fe]):
+            continue  # no contrast: the interface carries no force
+        on = _on_slip(np.array([[px, py]]), els, s, tol)[0]
+        se = touching(s, px, py) if on else []
+        if not se:  # the crossing lies inside a slip element
+            se = [int(e) for e in s if _on_slip(np.array([[px, py]]), els, np.array([e]), tol)[0]]
+        if se and L[fe].max() > ratio * L[se].min():
+            bad.append((px, py, L[fe].max(), L[se].min()))
+    if bad:
+        shown = ", ".join(f"({px:.4g}, {py:.4g}) [force {lf:.3g}, fault {ls:.3g}]" for px, py, lf, ls in bad[:5])
+        more = f", ... ({len(bad)} crossings)" if len(bad) > 5 else ""
+        warnings.warn(
+            f"a fault crosses a material interface at {shown}{more}. The interface force density jumps at a "
+            "crossing and varies steeply nearby; force elements as long as the fault elements resolve it only "
+            "to first order, and the error shows up as a spurious net force on the interface (a near-rigid "
+            "offset of the displacements, invisible in stresses). Recommended: force elements about 4x finer "
+            "than the fault elements within about one fault length of each crossing (in plane strain this cut "
+            "the error 3-6x, tasks.md P2).",
+            CrossingRefinementWarning,
             stacklevel=stacklevel,
         )
 
@@ -3240,6 +3620,7 @@ def assemble(mesh, *, geometry, mu, nu=None, side=-1, dr=1e-9, use_numba=None,
     # warnings point at the caller of assemble, or of solve (_stacklevel=4)
     _warn_close_collocation(mesh, rec, proximity_tol, stacklevel=_stacklevel)
     _warn_trapezoids_across_crossings(mesh, stacklevel=_stacklevel)
+    _warn_crossing_refinement(mesh, stacklevel=_stacklevel)
     ops = []  # per collocation point: (pe, n_cols) slip / force density, local frame (global for nodal)
     cache = {}
     for i_pt in range(len(colloc)):
