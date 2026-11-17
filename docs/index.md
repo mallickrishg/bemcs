@@ -13,6 +13,7 @@ Developed for geophysical and tectonic modelling, with a focus on earthquake-cyc
 - **New here?** Start with {doc}`getting_started`.
 - **Setting up a model?** The {doc}`user_guide/index` explains elements, sign conventions, the mesh input format,
   boundary conditions and the solver.
+- **Need Green's functions** for an inversion or an earthquake-cycle model? See {doc}`user_guide/greens_functions`.
 - **Learning by example?** See the {doc}`examples_index`, run on every build.
 - **Want the maths?** See {doc}`theory/index`.
 - **Before trusting a result:** read {doc}`limitations`.

@@ -116,6 +116,7 @@ autodoc_default_options = {"members": True, "undoc-members": False, "show-inheri
 autodoc_typehints = "none"
 napoleon_numpy_docstring = True
 napoleon_google_docstring = False
+napoleon_use_ivar = True  # "Attributes" sections as field lists, not duplicates of dataclass fields
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),

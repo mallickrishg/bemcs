@@ -41,6 +41,19 @@
    Mesh.trapezoid_restart_points
 ```
 
+## Green's functions
+
+```{eval-rst}
+.. currentmodule:: bemcs
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   get_greens_functions
+   GreensFunctions
+```
+
 ## Fields and plotting
 
 ```{eval-rst}
