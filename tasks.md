@@ -996,9 +996,12 @@ spatially varying nu (T4), wiki updates.
   feature of the library). **First version done 2026-11-17 on branch `heteroGF`:**
   `get_greens_functions(mesh_or_file, x_obs, y_obs, *, geometry, nu, connectivity=None, basis=None, mu_obs=None,
   components=None)` returning a `GreensFunctions` result (user's choices: that name; one source per slip hat).
-  - **Source:** unit slip at one hat's collocation point (one per component in plane strain), zero at the other
-    sources; every other condition homogeneous. `gf(s)` gives the fields for amplitudes s; `gf.solution(s)` the
-    BEM coefficients.
+  - **Source:** one slip hat with unit amplitude (one per component in plane strain): a smooth, non-negative bump
+    over three elements; every other condition homogeneous. `gf(a)` gives the fields for hat amplitudes a,
+    `gf.solution(a)` the BEM coefficients, `gf.amplitudes(slip)` converts slip at the collocation points into
+    amplitudes (`gf.point_slip`: hats are 1/6 at their neighbours' centres). (First version: unit slip at one
+    collocation point and zero at the others, which is a combination of hats with negative side lobes; changed
+    2026-11-17 at the user's request.)
   - **Returns:** `fields` (n_obs, n_sources) per component, true stresses from `mesh.modulus_at`; `slip_average`
     (n_fault, pe, n_sources) and `slip_coefficients` (n_fault, 3, pe, n_sources) on the 's' elements; `matrix`,
     `rhs`, `coefficients`, `rows`; the `sources` table.

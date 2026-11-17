@@ -24,6 +24,13 @@ def _quiet(f, *a, **k):
         return f(*a, **k)
 
 
+def _hats(mesh):
+    """The same mesh with the hat slip basis (get_greens_functions' sources are slip hats)."""
+    return bemcs.Mesh(mesh.els, labels=mesh.labels, bc_type=mesh.bc_type, bc_value=mesh.bc_value,
+                      mu_minus=mesh.mu_minus, mu_plus=mesh.mu_plus, basis={**mesh.basis, "slip": "hat"},
+                      connectivity={k: v for k, v in mesh.connectivity.items() if k == "force" and v is not None})
+
+
 def _with_slip(mesh, slip_rows, values):
     """The mesh with prescribed slip `values` at the source rows and zero on every other condition."""
     v = np.zeros_like(mesh.bc_value)
@@ -33,7 +40,7 @@ def _with_slip(mesh, slip_rows, values):
 
 
 CASES = {
-    "antiplane layered, fault through the interface": (lambda: layered_mesh(1.63, 0.1), "antiplane", {},
+    "antiplane layered, fault through the interface": (lambda: _hats(layered_mesh(1.63, 0.1)), "antiplane", {},
                                                        (np.linspace(-3, 3, 13), np.full(13, -0.3))),
     "planestrain bimaterial, fault crossing the interface": (lambda: crossing_mesh(60, 0.1, 4.0), "planestrain",
                                                              {"nu": CROSSING_NU},
@@ -50,7 +57,7 @@ def test_greens_functions_reproduce_the_full_solve(case):
     gf = _quiet(bemcs.get_greens_functions, mesh, xo, yo, geometry=geometry, **kw)
     x = _quiet(bemcs.solve, mesh, geometry=geometry, **kw)
     ref = bemcs.evaluate_fields(mesh, x, xo, yo, geometry=geometry, **kw)
-    s = mesh.bc_value[gf.sources["element"], gf.sources["component"]]
+    s = gf.amplitudes(mesh.bc_value[gf.sources["element"], gf.sources["component"]])
     got = gf(s)
     for name in ref:
         np.testing.assert_allclose(got[name], ref[name], atol=1e-9 * np.abs(ref[name]).max())
@@ -70,13 +77,30 @@ def test_a_column_is_a_solve_with_one_unit_source(case):
     gf = _quiet(bemcs.get_greens_functions, mesh, xo, yo, geometry=geometry, **kw)
     j = gf.n_sources // 2
     rows = (gf.sources["element"], gf.sources["component"])
-    one = _with_slip(mesh, rows, np.eye(gf.n_sources)[j])
+    one = _with_slip(mesh, rows, gf.point_slip[:, j])  # the slip hat j alone puts on the sources
     x = _quiet(bemcs.solve, one, geometry=geometry, **kw)
     ref = bemcs.evaluate_fields(one, x, xo, yo, geometry=geometry, **kw)
     for name in ref:
         np.testing.assert_allclose(gf.fields[name][:, j], ref[name], atol=1e-9 * np.abs(ref[name]).max())
-    # the source is unit slip at its own collocation point and zero at the others
-    assert gf.slip_average[gf.fault_elements == gf.sources["element"][j], gf.sources["component"][j], j] > 0.5
+    assert gf.point_slip[j, j] == pytest.approx(1.0)  # unit amplitude: slip 1 at its own centre
+
+
+@pytest.mark.parametrize("case", list(CASES))
+def test_every_source_is_one_non_negative_hat(case):
+    """A source is one hat: non-negative slip on (at most) three fault elements, in its own
+    component only; its element averages agree with the slip along the elements."""
+    make, geometry, kw, (xo, yo) = CASES[case]
+    mesh = make()
+    gf = _quiet(bemcs.get_greens_functions, mesh, xo, yo, geometry=geometry, **kw)
+    vals = gf.slip_coefficients  # node values of the quadratic slip (n_fault, 3, pe, n_sources)
+    assert vals.min() > -1e-12
+    for j in range(gf.n_sources):
+        c = gf.sources["component"][j]
+        on = np.flatnonzero(np.abs(vals[:, :, c, j]).max(axis=1) > 1e-12)
+        assert len(on) <= 3 and gf.sources["element"][j] in gf.fault_elements[on]  # 2 at the fault's ends
+        if vals.shape[2] == 2:
+            assert np.abs(vals[:, :, 1 - c, j]).max() < 1e-12  # the other component is zero
+    np.testing.assert_allclose(np.diag(gf.point_slip), 1.0)
 
 
 def test_from_files_with_inferred_connectivity_matches_rybicki():
@@ -90,12 +114,12 @@ def test_from_files_with_inferred_connectivity_matches_rybicki():
                 connectivity=[path + "_force_connectivity.csv", path + "_slip_connectivity.csv"])
     depth = -gf.sources["y"]
     D = 1.63
-    u = gf(np.where(depth < D, np.cos(0.5 * np.pi * depth / D) ** 2, 0.0))["uz"]
+    u = gf(gf.amplitudes(np.where(depth < D, np.cos(0.5 * np.pi * depth / D) ** 2, 0.0)))["uz"]
     assert np.abs(u - layered_image_series(x_obs, D, LAYERED_H, LAYERED_MU1, LAYERED_MU2)).max() < 1e-4  # measured 6e-5 (h = 0.05)
 
 
 def test_options_and_errors():
-    mesh = layered_mesh(0.6, 0.1)
+    mesh = _hats(layered_mesh(0.6, 0.1))
     xo, yo = np.array([0.5, 1.0]), np.array([-0.2, -1.5])
     gf = _quiet(bemcs.get_greens_functions, mesh, xo, yo, geometry="antiplane", components=["uz"])
     assert list(gf.fields) == ["uz"] and gf.fields["uz"].shape == (2, gf.n_sources)
@@ -106,5 +130,7 @@ def test_options_and_errors():
     assert mu[0] != mu[1]  # one point in the layer, one in the half-space
     with pytest.raises(ValueError, match="unknown components"):
         bemcs.get_greens_functions(mesh, xo, yo, geometry="antiplane", components=["ux"])
+    with pytest.raises(ValueError, match="hat slip basis"):
+        bemcs.get_greens_functions(layered_mesh(0.6, 0.1), xo, yo, geometry="antiplane")  # quadratic
     with pytest.raises(ValueError, match="a Mesh already has them"):
         bemcs.get_greens_functions(mesh, xo, yo, geometry="antiplane", connectivity={"slip": "x.csv"})

@@ -4353,17 +4353,21 @@ _MEAN_WEIGHTS = np.array([3 / 8, 1 / 4, 3 / 8])  # element average of the quadra
 class GreensFunctions:
     """Green's functions of a mesh, from `get_greens_functions`.
 
-    One source (column) per prescribed-slip row: unit slip at the centre of one slip hat's
-    centre element, in one slip component (antiplane: z; plane strain: 0 = shear along the
-    element, 1 = normal/opening), and zero slip at every other source; every other boundary
-    condition homogeneous ("t"/"u" values 0, "h" interfaces continuous). For slip amplitudes
-    `s` (one per source), the fields are `fields[name] @ s`, or simply `gf(s)`.
+    One source (column) per slip hat of the fault, per slip component (antiplane: z; plane
+    strain: 0 = shear along the element, 1 = normal/opening): that hat with unit amplitude,
+    alone. A one-ring hat is a smooth, non-negative bump over three elements: 1 at the centre
+    of its centre element, 0 with zero slope at its two outer nodes. Every other boundary
+    condition is homogeneous ("t"/"u" values 0, "h" interfaces continuous). For hat
+    amplitudes `a` (one per source), the fields are `fields[name] @ a`, or simply `gf(a)`.
+    Neighbouring hats overlap (a hat is 1/6 at its neighbours' centres), so the amplitudes are
+    not the slip at the hat centres; `amplitudes(slip)` converts slip values at the sources'
+    collocation points (what a mesh file prescribes) into amplitudes.
 
     Attributes
     ----------
     sources : dict of arrays (n_sources,)
         "element" (global index of the hat's centre element), "component", and "x", "y"
-        (the collocation point where the unit slip is imposed).
+        (the hat's collocation point, the centre of its centre element).
     fault_elements : (n_fault,) int
         Global indices of the elements with prescribed slip ("s"), the fault.
     slip_average : (n_fault, pe, n_sources)
@@ -4380,6 +4384,9 @@ class GreensFunctions:
         table of `assemble`.
     coefficients : (n_columns, n_sources)
         X: every BEM coefficient (slip and force, `mesh.layout`) for each source.
+    point_slip : (n_sources, n_sources)
+        Slip at each source's collocation point (rows) for unit amplitude of each source
+        (columns), in the source's component: 1 on the diagonal, the hat overlap next to it.
     """
 
     geometry: str
@@ -4396,23 +4403,28 @@ class GreensFunctions:
     rhs: np.ndarray
     coefficients: np.ndarray
     rows: dict
+    point_slip: np.ndarray
 
     @property
     def n_sources(self):
         return len(self.sources["element"])
 
-    def __call__(self, slip):
-        """Fields (shaped like the observation points) for source amplitudes `slip`
-        (n_sources,): the slip at each source's collocation point."""
-        s = np.asarray(slip, dtype=float).ravel()
-        if s.size != self.n_sources:
-            raise ValueError(f"slip has {s.size} entries, there are {self.n_sources} sources")
-        return {name: (K @ s).reshape(self.obs_shape) for name, K in self.fields.items()}
+    def __call__(self, amplitudes):
+        """Fields (shaped like the observation points) for hat amplitudes (n_sources,)."""
+        a = np.asarray(amplitudes, dtype=float).ravel()
+        if a.size != self.n_sources:
+            raise ValueError(f"amplitudes has {a.size} entries, there are {self.n_sources} sources")
+        return {name: (K @ a).reshape(self.obs_shape) for name, K in self.fields.items()}
 
-    def solution(self, slip):
-        """The BEM coefficient vector x for source amplitudes `slip` (as `solve` returns it), e.g.
-        for `mesh.values_on_elements(x, ...)`."""
-        return self.coefficients @ np.asarray(slip, dtype=float).ravel()
+    def amplitudes(self, slip):
+        """Hat amplitudes whose slip at the sources' collocation points equals `slip`
+        (n_sources,), e.g. a slip profile sampled at `sources["x"], sources["y"]`."""
+        return np.linalg.solve(self.point_slip, np.asarray(slip, dtype=float).ravel())
+
+    def solution(self, amplitudes):
+        """The BEM coefficient vector x for hat amplitudes (as `solve` returns it), e.g. for
+        `mesh.values_on_elements(x, ...)`."""
+        return self.coefficients @ np.asarray(amplitudes, dtype=float).ravel()
 
     def __repr__(self):
         return (f"GreensFunctions({self.geometry}: {self.n_sources} sources on {len(self.fault_elements)} "
@@ -4453,7 +4465,7 @@ def _gf_mesh(mesh, connectivity, basis):
 def get_greens_functions(mesh, x_obs, y_obs, *, geometry, nu=None, connectivity=None, basis=None,
                          mu_obs=None, components=None, use_numba=None, solver="auto"):
     """Green's functions of a heterogeneous mesh: the displacement and stress at observation
-    points due to unit slip on each slip hat of the fault, with everything else (free
+    points due to each slip hat of the fault (unit amplitude), with everything else (free
     surfaces, clamped boundaries, material interfaces) solved for.
 
     Example::
@@ -4461,7 +4473,8 @@ def get_greens_functions(mesh, x_obs, y_obs, *, geometry, nu=None, connectivity=
         gf = bemcs.get_greens_functions("mesh.csv", x_obs, y_obs, geometry="planestrain", nu=0.25)
         gf.fields["uy"]          # (n_obs, n_sources): uy for unit slip at each source
         gf.slip_average          # (n_fault, 2, n_sources): what each source is, per element
-        u = gf(slip)             # fields for slip amplitudes, one per source
+        u = gf(a)                # fields for hat amplitudes a, one per source
+        u = gf(gf.amplitudes(s)) # ... or for slip s at the sources' collocation points
 
     Parameters
     ----------
@@ -4517,8 +4530,20 @@ def get_greens_functions(mesh, x_obs, y_obs, *, geometry, nu=None, connectivity=
     src = np.flatnonzero(rows["type"] == "s")
     if not len(src):
         raise ValueError("the mesh has no prescribed-slip ('s') conditions: no sources")
+    # the hat (column of the system) of each source: centre element and slip direction
+    lay = mesh.layout(geometry=geometry)
+    dirs = ("z",) if pe == 1 else ("t", "n")
+    hat = np.empty(len(src), dtype=int)
+    for j, (e, c) in enumerate(zip(rows["element"][src], rows["component"][src])):
+        col = np.flatnonzero((lay.kind == "slip") & (lay.element == e) & (lay.direction == dirs[int(c) % pe]))
+        if len(col) != 1:
+            raise ValueError(f"no single slip hat centred on element {e}: get_greens_functions needs the "
+                             "hat slip basis")
+        hat[j] = col[0]
+    M = A[np.ix_(src, hat)]  # slip at source i's collocation point from hat j
+    # unit amplitude of hat j: the "s" rows hold M[:, j], every other row 0
     B = np.zeros((A.shape[0], len(src)))
-    B[src, np.arange(len(src))] = 1.0
+    B[src, :] = M
     X = _linear_solve(A, B, solver)
     if X.ndim == 1:
         X = X[:, None]
@@ -4567,4 +4592,4 @@ def get_greens_functions(mesh, x_obs, y_obs, *, geometry, nu=None, connectivity=
             fields[name] = scale[:, None] * (kernel_matrix(S[:, :, k : k + 1]) @ X)
     return GreensFunctions(geometry=geometry, mesh=mesh, x_obs=xo, y_obs=yo, obs_shape=shape, sources=sources,
                            fault_elements=fault, slip_average=slip_average, slip_coefficients=slip_coefficients,
-                           fields=fields, matrix=A, rhs=B, coefficients=X, rows=rows)
+                           fields=fields, matrix=A, rhs=B, coefficients=X, rows=rows, point_slip=M)
