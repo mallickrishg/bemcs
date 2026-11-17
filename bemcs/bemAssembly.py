@@ -4201,14 +4201,119 @@ def plot_mesh(mesh, ax=None, *, show_normals=True, show_moduli=True, offset=0.2,
 
 def plot_fields(mesh, x, *, geometry, mu=None, nu=None, xlim, ylim, n=(100, 100), components=None,
                 derived=None, mu_field=None, mask=None, cmap="RdBu_r", levels=21, use_numba=None):
-    """Evaluate and plot the fields of a solution x on a regular grid.
+    """Evaluate the displacement and stress of a solution on a regular grid, and plot them.
 
-    Components default to all of the geometry (antiplane: uz, sxz, syz; plane
-    strain: ux, uy, sxx, syy, sxy). derived = {name: f(fields)} adds quantities
-    computed from them (e.g. pressure), which can then be listed in components.
-    mask(X, Y) -> bool hides grid points (e.g. outside the domain). mu and mu_field as
-    in `evaluate_fields` (default: true stresses, moduli from the mesh). Returns
-    (fig, axes, fields) with fields on the grid, including "x" and "y".
+    The quick way to look at a solution: `plot_fields` builds a grid of observation
+    points, evaluates the fields there with `evaluate_fields`, and draws one filled
+    contour plot per field component, stacked vertically, with the mesh on top. It
+    also returns the fields on the grid, so you can make your own plots from them.
+    For observation points that are not on a grid (a profile, a set of stations),
+    call `evaluate_fields` directly.
+
+    Parameters
+    ----------
+    mesh : Mesh
+        The mesh that was solved.
+    x : ndarray
+        The solution of `solve(mesh, ...)`.
+    geometry : {"antiplane", "planestrain"}
+        As passed to `solve`.
+    mu : float, optional
+        Reference shear modulus. Pass the value given to `solve`, or leave it out if
+        `solve` had none. The shear moduli of the materials come from the mesh.
+    nu : float
+        Poisson's ratio, as passed to `solve` (required in plane strain).
+    xlim, ylim : (float, float)
+        Extent of the grid, ``(min, max)`` in x and in y, in the units of the mesh
+        coordinates. The plots show exactly this window.
+    n : (int, int)
+        **The number of observation points**: ``n[0]`` along x and ``n[1]`` along y,
+        evenly spaced and including both ends of `xlim` and `ylim`. The grid spacing
+        is ``(xlim[1] - xlim[0]) / (n[0] - 1)`` in x, and likewise in y. Use the same
+        spacing in x and y, since the plots have an equal aspect ratio. Default
+        ``(100, 100)``. For example, ``xlim=(-150, 300)``, ``ylim=(-120, 5)``,
+        ``n=(181, 51)`` gives 181 x 51 = 9231 points, 2.5 apart in x and y.
+
+        Cost: every grid point is evaluated against every basis function of the
+        mesh, all at once. Memory is about 40 bytes per grid point per unknown in
+        plane strain (24 in antiplane), where the number of unknowns is ``len(x)``.
+        The example above with 986 unknowns needs about 360 MB. Halving the spacing
+        quadruples the points. For larger grids, call `evaluate_fields` on parts of
+        the grid in turn.
+    components : list of str, optional
+        The fields to plot, in order, one panel each. Default: all fields of the
+        geometry:
+
+        - antiplane: ``"uz"``, ``"sxz"``, ``"syz"``;
+        - plane strain: ``"ux"``, ``"uy"``, ``"sxx"``, ``"syy"``, ``"sxy"``.
+
+        Names from `derived` can be listed too.
+    derived : dict, optional
+        Extra quantities computed from the fields: ``{name: function}``. Each
+        function takes the dict of fields (2-D arrays on the grid, keys as above) and
+        returns an array of the same shape. They are computed in order, so one may use
+        an earlier one. List a name in `components` to plot it. For example, the
+        tension-positive mean stress in plane strain (``szz = nu (sxx + syy)``)::
+
+            derived={"pressure": lambda f: (1 + nu) * (f["sxx"] + f["syy"]) / 3}
+
+    mu_field : callable, number or "reference", optional
+        The shear modulus the stresses are scaled to; see `evaluate_fields`. Default:
+        each point takes the modulus of the material it lies in, from the mesh, so the
+        stresses are true stresses.
+    mask : callable, optional
+        ``mask(X, Y) -> bool array``: **True where the fields are plotted**, False
+        where they are hidden. X and Y are the 2-D grid coordinates. Use it to hide
+        points outside the body, e.g. above a free surface given by a function
+        ``topography(x)``::
+
+            mask=lambda X, Y: Y < topography(X)
+
+        The mask only affects the plots. The returned fields cover the whole grid.
+    cmap : str
+        Matplotlib colour map (default ``"RdBu_r"``).
+    levels : int
+        Number of contour levels (default 21). The colour scale of each panel is
+        symmetric about zero, from ``-max|F|`` to ``+max|F|`` over the plotted
+        (unmasked) points.
+    use_numba : bool or None
+        As in `get_kernels`.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure, sized 7 wide by 3.2 per panel; resize it with
+        ``fig.set_size_inches``.
+    axes : ndarray of matplotlib.axes.Axes
+        Shape ``(len(components), 1)``: panel i is ``axes[i, 0]``. Use it to add to
+        the plots (e.g. a quiver of the displacement) or to change their limits and
+        labels.
+    fields : dict of ndarray
+        Every field of the geometry, and every `derived` quantity, on the whole grid
+        (whether plotted or not), each of shape ``(n[1], n[0])``, plus the grid
+        coordinates ``"x"`` and ``"y"`` (the X and Y of ``np.meshgrid``).
+
+    Notes
+    -----
+    - Grid points on or very close to an element can show spikes: displacement jumps
+      across slip elements, stress is singular at element ends, and the
+      tractions jump across force elements. Mask them, or shift the grid slightly so
+      that no grid line runs exactly along an element.
+    - A remote (background) field passed to `solve` is not added here. For total
+      fields, call `evaluate_fields` with ``background=...``.
+
+    Examples
+    --------
+    Displacement and shear stress near a fault under a free surface, with a quiver of
+    the displacement on the first panel::
+
+        fig, axes, f = bemcs.plot_fields(
+            mesh, x, geometry="planestrain", nu=0.25,
+            xlim=(-3, 3), ylim=(-3, 0), n=(121, 61),
+            components=["ux", "sxy"], mask=lambda X, Y: Y < 0,
+        )
+        skip = (slice(None, None, 6), slice(None, None, 6))
+        axes[0, 0].quiver(f["x"][skip], f["y"][skip], f["ux"][skip], f["uy"][skip])
     """
     import matplotlib.pyplot as plt
 
