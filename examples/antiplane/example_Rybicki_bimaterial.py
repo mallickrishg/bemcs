@@ -1,5 +1,11 @@
 # %% [markdown]
-# # Strike-slip fault near, and on, a vertical material contact (antiplane)
+# # Rybicki (1971), bimaterial: strike-slip fault near, and on, a vertical material contact (antiplane)
+# **What this is:** a check of the heterogeneous solver against Rybicki's exact solution for a
+# vertical strike-slip fault in a half-space made of two quarter-spaces (a lateral contrast, no
+# layering), with the fault near the contact or on it (a bimaterial fault). Companion examples:
+# `example_Rybicki_layered.py` (layering, no lateral contrast) and `example_layered_medium.py` (both
+# together, several layers). (Formerly `BimaterialContact_Rybicki.py`.)
+#
 # A half-space (free surface y = 0) made of two quarter-spaces welded along a vertical contact at
 # x = d: shear modulus MU1 for x < d and MU2 = 4 MU1 for x > d. A vertical strike-slip fault at x = 0
 # breaks the surface, with slip 1 at the surface tapering smoothly to 0 at depth D. Two cases:

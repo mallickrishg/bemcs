@@ -3,7 +3,7 @@
 - Plane-strain compliance used to turn stresses into strains (tasks.md issue 1).
 - Antiplane strike-slip fault in a layered half-space against the exact image series
   (Rybicki 1971), for a fault inside the layer and one through the interface (the
-  setup of examples/antiplane/HeterogeneousElasticity_forces.py).
+  setup of examples/antiplane/example_Rybicki_layered.py).
 
 The heterogeneous solver is also tested in test_solve.py (bimaterial image solution,
 traction continuity across a plane-strain interface, independence of the sampled side)

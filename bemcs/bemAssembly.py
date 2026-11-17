@@ -1547,20 +1547,19 @@ def hat_coefficients(els, connectivity=None, *, geometry):
 
 
 def _chains(els):
-    """Ordered chains of connected elements: (list of element indices, closed?)."""
+    """Ordered chains of connected elements: (list of element indices, closed?).
+
+    Chains run through nodes shared by exactly two elements. A node shared by three or more
+    elements is a junction (e.g. a layer interface meeting a vertical material contact):
+    every branch is a separate chain ending there (`force_junctions`)."""
     n_els = len(els.x_centers)
     ends = [((float(els.x1[e]), float(els.y1[e])), (float(els.x2[e]), float(els.y2[e]))) for e in range(n_els)]
     at_point = {}
     for e, (a, b) in enumerate(ends):
         at_point.setdefault(a, []).append(e)
         at_point.setdefault(b, []).append(e)
-    for pt, es in at_point.items():
-        if len(es) > 2:
-            raise ValueError(
-                f"{len(es)} force elements meet at ({pt[0]:.6g}, {pt[1]:.6g}); trapezoids need chains "
-                "(force elements never form junctions)"
-            )
-    tips = set(tip_elements(els).tolist())
+    # chain ends: elements with an end node not shared by exactly two elements (tip or junction)
+    tips = {e for e in range(n_els) if any(len(at_point[pt]) != 2 for pt in ends[e])}
     seen, chains = set(), []
     for start in sorted(tips) + list(range(n_els)):
         if start in seen:
@@ -1569,11 +1568,25 @@ def _chains(els):
         while e is not None and e not in seen:
             chain.append(e)
             seen.add(e)
-            nxt = [o for pt in ends[e] for o in at_point[pt] if o != e and o != prev and o not in seen]
+            nxt = [o for pt in ends[e] if len(at_point[pt]) == 2
+                   for o in at_point[pt] if o != e and o != prev and o not in seen]
             prev, e = e, (nxt[0] if nxt else None)
         closed = start not in tips and len(chain) > 2
         chains.append((chain, closed))
     return chains
+
+
+def force_junctions(els, labels=None):
+    """Nodes shared by three or more force elements ((k, 2) points): junctions of material
+    interfaces, e.g. a layer interface meeting a vertical contact. The force density of each
+    branch takes its own value there, so every branch ends with an open (free) end, like a
+    force chain ending on a free surface (`trapezoid_connectivity` breaks)."""
+    f = np.arange(len(els.x_centers)) if labels is None else np.flatnonzero(np.asarray(labels).astype(str) == "f")
+    count = {}
+    for e in f:
+        for p in ((float(els.x1[e]), float(els.y1[e])), (float(els.x2[e]), float(els.y2[e]))):
+            count[p] = count.get(p, 0) + 1
+    return np.array([p for p, c in count.items() if c > 2], dtype=float).reshape(-1, 2)
 
 
 def _segment_middles(n, from_end):
@@ -1608,7 +1621,7 @@ def trapezoid_connectivity(els, breaks=None, tol=1e-9):
         half-hat. Without the restart, a stride that runs through a
         crossing has a collocation point on one side of it only: the interface then
         carries a spurious net force whose far field (log r in antiplane) pollutes
-        the whole solution (tasks.md; examples/antiplane/HeterogeneousElasticity_forces.py).
+        the whole solution (tasks.md; examples/antiplane/example_Rybicki_layered.py).
         A segment between two breaks (or a closed loop with one break) with an even
         number of elements can be flanked at 1.5 elements at one end only; the other
         end gets 2.5. A break at a chain tip (an open force end, `Mesh.force_open_ends`)
@@ -2727,11 +2740,13 @@ class Mesh:
         # force-chain ends on a slip element (e.g. an interface meeting the free surface): open,
         # not tapered; the default trapezoid stride counts from them
         self.force_open_ends = force_open_ends(els, labels, bc_type)
+        # junctions of three or more force elements (interfaces meeting): every branch ends open
+        self.force_junctions = force_junctions(els, labels)
         if (self.basis.get("force") == "trapezoid" and self.connectivity.get("force") is None
-                and len(self.force_open_ends)):
+                and len(self.force_open_ends) + len(self.force_junctions)):
             idx = np.flatnonzero(labels == "f")
-            self.connectivity["force"] = idx[trapezoid_connectivity(_subset_els(els, idx),
-                                                                    breaks=self.force_open_ends)]
+            self.connectivity["force"] = idx[trapezoid_connectivity(
+                _subset_els(els, idx), breaks=np.r_[self.force_open_ends, self.force_junctions])]
         bad = overlap_refinement_issues(els, labels)
         if len(bad):
             shown = ", ".join(f"({p[0]:.6g}, {p[1]:.6g})" for p in bad[:5])
@@ -2855,7 +2870,7 @@ class Mesh:
     def trapezoid_restart_points(self, tol=1e-9):
         """Points where the force trapezoid stride should restart: fault crossings, ends
         of slip/force overlaps whose slip elements are not all prescribed-slip ("s")
-        elements, and open force ends. A prescribed-slip fault tapers smoothly (zero
+        elements, open force ends, and force junctions (`force_junctions`). A prescribed-slip fault tapers smoothly (zero
         slip and slope) where it ends, so the end of its overlap with an interface needs
         no restart; a traction ("t") crack has singular stress at its tip, which does.
         (A fault crossing an interface keeps a slip gradient there, so crossings always
@@ -2873,7 +2888,7 @@ class Mesh:
                 if touching and all((self.bc_type[e] == "s").all() for e in touching):
                     continue
             pts.append((px, py))
-        return np.r_[np.array(pts, dtype=float).reshape(-1, 2), self.force_open_ends]
+        return np.r_[np.array(pts, dtype=float).reshape(-1, 2), self.force_open_ends, self.force_junctions]
 
     def patch_connectivity(self, kind):
         """The patches in use for one source type with a patch basis, as connectivity rows
@@ -3586,6 +3601,53 @@ def _warn_trapezoids_across_crossings(mesh, tol=1e-9, stacklevel=3):
         )
 
 
+class PinnedForceWarning(UserWarning):
+    """The force trapezoid layout leaves an interior node of a force chain uncovered: no
+    patch is non-zero there, so the force density is pinned to zero at that node. This is
+    what stride-2 trapezoids do in a segment between two break points (junctions, fault
+    crossings, open ends) with an even number of elements: one node next to a break is
+    left out. Measured (example_layered_medium.py, contact between layer junctions): 5x
+    larger errors than with odd segments. Fix: an odd number of elements between break
+    points (refining by a factor 3 keeps the parity), a connectivity that covers every
+    interior node, or the nodal force basis."""
+
+
+def _warn_pinned_force_nodes(mesh, stacklevel=3):
+    if "force" not in mesh.kinds or mesh.basis["force"] != "trapezoid":
+        return
+    sub, _, conn = mesh.subset("force")
+    breaks = mesh.trapezoid_restart_points()
+    # the pattern of non-zeros does not depend on the geometry
+    T = trapezoid_coefficients(sub, conn, geometry="antiplane", breaks=breaks)
+    covered = np.abs(T).max(axis=1) > 0  # per (element, ramp); ramp 0 = end node, 1 = start node
+    L = 2 * np.max(np.asarray(sub.half_lengths))
+
+    def is_break(p):
+        return len(breaks) > 0 and np.hypot(breaks[:, 0] - p[0], breaks[:, 1] - p[1]).min() < 1e-9 * L
+
+    at = {}
+    for e in range(len(sub.x_centers)):
+        ends = ((float(sub.x1[e]), float(sub.y1[e])), (float(sub.x2[e]), float(sub.y2[e])))
+        for ramp, p in ((1, ends[0]), (0, ends[1])):
+            other = ends[1] if ramp == 1 else ends[0]
+            at.setdefault(p, []).append((2 * e + ramp, is_break(other)))
+    # an uncovered interior node next to a break (next to a tapered tip it is harmless)
+    pinned = [p for p, rows in at.items() if len(rows) == 2 and not covered[[r for r, _ in rows]].any()
+              and any(b for _, b in rows)]
+    if pinned:
+        shown = ", ".join(f"({x:.4g}, {y:.4g})" for x, y in pinned[:5])
+        more = f", ... ({len(pinned)} nodes)" if len(pinned) > 5 else ""
+        warnings.warn(
+            f"the force trapezoids leave interior node(s) {shown}{more} uncovered: the force density is "
+            "pinned to zero there. This happens in a segment between two break points (junctions, fault "
+            "crossings, open ends) with an even number of elements. Use an odd number of elements between "
+            "break points (refine by a factor 3 to keep it odd), a force connectivity that covers every "
+            "interior node, or the nodal force basis.",
+            PinnedForceWarning,
+            stacklevel=stacklevel,
+        )
+
+
 class CrossingRefinementWarning(UserWarning):
     """A fault crosses a material interface (a force chain with a modulus contrast) and
     the force elements there are not finer than the fault elements. At a crossing the
@@ -3766,6 +3828,7 @@ def assemble(mesh, *, geometry, mu=None, nu=None, side=-1, dr=1e-9, use_numba=No
     _warn_close_collocation(mesh, rec, proximity_tol, stacklevel=_stacklevel)
     _warn_trapezoids_across_crossings(mesh, stacklevel=_stacklevel)
     _warn_crossing_refinement(mesh, stacklevel=_stacklevel)
+    _warn_pinned_force_nodes(mesh, stacklevel=_stacklevel)
     ops = []  # per collocation point: (pe, n_cols) slip / force density, local frame (global for nodal)
     cache = {}
     for i_pt in range(len(colloc)):

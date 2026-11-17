@@ -1,5 +1,11 @@
 # %% [markdown]
-# # Strike-slip fault in a layered half-space (antiplane, heterogeneous)
+# # Rybicki (1971), layered: strike-slip fault in a layer over a half-space (antiplane)
+# **What this is:** a check of the heterogeneous solver against Rybicki's exact image series for a
+# vertical strike-slip fault in one layer over a half-space, with the same layering on both sides of
+# the fault (no lateral contrast). Companion examples: `example_Rybicki_bimaterial.py` (a lateral
+# contrast: the fault near or on a vertical contact) and `example_layered_medium.py` (both together,
+# several layers). (Formerly `HeterogeneousElasticity_forces.py`.)
+#
 # A compliant layer (shear modulus MU1, thickness H) over a stiff half-space (MU2 = 4 MU1), with a
 # vertical strike-slip fault that breaks the free surface. Two faults, with the same slip profile
 # (1 at the surface, tapering smoothly to 0 at depth D):
@@ -226,8 +232,8 @@ ax.set_xlabel("x / H")
 ax.set_ylabel("true normal traction on the interface")
 ax.grid(alpha=0.3)
 ax.legend(fontsize=8)
-ax.set_title("(f) traction across the interface: continuous at collocation points; not on the\n"
-             "two elements at the crossing, where the true force density steps (x = 0)",
+ax.set_title("(f) traction across the interface: continuous at the collocation points, including\n"
+             "the two next to the crossing (x = 0), where the force density steps",
              fontsize=10)
 fig.tight_layout()
 plt.show()
@@ -240,9 +246,8 @@ print("max traction mismatch for 0.1 < |x| < 0.6: %.1e of the peak"
 # %% [markdown]
 # **The crossing point.** Across the fault the normal traction on the interface steps in proportion
 # to the slip gradient, and the step differs above and below the interface (mu_1 vs mu_2), so the
-# equivalent force density steps at the crossing. Continuous trapezoids cannot represent the step:
-# with the split layout both elements next to the crossing are interpolated (the force is zero at
-# the crossing node, the average of the two sides), and the traction is not continuous there (f).
-# The error stays local because the layout is symmetric; in a problem without that symmetry a local
-# error with a nonzero net force would again spread as log r. Allowing a step at fault crossings is an
-# open task (tasks.md).
+# equivalent force density steps at the crossing. The split layout gives the force a free value on
+# each side of the crossing (a half-hat on each neighbouring element, collocated at its centre), so
+# the traction is continuous at those collocation points too (f). Between collocation points the
+# trapezoids leave wiggles of a few percent of the peak traction (their plateaus), which shrink with
+# the element length. In plane strain the free values at the crossing matter much more (tasks.md P2).

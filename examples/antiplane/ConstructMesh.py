@@ -1,5 +1,5 @@
 # %% [markdown]
-# # Mesh for the layered half-space example
+# # Mesh for the layered half-space example (`example_Rybicki_layered.py`)
 # A compliant layer (shear modulus `MU1`, thickness `H`) over a stiff half-space (`MU2`), with a
 # vertical strike-slip fault that breaks the free surface. Two faults:
 # - `D_IN` < H: the fault stays inside the layer;
@@ -37,7 +37,8 @@
 # (`CollocationProximityWarning`).
 #
 # **Force trapezoids.** Here the trapezoid stride restarts at the node where the fault crosses the
-# interface, so collocation points flank the crossing on both sides;
+# interface, so collocation points flank the crossing on both sides, and each side gets a free force
+# value at the crossing (a half-hat);
 # `mesh.split_force_trapezoids()` builds that layout. bemcs's default layout uses trapezoids on every
 # other element from one end of the interface: that stride runs through the crossing, and `bemcs.solve`
 # warns (`TrapezoidCrossingWarning`) because the interface then carries a spurious net force whose far
@@ -49,7 +50,7 @@
 #
 # Running this file writes the mesh files `fault_in_layer.csv` and `fault_through_interface.csv` and
 # their connectivity files `*_slip_connectivity.csv` and `*_force_connectivity.csv`, read by
-# `HeterogeneousElasticity_forces.py`, which also imports the parameters and `layered_mesh` from here.
+# `example_Rybicki_layered.py`, which also imports the parameters and `layered_mesh` from here.
 
 # %% imports
 import numpy as np

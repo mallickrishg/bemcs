@@ -56,7 +56,7 @@ equivalent of traction). Unknowns: slip coefficients `s` (3/element) and force c
 Originally implemented in `bemAssembly.solveAntiplaneBEM(fileinput, connectivityfile)`: mesh CSV columns
 `x1,z1,x2,z2,BC_type,value` (for `'h'` rows `value` holds `alpha`), connectivity CSV lists 3-element force patches.
 Now `bemcs.solve` with the exact interface condition and `mu_minus` / `mu_plus` columns. Demo, checked against the
-exact layered half-space solution: `examples/antiplane/HeterogeneousElasticity_forces.py`.
+exact layered half-space solution: `examples/antiplane/example_Rybicki_layered.py`.
 
 ### 2.2 Plane strain (original design; superseded, see section 3)
 
@@ -348,7 +348,7 @@ Updated 2026-11-16. Details are in T1/T2 and the issue list (section 4).
     (slip and fields to 1e-16 to 3e-8 relative, except on-element in-plane stress; issue 18).
   - **Effect of clamped tips** (by design): 0.7-6% changes in examples whose faults have tips (19% for `sxy` in the
     free-surface example); the split box has no tips and is unchanged. Short faults change a lot: the
-    3-element faults in `example_non_planar_fault_plotting.py` and `HeterogeneousElasticity_forces.py` lose the
+    3-element faults in `example_non_planar_fault_plotting.py` and `example_Rybicki_layered.py` lose the
     BCs of both or one end element. Decided (2026-11-16): no extra elements. The non-planar fault is a toy case
     showing continuity of slip and traction, and the heterogeneous antiplane example is not built properly yet
     (open task in T1/T3).
@@ -607,12 +607,14 @@ checked by:
   - **Warning (user, 2026-11-17):** `solve` issues `CrossingRefinementWarning` at a true crossing (not an overlap
     end) of an interface with a contrast when the force elements there are longer than half the fault elements,
     recommending ~4x finer force elements within about one fault length. It does not change the mesh.
-  - **Open:** document zone refinement near crossings in the user docs; a stiff layer over a soft half-space is the
-    hardest case (1-2e-2 at h = 0.025 even refined; a finer zone or M = 8 would be the next thing to try).
+  - **Known limitation, not a task (user, 2026-11-17):** a stiff layer over a soft half-space converges slowest
+    (1-2e-2 at h = 0.025 even refined). This is a property of the mathematical problem (steep force density at the
+    crossing), not something the code base will fix: bemcs is a tool, and how much to refine is the user's choice.
+    The warning and the user docs say how to refine; zone refinement near crossings belongs in the user docs (P5).
 - [x] ~~**P3. An interface that meets the free surface**~~ **Done 2026-11-16**: the force chain has an open (free)
   end at the free surface. The remaining first-order corner error is handled by refining towards the corner
   (documented in the Rybicki example). Below, the original item (outcropping or dipping layers, basins). **Confirmed
-  2026-11-16** with the vertical-contact case (`examples/antiplane/BimaterialContact_Rybicki.py`,
+  2026-11-16** with the vertical-contact case (`examples/antiplane/example_Rybicki_bimaterial.py`,
   `tests/test_heterogeneous.py`):
   - **Exact reference:** a strike-slip fault at x = 0 in a half-space, contact at x = d, mu2/mu1 = 4.
     u = S + k S(2d - x) for x < d and (1 + k) S for x > d (Rybicki 1971).
@@ -815,7 +817,7 @@ spatially varying nu (T4), wiki updates.
 
   Whether that treatment is physically adequate where a fault crosses a material contrast is part of the rebuild
   below.
-- [x] ~~Rebuild `examples/antiplane/HeterogeneousElasticity_forces.py` (and its `ConstructMesh.py`)~~ done
+- [x] ~~Rebuild `examples/antiplane/example_Rybicki_layered.py` (and its `ConstructMesh.py`)~~ done
   (2026-11-16):
   - **Problem:** a strike-slip fault breaking the free surface of a compliant layer (mu1, thickness H) over a stiff
     half-space (mu2 = 4 mu1), with smooth tapered slip. Two faults: one inside the layer (D = 0.6 H), one through
@@ -896,6 +898,22 @@ spatially varying nu (T4), wiki updates.
     elements (own or coincident) or on a slip element at an angle (a crack through another crack's collocation
     point). Free surfaces ("t" on slip) and displacement rows on force elements are sampled on the element.
   - Before, every row moved by dr = 1e-9 L; the solutions agree to ~1e-7 (the dr error itself).
+- [x] **Layered medium with a lateral contrast across the fault (antiplane)** (2026-11-17,
+  `examples/antiplane/example_layered_medium.py`, `tests/test_force_junctions.py`).
+  - The Rybicki examples are renamed `example_Rybicki_layered.py` and `example_Rybicki_bimaterial.py`.
+  - **Force junctions** (three or more force elements at a node, e.g. a layer interface meeting a vertical
+    contact) are now allowed: `_chains` ends a chain there, `force_junctions(els, labels)` / `mesh.force_junctions`
+    lists them, and they are break points (`trapezoid_restart_points`, the default layout): every branch gets a
+    free half-hat at the junction. Tapering instead: 3-4x larger errors.
+  - **Exact check:** right stack = c x left stack gives u = 2c/(1+c) S (left), 2/(1+c) S (right), S = Rybicki's
+    layered series. One layer, c = 2: 2.5e-2, 8.6e-3, 3.0e-3 for h = D/10, D/30, D/90 (first order; the contact
+    meeting the free surface is the limiting corner, as in the bimaterial example).
+  - **Parity:** stride-2 trapezoids with a free end at both ends of a segment tile only an odd number of elements.
+    An even segment between two break points pins the node next to one end to zero (5x larger errors in the
+    realistic stack). `solve` warns (`PinnedForceWarning`); advice: odd segments (refine by a factor 3), a
+    connectivity covering every interior node, or the nodal basis. A two-element overlap of the last trapezoid
+    halves the error but stays well above the odd layout, so it is not the default. The warning also fires for
+    the crack-on-interface tests in `test_overlapping_meshes.py` (even crack segments).
 - [ ] **Far-field quadrature for r/a > 100 (later stage).**
   - **Problem:** the closed-form element kernels are differences of endpoint terms (log r1 - log r2, polynomial x
     log terms). Far away these terms are large while their difference, the kernel, is small, so float64 cancellation
@@ -957,7 +975,7 @@ spatially varying nu (T4), wiki updates.
     of its centre (e.g. a junction row without `e4`), with the suggested row. A repeated centre raises.
   - **Tests:** `tests/test_junction_connectivity.py`; explicit junction rows equal the general (quadratic) solve to
     1e-12 in both geometries. Examples: `planestrain/example_freesurface_fault.py`, and
-    `antiplane/ConstructMesh.py` with `HeterogeneousElasticity_forces.py` (now slip hats, three files per mesh;
+    `antiplane/ConstructMesh.py` with `example_Rybicki_layered.py` (now slip hats, three files per mesh;
     same results as the per-element version to 1e-14).
 - [x] **`mu` is optional (default 1); moduli are mesh data** (2026-11-17). Every element has `mu_minus`/`mu_plus`, and
   the reference modulus of the kernels cancels from the solution.
@@ -1141,7 +1159,7 @@ Work happens on branch `coderevamp` (from `main` after merging `het-planestrain`
 were converted to percent-format `.py` scripts (`# %%` cells, outputs dropped, display/autoreload magics
 commented out), and `notebooks/`, `point_source/` and `examples/hrf/` are untracked and git-ignored (personal work).
 `examples/antiplane/` keeps only `antiplane101.py` (+ `example_mesh.csv`), `ConstructMesh.py` and
-`HeterogeneousElasticity_forces.py` (run `ConstructMesh.py` first to generate its two CSV inputs); both run cleanly.
+`example_Rybicki_layered.py` (run `ConstructMesh.py` first to generate its two CSV inputs); both run cleanly.
 When old functions are removed, the `examples/**/*.py` scripts that call them must be migrated.
 
 ### 7.1 Module rule
