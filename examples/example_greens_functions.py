@@ -133,7 +133,12 @@ for geometry in ("antiplane", "planestrain"):
 gf_a, gf_p = gfs["antiplane"], gfs["planestrain"]
 
 
-# the stress-interaction kernels: traction on the fault plane at each fault element, per source
+# Stresses -> tractions on the fault. The Green's functions give the full stress tensor at every
+# observation point. On the fault, use the traction on its plane instead: the stress along the
+# fault jumps across it, so the raw stress there is the average of the two sides, while the
+# traction is continuous. gf.tractions projects the stresses with the fault's unit normal (and,
+# for shear/normal components, its tangent) at each point; it uses bemcs.traction_kernels.
+# The result is the fault's stress-interaction kernel: traction at each fault element, per source.
 K_a = gf_a.tractions(nx, ny, index=on_fault)  # (n_fault, n_sources): shear
 K_p = gf_p.tractions(nx, ny, sx, sy, index=on_fault)  # (n_fault, 2, n_sources): shear, normal
 print("fault stress kernels: antiplane", K_a.shape, " plane strain", K_p.shape)
