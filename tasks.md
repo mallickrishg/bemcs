@@ -993,7 +993,23 @@ spatially varying nu (T4), wiki updates.
   - Not changed: exactly on a fault node, the kernels are singular. There, the evaluated stress differs between
     reference moduli (0.64 vs 0.70 for a value of 0.677 just off the node). Same cause as section 8.
 - [ ] **Heterogeneous Green's functions: `get_kernels` for a whole mesh** (added 2026-11-17; likely the most used
-  feature of the library). The user gives a mesh with `s` elements (the fault, where slip is the input) and the rest
+  feature of the library). **First version done 2026-11-17 on branch `heteroGF`:**
+  `get_greens_functions(mesh_or_file, x_obs, y_obs, *, geometry, nu, connectivity=None, basis=None, mu_obs=None,
+  components=None)` returning a `GreensFunctions` result (user's choices: that name; one source per slip hat).
+  - **Source:** unit slip at one hat's collocation point (one per component in plane strain), zero at the other
+    sources; every other condition homogeneous. `gf(s)` gives the fields for amplitudes s; `gf.solution(s)` the
+    BEM coefficients.
+  - **Returns:** `fields` (n_obs, n_sources) per component, true stresses from `mesh.modulus_at`; `slip_average`
+    (n_fault, pe, n_sources) and `slip_coefficients` (n_fault, 3, pe, n_sources) on the 's' elements; `matrix`,
+    `rhs`, `coefficients`, `rows`; the `sources` table.
+  - **Input:** a Mesh or a mesh file; connectivity None (bemcs builds it), one file, a list (kind inferred from
+    the BC columns or the labels) or a dict. One factorisation, one multi-RHS solve.
+  - **Checked** (`tests/test_greens_functions.py`): `gf(s)` equals `solve` to 1e-15 (antiplane layered, plane-strain
+    crossing, plane-strain fault through a free surface); a column equals a solve with one unit source; from
+    the example files it matches Rybicki to 6e-5.
+  - **Still open:** traction/stress at the source collocation points (self-interaction, for earthquake-cycle
+    codes); the particular solution for non-zero t/u values; a per-element-average source option if wanted.
+  Original plan: The user gives a mesh with `s` elements (the fault, where slip is the input) and the rest
   of the problem (`t` free surfaces, `u` clamped boundaries, `h` material interfaces), plus observation points. The
   function returns the displacement and stress at the observation points due to a unit one-ring hat on each `s` hat,
   with every other boundary condition made homogeneous: `t` and `u` values set to 0, `h` interfaces continuous.

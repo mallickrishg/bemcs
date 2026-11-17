@@ -4339,3 +4339,232 @@ def plot_fields(mesh, x, *, geometry, mu=None, nu=None, xlim, ylim, n=(100, 100)
     fields.update(x=X, y=Y)
     fig.tight_layout()
     return fig, axes, fields
+
+
+# =============================================================================
+# Green's functions of a whole mesh
+# =============================================================================
+
+_GF_BASIS = {"slip": "hat", "force": "trapezoid"}
+_MEAN_WEIGHTS = np.array([3 / 8, 1 / 4, 3 / 8])  # element average of the quadratic slip nodes
+
+
+@dataclass
+class GreensFunctions:
+    """Green's functions of a mesh, from `get_greens_functions`.
+
+    One source (column) per prescribed-slip row: unit slip at the centre of one slip hat's
+    centre element, in one slip component (antiplane: z; plane strain: 0 = shear along the
+    element, 1 = normal/opening), and zero slip at every other source; every other boundary
+    condition homogeneous ("t"/"u" values 0, "h" interfaces continuous). For slip amplitudes
+    `s` (one per source), the fields are `fields[name] @ s`, or simply `gf(s)`.
+
+    Attributes
+    ----------
+    sources : dict of arrays (n_sources,)
+        "element" (global index of the hat's centre element), "component", and "x", "y"
+        (the collocation point where the unit slip is imposed).
+    fault_elements : (n_fault,) int
+        Global indices of the elements with prescribed slip ("s"), the fault.
+    slip_average : (n_fault, pe, n_sources)
+        Average slip on each fault element for each source, in the element's local frame
+        (antiplane pe = 1; plane strain: shear, normal). What a unit source looks like as
+        the per-element slip most geophysical codes use.
+    slip_coefficients : (n_fault, 3, pe, n_sources)
+        The quadratic slip coefficients (element nodes) on each fault element, for each
+        source (see `bemcs.slip_functions`).
+    fields : dict name -> (n_obs, n_sources)
+        Displacement ("uz" or "ux", "uy") and true stress ("sxz", "syz" or "sxx", "syy",
+        "sxy") at the observation points (flattened) per unit source.
+    matrix, rhs, rows : the BEM system A X = rhs (one column of rhs per source) and the row
+        table of `assemble`.
+    coefficients : (n_columns, n_sources)
+        X: every BEM coefficient (slip and force, `mesh.layout`) for each source.
+    """
+
+    geometry: str
+    mesh: object
+    x_obs: np.ndarray
+    y_obs: np.ndarray
+    obs_shape: tuple
+    sources: dict
+    fault_elements: np.ndarray
+    slip_average: np.ndarray
+    slip_coefficients: np.ndarray
+    fields: dict
+    matrix: np.ndarray
+    rhs: np.ndarray
+    coefficients: np.ndarray
+    rows: dict
+
+    @property
+    def n_sources(self):
+        return len(self.sources["element"])
+
+    def __call__(self, slip):
+        """Fields (shaped like the observation points) for source amplitudes `slip`
+        (n_sources,): the slip at each source's collocation point."""
+        s = np.asarray(slip, dtype=float).ravel()
+        if s.size != self.n_sources:
+            raise ValueError(f"slip has {s.size} entries, there are {self.n_sources} sources")
+        return {name: (K @ s).reshape(self.obs_shape) for name, K in self.fields.items()}
+
+    def solution(self, slip):
+        """The BEM coefficient vector x for source amplitudes `slip` (as `solve` returns it), e.g.
+        for `mesh.values_on_elements(x, ...)`."""
+        return self.coefficients @ np.asarray(slip, dtype=float).ravel()
+
+    def __repr__(self):
+        return (f"GreensFunctions({self.geometry}: {self.n_sources} sources on {len(self.fault_elements)} "
+                f"fault elements, {self.x_obs.size} observation points, fields {list(self.fields)})")
+
+
+def _gf_mesh(mesh, connectivity, basis):
+    """A Mesh from a Mesh or a mesh file, with connectivity given as None, a dict
+    {"slip": ..., "force": ...}, or one or more files whose kind is inferred."""
+    if isinstance(mesh, Mesh):
+        if connectivity is not None or basis is not None:
+            raise ValueError("connectivity and basis are given with the mesh file; a Mesh already has them")
+        return mesh
+    basis = dict(_GF_BASIS, **(basis or {}))
+    if connectivity is None or isinstance(connectivity, dict):
+        conn = connectivity
+    else:
+        paths = [connectivity] if isinstance(connectivity, (str, os.PathLike)) else list(connectivity)
+        plain = Mesh.from_csv(mesh, basis=basis)
+        conn = {}
+        for p in paths:
+            c, bc = _read_connectivity(p)
+            centre = c[:, 1]
+            if bc is not None:
+                kind = "force" if (bc[0] == "h").all() else "slip"
+            else:
+                labels = set(plain.labels[centre].tolist())
+                if len(labels) != 1:
+                    raise ValueError(f"{p}: the centre elements are of both source types; pass "
+                                     "connectivity={'slip': ..., 'force': ...}")
+                kind = "slip" if labels == {"s"} else "force"
+            if kind in conn:
+                raise ValueError(f"two {kind} connectivity files given: {conn[kind]} and {p}")
+            conn[kind] = p
+    return Mesh.from_csv(mesh, basis=basis, connectivity=conn)
+
+
+def get_greens_functions(mesh, x_obs, y_obs, *, geometry, nu=None, connectivity=None, basis=None,
+                         mu_obs=None, components=None, use_numba=None, solver="auto"):
+    """Green's functions of a heterogeneous mesh: the displacement and stress at observation
+    points due to unit slip on each slip hat of the fault, with everything else (free
+    surfaces, clamped boundaries, material interfaces) solved for.
+
+    Example::
+
+        gf = bemcs.get_greens_functions("mesh.csv", x_obs, y_obs, geometry="planestrain", nu=0.25)
+        gf.fields["uy"]          # (n_obs, n_sources): uy for unit slip at each source
+        gf.slip_average          # (n_fault, 2, n_sources): what each source is, per element
+        u = gf(slip)             # fields for slip amplitudes, one per source
+
+    Parameters
+    ----------
+    mesh : str, path or Mesh
+        A mesh file (`Mesh.from_csv`: geometry, moduli, boundary conditions) or a Mesh.
+        Elements with prescribed slip ("s") are the fault: each slip hat centred on one of
+        them is a source (one per component in plane strain). Their slip values, and the
+        values on "t"/"u" elements, are ignored: those conditions are made homogeneous.
+    x_obs, y_obs : array_like
+        Observation points (any shape; the fields are flattened to n_obs rows).
+    geometry : {"antiplane", "planestrain"}
+    nu : float
+        Poisson's ratio (plane strain).
+    connectivity : optional, with a mesh file
+        None: bemcs builds the patches (one-ring slip hats, including triple junctions;
+        force trapezoids with free ends at open ends and junctions). Otherwise one
+        connectivity file, a list of files (the slip or force kind of each is inferred), or
+        {"slip": path, "force": path}.
+    basis : dict, optional, with a mesh file
+        Default {"slip": "hat", "force": "trapezoid"}; e.g. {"force": "nodal"}.
+    mu_obs : optional
+        Shear modulus at the observation points that the stresses are scaled to:
+        None (default) from the mesh (`Mesh.modulus_at`), a callable mu(x, y), a number,
+        or "reference" for the stresses of the unit reference medium.
+    components : sequence of str, optional
+        The field components to return (default all), to save memory on large problems.
+    solver : see `solve`.
+
+    Returns
+    -------
+    GreensFunctions
+        `fields`, `sources`, `slip_average`, `slip_coefficients`, `matrix`, `coefficients`,
+        ... (see `GreensFunctions`).
+
+    Notes
+    -----
+    The BEM matrix does not depend on the source: it is assembled and factorised once,
+    and all sources are solved together (one right-hand side each). The moduli come from
+    the mesh; the kernels use a unit reference modulus, which cancels.
+    """
+    if geometry not in _GEOMETRIES:
+        raise ValueError(f"geometry must be one of {_GEOMETRIES}, got {geometry!r}")
+    mesh = _gf_mesh(mesh, connectivity, basis)
+    if mesh.bc_type is None:
+        raise ValueError("the mesh has no boundary conditions (BC columns in the mesh or connectivity files)")
+    pe = 1 if geometry == "antiplane" else 2
+    A, _, rows = assemble(mesh, geometry=geometry, mu=1.0, nu=nu, use_numba=use_numba, _stacklevel=4)
+    bad = ~np.isfinite(A).all(axis=1)
+    if bad.any():
+        raise FloatingPointError(
+            f"kernels are not finite at the collocation point(s) of element(s) "
+            f"{sorted(set(rows['element'][bad].tolist()))}: a node of another fault lies on a collocation point")
+    src = np.flatnonzero(rows["type"] == "s")
+    if not len(src):
+        raise ValueError("the mesh has no prescribed-slip ('s') conditions: no sources")
+    B = np.zeros((A.shape[0], len(src)))
+    B[src, np.arange(len(src))] = 1.0
+    X = _linear_solve(A, B, solver)
+    if X.ndim == 1:
+        X = X[:, None]
+    sources = {"element": rows["element"][src].astype(int), "component": rows["component"][src].astype(int),
+               "x": np.asarray(rows["x"], float)[src], "y": np.asarray(rows["y"], float)[src]}
+
+    # slip on the fault for each source: quadratic element coefficients and averages
+    sub, s_idx, _ = mesh.subset("slip")
+    a = X[mesh.columns("slip", geometry=geometry), :]
+    if mesh.basis["slip"] != _ELEMENT_BASIS["slip"]:
+        T = mesh.transform("slip", geometry=geometry)
+        a = T @ a if pe == 1 else np.einsum("slbm,bmj->slj", T, a.reshape(-1, 2, a.shape[1])).reshape(-1, a.shape[1])
+    coef = a.reshape(len(s_idx), 3, pe, -1)
+    fault = np.flatnonzero((mesh.bc_type == "s").any(axis=1) & (mesh.labels == "s"))
+    pos = np.searchsorted(s_idx, fault)
+    slip_coefficients = coef[pos]
+    slip_average = np.einsum("k,ekcj->ecj", _MEAN_WEIGHTS, slip_coefficients)
+
+    # fields at the observation points
+    shape = np.shape(x_obs)
+    xo, yo = _obs(x_obs, y_obs)
+    names_u, names_s, _ = _COMPONENTS[geometry]
+    names = names_u + names_s if components is None else tuple(components)
+    unknown = sorted(set(names) - set(names_u + names_s))
+    if unknown:
+        raise ValueError(f"unknown components {unknown}; choose from {names_u + names_s}")
+    U, S, _ = get_kernels(xo, yo, mesh, geometry=geometry, mu=1.0, nu=nu, use_numba=use_numba)
+    if any(n in names_s for n in names):
+        if isinstance(mu_obs, str):
+            if mu_obs != "reference":
+                raise ValueError(f'mu_obs must be None, a callable, a number or "reference", got {mu_obs!r}')
+            scale = np.ones(xo.size)
+        elif mu_obs is None:
+            scale = mesh.modulus_at(xo, yo) if mesh.mu_minus is not None and mesh.mu_plus is not None \
+                else np.ones(xo.size)
+        elif callable(mu_obs):
+            scale = np.asarray(mu_obs(xo, yo), dtype=float) * np.ones(xo.size)
+        else:
+            scale = np.broadcast_to(np.asarray(mu_obs, dtype=float), xo.shape)
+    fields = {}
+    for k, name in enumerate(names_u):
+        if name in names:
+            fields[name] = kernel_matrix(U[:, :, k : k + 1]) @ X
+    for k, name in enumerate(names_s):
+        if name in names:
+            fields[name] = scale[:, None] * (kernel_matrix(S[:, :, k : k + 1]) @ X)
+    return GreensFunctions(geometry=geometry, mesh=mesh, x_obs=xo, y_obs=yo, obs_shape=shape, sources=sources,
+                           fault_elements=fault, slip_average=slip_average, slip_coefficients=slip_coefficients,
+                           fields=fields, matrix=A, rhs=B, coefficients=X, rows=rows)

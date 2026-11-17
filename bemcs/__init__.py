@@ -49,6 +49,8 @@ from .bemAssembly import (
     interface_kappa,
     uniform_background,
     evaluate_fields,
+    get_greens_functions,
+    GreensFunctions,
     plot_fields,
     plot_mesh,
 )
@@ -83,6 +85,8 @@ __all__ = [
     "interface_kappa",
     "uniform_background",
     "evaluate_fields",
+    "get_greens_functions",
+    "GreensFunctions",
     "plot_fields",
     "plot_mesh",
 ]
