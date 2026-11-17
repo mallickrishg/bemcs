@@ -738,14 +738,12 @@ checked by:
     slip and coincident force elements on a slab contact: slab mu 3, upper plate and mantle mu 1.
     Slab bottom 40 km below. Sigmoidal topography from -4 to +1 km. Lines run out to 5000 km, with elements
     growing from 2 km near the fault to a 100 km cap. 684 elements, cond 6.5e4.
-  - **Checks:**
-    - free surface traction-free to 6e-6;
-    - slab interfaces: displacement jump ~1e-5, true-traction jump ~4e-4 (stress ~0.04);
-    - truncation (2500 vs 5000 km) and refinement (1 vs 2 km) each change the surface displacement by 0.2%.
-  - **Open:** on the coincident fault, the true traction jumps by ~1e-3 (about 9% of the local normal-traction
-    change). On the slab side it shows an element-to-element sawtooth with trapezoids. The jump converges at
-    first order (1.3e-3, 5.4e-4, 2.4e-4 for 2, 1, 0.5 km) while the traction at its peak stays fixed. Tents
-    smooth the sawtooth but not the jump. Worth a look with the Dundurs / interface-dislocation reference (P6).
+  - The example shows the setup, the solve, a comparison with a homogeneous medium and the field plots. It does
+    no accuracy checks: verifying a mesh (truncation, refinement, off-element boundary conditions) is the user's
+    job, not the example's (user, 2026-11-17).
+  - **Known limitation, not a task:** checked once (2026-11-17), the true traction on the coincident fault jumps
+    by ~1e-3 between its two sides, about 9% of the local normal-traction change, with a sawtooth on the slab
+    side. It converges at first order with refinement (1.3e-3, 5.4e-4, 2.4e-4 for 2, 1, 0.5 km elements).
 - [ ] **P5. Documentation of the heterogeneous formulation as implemented** (T3). Can follow P1-P4.
 
 **Not blockers:** triangle force sources (lowest priority), far-field kernel expansion (only for very long meshes),
