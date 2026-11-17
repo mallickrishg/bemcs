@@ -2610,18 +2610,20 @@ class Mesh:
         the chain, `TrapezoidCrossingWarning`) and `split_force_trapezoids`
         suggests a fix.
     bc_type : sequence of str (same type on all components), or (n_els, 2) with one
-        type per component in plane strain (component 1/2: x/y for global types,
-        t/n for local types). Boundary condition of each element, used by `solve`:
-        "s": slip (local t, n) at the element centre (slip elements);
+        type per component in plane strain (column 0/1 of bc_type: x/y for global
+        types, shear/normal for local types; CSV BC_type_1 / BC_type_2). Boundary
+        condition of each element, used by `solve`:
+        "s": slip (local shear, normal) at the element centre (slip elements);
         "u" (alias "u_global"): displacement (global x, y; antiplane z);
         "u_local": displacement (local shear, normal; antiplane z, same as "u");
         "t" (alias "t_global"): traction (global x, y; antiplane sigma.n);
         "t_local": traction (local shear, normal);
-        Local and global types may be mixed across the two components, e.g.
-        ["t_local", "u_local"] with values (0, 0) is a roller: no shear traction
-        (component 1, along the element), no normal displacement (component 2). "u" / "u_local" are sampled on the -n side (`solve(side=)`),
-        which must be the inside of the body on a boundary.
         "h": material interface (force elements; needs mu_minus != mu_plus).
+        Local and global types may be mixed across the two columns, e.g.
+        ["t_local", "u_local"] with values (0, 0) is a roller: no shear traction
+        (column 0, along the element), no normal displacement (column 1). "u" /
+        "u_local" on slip elements are sampled on the -n side (`solve(side=)`), which
+        must be the inside of the body on a boundary.
     bc_value : (n_els,) or (n_els, 2) array
         Prescribed values (ignored for "h").
     mu_minus, mu_plus : (n_els,) arrays
@@ -2787,9 +2789,9 @@ class Mesh:
         Columns: x1, z1, x2, z2, mu_minus, mu_plus, and the boundary conditions as
 
         - plane strain, one type and value per component:
-          BC_type_1, value_1, BC_type_2, value_2. Component 1/2 is x/y for global
-          types ("u", "t") and t/n for local types ("s", "u_local", "t_local"); "h" must be
-          on both components;
+          BC_type_1, value_1, BC_type_2, value_2, read into column 0/1 of bc_type /
+          bc_value: x/y for global types ("u", "t"), shear/normal for local types
+          ("s", "u_local", "t_local"); "h" must be on both components;
         - antiplane (one component): BC_type, value;
         - shorthand, the same type on both components: BC_type, value[, value2].
 
