@@ -113,7 +113,9 @@ Updated 2026-11-16. Details are in T1/T2 and the issue list (section 4).
   - BC types are `s`, `u`, `t`, `t_local`, `h`, per element or per component.
   - `Mesh.from_csv` reads `x1, z1, x2, z2, mu_minus, mu_plus` plus BC columns.
   - Fault tips are clamped and carry no BC row.
-- **Example.** `examples/planestrain/testing_HeterogeneousMaterialsPlanestrain.py` runs on `Mesh` / `solve`.
+- **Examples.** `examples/planestrain/validate_dundurs_bimaterial.py` (formerly
+  `testing_HeterogeneousMaterialsPlanestrain.py`): exact Dundurs check. `example_subduction_bimaterial.py` with
+  `ConstructMesh_subduction.py`: a megathrust on a slab contact (see P6).
 - **Validated** (`tests/test_solve.py`, `tests/test_validation.py`):
   - no contrast gives no interface force;
   - high-contrast limits match a rigid boundary and a free surface;
@@ -728,6 +730,20 @@ checked by:
       one node). The solver never calls it on the whole mesh.
   - **Options if the overlap formulation stays awkward:** a combined "bimaterial fault" element (slip with
     mu_minus != mu_plus that also carries the interface condition), instead of two coincident meshes.
+- [x] **Subduction-zone example (plane strain)** (2026-11-17): `examples/planestrain/ConstructMesh_subduction.py`
+  (mesh and connectivity files) and `example_subduction_bimaterial.py` (solve).
+  - **Setup:** curved megathrust, 10 to 20 deg over 30 km depth, with Gaussian thrust slip. It is meshed as
+    slip and coincident force elements on a slab contact: slab mu 3, upper plate and mantle mu 1.
+    Slab bottom 40 km below. Sigmoidal topography from -4 to +1 km. Lines run out to 5000 km, with elements
+    growing from 2 km near the fault to a 100 km cap. 684 elements, cond 6.5e4.
+  - **Checks:**
+    - free surface traction-free to 6e-6;
+    - slab interfaces: displacement jump ~1e-5, true-traction jump ~4e-4 (stress ~0.04);
+    - truncation (2500 vs 5000 km) and refinement (1 vs 2 km) each change the surface displacement by 0.2%.
+  - **Open:** on the coincident fault, the true traction jumps by ~1e-3 (about 9% of the local normal-traction
+    change). On the slab side it shows an element-to-element sawtooth with trapezoids. The jump converges at
+    first order (1.3e-3, 5.4e-4, 2.4e-4 for 2, 1, 0.5 km) while the traction at its peak stays fixed. Tents
+    smooth the sawtooth but not the jump. Worth a look with the Dundurs / interface-dislocation reference (P6).
 - [ ] **P5. Documentation of the heterogeneous formulation as implemented** (T3). Can follow P1-P4.
 
 **Not blockers:** triangle force sources (lowest priority), far-field kernel expansion (only for very long meshes),
