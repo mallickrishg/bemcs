@@ -31,7 +31,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import bemcs
 
-HERE = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
+HERE = (
+    os.path.dirname(os.path.abspath(__file__))
+    if "__file__" in globals()
+    else os.getcwd()
+)
 MESH_FILE = os.path.join(HERE, "example_greens_functions_mesh.csv")
 
 DIP, D = np.deg2rad(60.0), 1.0  # fault dip and depth
@@ -67,15 +71,23 @@ def graded(h, L=200.0, flat=2.0, ratio=1.08, h_max=5.0):
 
 
 def write_mesh_file(path, h=H_EL):
-    s = np.linspace(0.0, D / np.sin(DIP), int(round(D / np.sin(DIP) / h)) + 1)  # along the fault
+    s = np.linspace(
+        0.0, D / np.sin(DIP), int(round(D / np.sin(DIP) / h)) + 1
+    )  # along the fault
     xf, zf = s * np.cos(DIP), -s * np.sin(DIP)
     xs = graded(h)
     n_f, n_s = len(s) - 1, len(xs) - 1
     rows = {
-        "x1": np.r_[xf[:-1], xs[:-1], xs[:-1]], "z1": np.r_[zf[:-1], np.zeros(n_s), np.full(n_s, -H_LAYER)],
-        "x2": np.r_[xf[1:], xs[1:], xs[1:]], "z2": np.r_[zf[1:], np.zeros(n_s), np.full(n_s, -H_LAYER)],
-        "mu_minus": np.r_[np.full(n_f, MU_LAYER), np.full(n_s, MU_LAYER), np.full(n_s, MU_BELOW)],
-        "mu_plus": np.r_[np.full(n_f, MU_LAYER), np.full(n_s, MU_LAYER), np.full(n_s, MU_LAYER)],
+        "x1": np.r_[xf[:-1], xs[:-1], xs[:-1]],
+        "z1": np.r_[zf[:-1], np.zeros(n_s), np.full(n_s, -H_LAYER)],
+        "x2": np.r_[xf[1:], xs[1:], xs[1:]],
+        "z2": np.r_[zf[1:], np.zeros(n_s), np.full(n_s, -H_LAYER)],
+        "mu_minus": np.r_[
+            np.full(n_f, MU_LAYER), np.full(n_s, MU_LAYER), np.full(n_s, MU_BELOW)
+        ],
+        "mu_plus": np.r_[
+            np.full(n_f, MU_LAYER), np.full(n_s, MU_LAYER), np.full(n_s, MU_LAYER)
+        ],
         "BC_type": ["s"] * n_f + ["t"] * n_s + ["h"] * n_s,
         "value": np.zeros(n_f + 2 * n_s),
     }
@@ -84,7 +96,9 @@ def write_mesh_file(path, h=H_EL):
 
 
 n_f, n_s = write_mesh_file(MESH_FILE)
-print(f"wrote {MESH_FILE}: {n_f} fault, {n_s} free-surface and {n_s} interface elements")
+print(
+    f"wrote {MESH_FILE}: {n_f} fault, {n_s} free-surface and {n_s} interface elements"
+)
 
 # %% [markdown]
 # ## 2. Green's functions for both geometries
@@ -112,26 +126,17 @@ surface, on_fault = slice(0, len(x_surf)), slice(len(x_surf), None)
 
 gfs = {}
 for geometry in ("antiplane", "planestrain"):
-    gfs[geometry] = bemcs.get_greens_functions(MESH_FILE, x_obs, y_obs, geometry=geometry, nu=NU)
+    gfs[geometry] = bemcs.get_greens_functions(
+        MESH_FILE, x_obs, y_obs, geometry=geometry, nu=NU
+    )
     print(gfs[geometry])
 gf_a, gf_p = gfs["antiplane"], gfs["planestrain"]
 
 
-def fault_traction(f, geometry):
-    """Shear (and, in plane strain, normal) traction on the fault plane at the fault points, from a
-    dict of stresses (arrays, or (n_obs, n_sources) kernels)."""
-    first = f["sxz"] if geometry == "antiplane" else f["sxx"]
-    sh = (-1, *[1] * (first.ndim - 1))  # broadcast the fault normals over the sources axis, if any
-    if geometry == "antiplane":
-        return f["sxz"][on_fault] * nx.reshape(sh) + f["syz"][on_fault] * ny.reshape(sh), None
-    tx = f["sxx"][on_fault] * nx.reshape(sh) + f["sxy"][on_fault] * ny.reshape(sh)
-    ty = f["sxy"][on_fault] * nx.reshape(sh) + f["syy"][on_fault] * ny.reshape(sh)
-    return tx * sx.reshape(sh) + ty * sy.reshape(sh), tx * nx.reshape(sh) + ty * ny.reshape(sh)
-
-
-# the stress-interaction kernel: shear traction at each fault element for unit slip at each source
-K_shear_a, _ = fault_traction(gf_a.fields, "antiplane")
-print("antiplane fault stress kernel:", K_shear_a.shape, "(fault elements x sources)")
+# the stress-interaction kernels: traction on the fault plane at each fault element, per source
+K_a = gf_a.tractions(nx, ny, index=on_fault)  # (n_fault, n_sources): shear
+K_p = gf_p.tractions(nx, ny, sx, sy, index=on_fault)  # (n_fault, 2, n_sources): shear, normal
+print("fault stress kernels: antiplane", K_a.shape, " plane strain", K_p.shape)
 
 # %% [markdown]
 # ## 3. What a source is
@@ -147,13 +152,22 @@ print("antiplane fault stress kernel:", K_shear_a.shape, "(fault elements x sour
 # the slip at the hat centres. `gf.amplitudes(slip)` converts slip values at the sources'
 # collocation points into amplitudes.
 
-print("antiplane sources:", gf_a.n_sources, "  plane strain sources:", gf_p.n_sources,
-      "(per component:", np.bincount(gf_p.sources["component"]), ")")
+print(
+    "antiplane sources:",
+    gf_a.n_sources,
+    "  plane strain sources:",
+    gf_p.n_sources,
+    "(per component:",
+    np.bincount(gf_p.sources["component"]),
+    ")",
+)
 pick = [gf_a.n_sources // 4, gf_a.n_sources // 2, gf_a.n_sources - 1]  # buried sources
 
 
 def plane_strain_source(element, component):
-    return np.flatnonzero((gf_p.sources["element"] == element) & (gf_p.sources["component"] == component))[0]
+    return np.flatnonzero(
+        (gf_p.sources["element"] == element) & (gf_p.sources["component"] == component)
+    )[0]
 
 
 # distance down the fault: of each fault element's end nodes, and along it
@@ -164,11 +178,14 @@ def source_slip(gf, j, n_eval=20):
     """Slip along the fault (local components) for source j alone, and its element averages."""
     a = np.zeros(gf.n_sources)
     a[j] = 1.0
-    xe, ye, v = gf.mesh.values_on_elements(gf.solution(a), "slip", geometry=gf.geometry, n_eval=n_eval,
-                                           frame="local")
+    xe, ye, v = gf.mesh.values_on_elements(
+        gf.solution(a), "slip", geometry=gf.geometry, n_eval=n_eval, frame="local"
+    )
     slip_els = gf.mesh.elements("slip")
     keep = np.isin(np.repeat(slip_els, n_eval), fault)
-    dist = np.hypot(np.asarray(xe)[keep] - els.x1[fault[0]], np.asarray(ye)[keep] - els.y1[fault[0]])
+    dist = np.hypot(
+        np.asarray(xe)[keep] - els.x1[fault[0]], np.asarray(ye)[keep] - els.y1[fault[0]]
+    )
     v = np.asarray(v).reshape(len(xe), -1)[keep]
     return dist, v, gf.slip_average[:, :, j]
 
@@ -176,22 +193,48 @@ def source_slip(gf, j, n_eval=20):
 def plot_source(ax, gf, j, color, component=0, label="", style="-"):
     dist, v, avg = source_slip(gf, j)
     ax.plot(dist, v[:, component], style, color=color, lw=1.5, label=label)
-    ax.stairs(avg[:, component], s_nodes, color=color, lw=1, ls=style, alpha=0.7, baseline=None)
+    ax.stairs(
+        avg[:, component],
+        s_nodes,
+        color=color,
+        lw=1,
+        ls=style,
+        alpha=0.7,
+        baseline=None,
+    )
 
 
 fig, ax = plt.subplots(figsize=(7, 4.5))
 X, Y = np.meshgrid(np.linspace(-3, 3, 241), np.linspace(-2.5, 0, 101))
-ax.pcolormesh(X, Y, np.where(Y > -H_LAYER, MU_LAYER, MU_BELOW), cmap="Greys", vmin=0, vmax=5, shading="auto")
+ax.pcolormesh(
+    X,
+    Y,
+    np.where(Y > -H_LAYER, MU_LAYER, MU_BELOW),
+    cmap="Greys",
+    vmin=0,
+    vmax=5,
+    shading="auto",
+)
 for e in range(mesh.n_els):
-    ax.plot([els.x1[e], els.x2[e]], [els.y1[e], els.y2[e]], {"s": "r-", "t": "k-", "h": "b-"}[mesh.bc_type[e, 0]],
-            lw=2)
+    ax.plot(
+        [els.x1[e], els.x2[e]],
+        [els.y1[e], els.y2[e]],
+        {"s": "r-", "t": "k-", "h": "b-"}[mesh.bc_type[e, 0]],
+        lw=2,
+    )
 ax.plot(x_surf, np.zeros_like(x_surf), "|", color="C2", ms=7)
 ax.plot(xf, yf, "o", color="C2", ms=3.5, mfc="none")
 ax.text(1.5, -0.6, rf"layer $\mu$ = {MU_LAYER:g}", fontsize=9)
 ax.text(1.5, -2.1, rf"half-space $\mu$ = {MU_BELOW:g}", fontsize=9)
-for label, style in (("fault (s): the sources", "r-"), ("free surface (t)", "k-"), ("interface (h)", "b-")):
+for label, style in (
+    ("fault (s): the sources", "r-"),
+    ("free surface (t)", "k-"),
+    ("interface (h)", "b-"),
+):
     ax.plot([], [], style, label=label)
-ax.plot([], [], "o", color="C2", mfc="none", label="observation points (surface, fault)")
+ax.plot(
+    [], [], "o", color="C2", mfc="none", label="observation points (surface, fault)"
+)
 ax.set_xlim(-3, 3)
 ax.set_ylim(-2.5, 0.2)
 ax.set_aspect("equal")
@@ -215,24 +258,22 @@ def taper(depth):
 
 
 amp_a = gf_a.amplitudes(taper(-gf_a.sources["y"]))
-amp_p = gf_p.amplitudes(np.where(gf_p.sources["component"] == 0, taper(-gf_p.sources["y"]), 0.0))
+amp_p = gf_p.amplitudes(
+    np.where(gf_p.sources["component"] == 0, taper(-gf_p.sources["y"]), 0.0)
+)
 fa, fp = gf_a(amp_a), gf_p(amp_p)
 
 homog_file = os.path.join(HERE, "example_greens_functions_mesh_homogeneous.csv")
-pd.read_csv(MESH_FILE).assign(mu_minus=MU_LAYER, mu_plus=MU_LAYER).to_csv(homog_file, index=False)
+pd.read_csv(MESH_FILE).assign(mu_minus=MU_LAYER, mu_plus=MU_LAYER).to_csv(
+    homog_file, index=False
+)
 gh_a = bemcs.get_greens_functions(homog_file, x_obs, y_obs, geometry="antiplane")
-gh_p = bemcs.get_greens_functions(homog_file, x_obs, y_obs, geometry="planestrain", nu=NU)
+gh_p = bemcs.get_greens_functions(
+    homog_file, x_obs, y_obs, geometry="planestrain", nu=NU
+)
 ha, hp = gh_a(amp_a), gh_p(amp_p)
-
-# the same answer as a direct solve with that slip on the fault
-values = np.zeros((mesh.n_els, 2))
-values[gf_p.sources["element"], gf_p.sources["component"]] = gf_p.point_slip @ amp_p
-direct = bemcs.Mesh(mesh.els, bc_type=mesh.bc_type, bc_value=values, mu_minus=mesh.mu_minus,
-                    mu_plus=mesh.mu_plus, basis={"slip": "hat", "force": "trapezoid"})
-x = bemcs.solve(direct, geometry="planestrain", nu=NU)
-check = bemcs.evaluate_fields(direct, x, x_obs, y_obs, geometry="planestrain", nu=NU)
-print("plane strain, Green's functions vs direct solve: max |difference| in uy = %.1e, in sxy = %.1e"
-      % (np.abs(fp["uy"] - check["uy"]).max(), np.abs(fp["sxy"] - check["sxy"]).max()))
+Kh_a = gh_a.tractions(nx, ny, index=on_fault)
+Kh_p = gh_p.tractions(nx, ny, sx, sy, index=on_fault)
 
 # %% [markdown]
 # ## 5. Antiplane (strike-slip)
@@ -240,23 +281,36 @@ print("plane strain, Green's functions vs direct solve: max |difference| in uy =
 fig, axes = plt.subplots(2, 2, figsize=(13, 9))
 ax = axes[0, 0]
 for i, j in enumerate(pick):
-    plot_source(ax, gf_a, j, f"C{i}", label=f"source {j} (centre depth {-gf_a.sources['y'][j]:.2f})")
+    plot_source(
+        ax,
+        gf_a,
+        j,
+        f"C{i}",
+        label=f"source {j} (centre depth {-gf_a.sources['y'][j]:.2f})",
+    )
 ax.set_xlabel("distance down the fault / D")
 ax.set_ylabel("slip (strike-slip)")
 ax.grid(alpha=0.3)
 ax.legend(fontsize=8)
-ax.set_title("(a) sources: slip along the fault (lines) and element averages\n"
-             "(steps, gf.slip_average[:, 0, j])", fontsize=10)
+ax.set_title(
+    "(a) sources: slip along the fault (lines) and element averages\n"
+    "(steps, gf.slip_average[:, 0, j])",
+    fontsize=10,
+)
 ax = axes[0, 1]
 for i, j in enumerate(pick):
-    ax.plot(x_surf, gf_a.fields["uz"][surface, j], "-", color=f"C{i}", label=f"source {j}")
+    ax.plot(
+        x_surf, gf_a.fields["uz"][surface, j], "-", color=f"C{i}", label=f"source {j}"
+    )
 ax.set_xlabel("x / D")
 ax.set_ylabel("uz per unit source")
 ax.grid(alpha=0.3)
 ax.legend(fontsize=8)
 ax.set_title('(b) columns: gf.fields["uz"][surface, j]', fontsize=10)
 ax = axes[1, 0]
-ax.plot(x_surf, fa["uz"][surface], "-", color="C3", lw=2, label="layered: gf(amplitudes)")
+ax.plot(
+    x_surf, fa["uz"][surface], "-", color="C3", lw=2, label="layered: gf(amplitudes)"
+)
 ax.plot(x_surf, ha["uz"][surface], ":", color="k", label="homogeneous")
 ax.set_xlabel("x / D")
 ax.set_ylabel("uz")
@@ -264,8 +318,15 @@ ax.grid(alpha=0.3)
 ax.legend(fontsize=8)
 ax.set_title("(c) surface displacement for the tapered slip", fontsize=10)
 ax = axes[1, 1]
-ax.plot(fault_traction(fa, "antiplane")[0], depth_f, "o-", ms=3, color="C3", label="layered")
-ax.plot(fault_traction(ha, "antiplane")[0], depth_f, "o:", ms=3, color="k", label="homogeneous")
+ax.plot(K_a @ amp_a, depth_f, "o-", ms=3, color="C3", label="layered")
+ax.plot(
+    Kh_a @ amp_a,
+    depth_f,
+    "o:",
+    ms=3,
+    color="k",
+    label="homogeneous",
+)
 ax.invert_yaxis()
 ax.set_xlabel("shear traction on the fault")
 ax.set_ylabel("depth / D")
@@ -281,20 +342,47 @@ plt.show()
 
 fig, axes = plt.subplots(2, 2, figsize=(13, 9))
 ax = axes[0, 0]
-for c, (name, color, k) in enumerate((("dip-slip", "C0", pick[0]), ("opening", "C3", pick[1]))):
+for c, (name, color, k) in enumerate(
+    (("dip-slip", "C0", pick[0]), ("opening", "C3", pick[1]))
+):
     j = plane_strain_source(gf_a.sources["element"][k], c)
-    plot_source(ax, gf_p, j, color, component=0, style="-", label=f"{name} source {j}: shear slip")
-    plot_source(ax, gf_p, j, color, component=1, style="--", label=f"{name} source {j}: normal slip (opening)")
+    plot_source(
+        ax,
+        gf_p,
+        j,
+        color,
+        component=0,
+        style="-",
+        label=f"{name} source {j}: shear slip",
+    )
+    plot_source(
+        ax,
+        gf_p,
+        j,
+        color,
+        component=1,
+        style="--",
+        label=f"{name} source {j}: normal slip (opening)",
+    )
 ax.set_xlabel("distance down the fault / D")
 ax.set_ylabel("slip")
 ax.grid(alpha=0.3)
 ax.legend(fontsize=7)
-ax.set_title("(e) a dip-slip and an opening source: both slip components along the\n"
-             "fault (lines) and element averages (steps, gf.slip_average[:, c, j])", fontsize=10)
+ax.set_title(
+    "(e) a dip-slip and an opening source: both slip components along the\n"
+    "fault (lines) and element averages (steps, gf.slip_average[:, c, j])",
+    fontsize=10,
+)
 ax = axes[0, 1]
 for i, j in enumerate(pick):
     jp = plane_strain_source(gf_a.sources["element"][j], 0)
-    ax.plot(x_surf, gf_p.fields["uy"][surface, jp], "-", color=f"C{i}", label=f"dip-slip source {jp}")
+    ax.plot(
+        x_surf,
+        gf_p.fields["uy"][surface, jp],
+        "-",
+        color=f"C{i}",
+        label=f"dip-slip source {jp}",
+    )
 ax.set_xlabel("x / D")
 ax.set_ylabel("uy per unit source")
 ax.grid(alpha=0.3)
@@ -302,7 +390,14 @@ ax.legend(fontsize=8)
 ax.set_title('(f) columns: gf.fields["uy"][surface, j]', fontsize=10)
 ax = axes[1, 0]
 for name, c in (("ux", "C0"), ("uy", "C3")):
-    ax.plot(x_surf, fp[name][surface], "-", color=c, lw=2, label=f"{name}, layered: gf(amplitudes)")
+    ax.plot(
+        x_surf,
+        fp[name][surface],
+        "-",
+        color=c,
+        lw=2,
+        label=f"{name}, layered: gf(amplitudes)",
+    )
     ax.plot(x_surf, hp[name][surface], ":", color=c, label=f"{name}, homogeneous")
 ax.set_xlabel("x / D")
 ax.set_ylabel("displacement")
@@ -310,12 +405,16 @@ ax.grid(alpha=0.3)
 ax.legend(fontsize=8)
 ax.set_title("(g) surface displacement for the tapered dip-slip", fontsize=10)
 ax = axes[1, 1]
-shear, normal = fault_traction(fp, "planestrain")
-shear_h, normal_h = fault_traction(hp, "planestrain")
+shear, normal = (K_p @ amp_p).T  # K_p @ amp_p is (n_fault, 2): shear, normal
+shear_h, normal_h = (Kh_p @ amp_p).T
 ax.plot(shear, depth_f, "o-", ms=3, color="C3", label="shear, layered")
-ax.plot(shear_h, depth_f, "o:", ms=3, color="C3", mfc="none", label="shear, homogeneous")
+ax.plot(
+    shear_h, depth_f, "o:", ms=3, color="C3", mfc="none", label="shear, homogeneous"
+)
 ax.plot(normal, depth_f, "s-", ms=3, color="C0", label="normal, layered")
-ax.plot(normal_h, depth_f, "s:", ms=3, color="C0", mfc="none", label="normal, homogeneous")
+ax.plot(
+    normal_h, depth_f, "s:", ms=3, color="C0", mfc="none", label="normal, homogeneous"
+)
 ax.invert_yaxis()
 ax.set_xlabel("traction on the fault")
 ax.set_ylabel("depth / D")
@@ -334,12 +433,12 @@ plt.show()
 #   A slip distribution is a weighted sum of hats.
 # - (b, f) Each column of `gf.fields` is the response to one source; deeper sources give broader,
 #   smaller surface signals.
-# - (c, g) `gf(amplitudes)` gives the fields for a whole slip distribution, the same as a direct
-#   solve (printed above). The compliant layer concentrates the surface deformation near the fault
-#   compared with a homogeneous medium.
+# - (c, g) `gf(amplitudes)` gives the fields for a whole slip distribution. The compliant layer
+#   concentrates the surface deformation near the fault compared with a homogeneous medium.
 # - (d, h) On the fault, the traction is the stress change the slip causes: a stress drop where the
 #   fault slips most. The rows of `gf.fields` at the fault points, projected on the fault plane, are
-#   the stress-interaction kernels of the fault (`K_shear_a` above: fault elements x sources).
+#   the stress-interaction kernels of the fault: `gf.tractions(nx, ny, sx, sy, index=...)` (`K_a`, `K_p`
+#   above: fault elements x sources).
 #
 # **Other outputs**: `gf.slip_coefficients` (the quadratic coefficients on each fault element),
 # `gf.point_slip` (slip at each source's collocation point per unit amplitude), `gf.matrix` and
