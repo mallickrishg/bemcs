@@ -23,6 +23,14 @@ $$
 driven by slip rates $\mathbf v$ and loading rates $\mathbf g_r$. It can be solved in closed form by
 eigen-decomposition, or embedded in any ODE integrator together with a nonlinear fault law.
 
+![Sources and boundaries: a fault crossing an elastic lid into a viscous region](figures/viscoelastic_sources.svg)
+
+*Figure 1. Where each source lives. Slip (blue) is on the fault everywhere, and a deep creeping dislocation
+(green, dashed) loads it. The interface carries the line force $\dot F'$ (red) and, in plane strain, a pressure
+layer (amber). Inside the viscous region the fault also carries a pressure layer on both faces. Dots are
+the state points (tractions, pressures and Kelvin-filtered states). The free surface has no relaxation, and
+the elastic lid has no interior source.*
+
 ---
 
 ## 1. Rheology and notation
@@ -430,6 +438,12 @@ relations of (a).
 ## 4. Loading and coupling to time steppers
 
 The rate form is a standard linear state-space model, so any ODE integrator can embed it.
+
+![Coupling between a fault law and the viscoelastic boundary state](figures/viscoelastic_coupling.svg)
+
+*Figure 2. The fault law returns the slip rate $\mathbf v$; the boundary state returns the fault tractions.
+Both are integrated together. Loading enters as a prescribed creep rate or a far-field stress rate, and
+observables are linear outputs of the state.*
 
 ### 4.1 Inputs and outputs
 

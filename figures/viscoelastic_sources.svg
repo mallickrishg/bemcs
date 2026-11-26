@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="430" viewBox="0 0 680 430" font-family="Helvetica, Arial, sans-serif">
+<title>Sources and boundaries for a fault crossing an elastic lid into a viscous region</title>
+<style>
+.t{font-size:12px;fill:#444441}.h{font-size:14px;font-weight:500;fill:#2C2C2A}.l{stroke:#888780;stroke-width:0.5;stroke-dasharray:3 3}
+</style>
+<rect width="680" height="430" fill="#ffffff"/>
+<rect x="40" y="60" width="420" height="90" rx="4" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+<rect x="40" y="150" width="420" height="210" rx="4" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<line x1="40" y1="60" x2="460" y2="60" stroke="#2C2C2A" stroke-width="2.5"/>
+<text class="t" x="54" y="90">Elastic lid</text>
+<text class="t" x="54" y="344">Viscous region (Maxwell or Burgers)</text>
+<line x1="40" y1="154" x2="460" y2="154" stroke="#EF9F27" stroke-width="1.5"/>
+<line x1="40" y1="150" x2="460" y2="150" stroke="#D85A30" stroke-width="2.5"/>
+<line x1="204.6" y1="152.4" x2="257.6" y2="250.4" stroke="#EF9F27" stroke-width="1.5"/>
+<line x1="213.4" y1="147.6" x2="266.4" y2="245.6" stroke="#EF9F27" stroke-width="1.5"/>
+<line x1="170" y1="78" x2="209" y2="150" stroke="#378ADD" stroke-width="3"/>
+<line x1="209" y1="150" x2="262" y2="248" stroke="#378ADD" stroke-width="3"/>
+<line x1="262" y1="248" x2="305" y2="327" stroke="#1D9E75" stroke-width="3" stroke-dasharray="7 4"/>
+<g fill="#2C2C2A"><circle cx="100" cy="150" r="3.5"/><circle cx="150" cy="150" r="3.5"/><circle cx="300" cy="150" r="3.5"/><circle cx="360" cy="150" r="3.5"/><circle cx="420" cy="150" r="3.5"/><circle cx="223" cy="176" r="3.5"/><circle cx="248" cy="222" r="3.5"/></g>
+<text class="t" x="244" y="108">fault: slip only</text>
+<line class="l" x1="460" y1="60" x2="484" y2="60"/>
+<text class="h" x="490" y="56">Free surface</text><text class="t" x="490" y="74">t = 0, no relaxation</text>
+<line class="l" x1="460" y1="152" x2="484" y2="132"/>
+<text class="h" x="490" y="128">Interface</text><text class="t" x="490" y="146">line force F' (trapezoids)</text><text class="t" x="490" y="162">plus pressure layer</text>
+<line class="l" x1="266" y1="236" x2="484" y2="214"/>
+<text class="h" x="490" y="210">Fault in viscous region</text><text class="t" x="490" y="228">slip hats (shear, normal)</text><text class="t" x="490" y="244">pressure layer on both faces</text>
+<line class="l" x1="290" y1="300" x2="484" y2="290"/>
+<text class="h" x="490" y="286">Deep creep</text><text class="t" x="490" y="304">prescribed rate v, loads fault</text>
+<line x1="40" y1="392" x2="66" y2="392" stroke="#378ADD" stroke-width="3"/><text class="t" x="72" y="396">slip (hats)</text>
+<line x1="160" y1="392" x2="186" y2="392" stroke="#D85A30" stroke-width="2.5"/><text class="t" x="192" y="396">force F'</text>
+<line x1="270" y1="392" x2="296" y2="392" stroke="#EF9F27" stroke-width="1.5"/><text class="t" x="302" y="396">pressure layer</text>
+<line x1="410" y1="392" x2="436" y2="392" stroke="#1D9E75" stroke-width="3" stroke-dasharray="7 4"/><text class="t" x="442" y="396">prescribed creep</text>
+<circle cx="574" cy="392" r="3.5" fill="#2C2C2A"/><text class="t" x="584" y="396">state point</text>
+</svg>
