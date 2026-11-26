@@ -1,21 +1,8 @@
 # Viscoelasticity (linear Maxwell and Burgers) as a boundary-only problem
 
-*Branch `viscoelasticity`. Working note: governing equations in **rate form**, loading and coupling to
-time steppers, implementation plan on the heterogeneous-elastic solver (one-ring hat slip, trapezoidal
-force), and the test plan.*
-
-Status: design. Nothing here is implemented yet. Hand derivations; the identities marked
-"(sympy-checked)" were verified symbolically on 2026-11-26, and nothing has been run numerically.
-
-**What changed from the first draft.** The first draft used time-integrated tractions and pressures
-(`W`, `P`) as states. The general form is the **rate form**: the states are the current tractions and
-pressures (stress-like and bounded), the inputs are slip rates and loading rates, and the unknowns of
-every linear solve are rates. The integrated form is the special case of a single coseismic step. The
-rate form is what a time stepper needs. It also removes the long-time cancellation in the integrated
-form, where a growing `W` has to cancel against a growing equivalent force. Burgers rheology is
-included from the start, and Maxwell is the special case with no Kelvin element. Section 3.6 treats
-faults embedded in the viscoelastic region in plane strain, where fault-normal traction and the
-pressure jump across the fault both change.
+*Governing equations in rate form, loading and coupling to time steppers, implementation on the
+heterogeneous-elastic solver (one-ring hat slip, trapezoidal force), tests, and open issues. Design
+only: nothing here is implemented yet.*
 
 ---
 
@@ -149,7 +136,7 @@ $$
 \dot F - \kappa_\sigma(\dot S\cdot n)_\sigma = \frac{\mu_0}{\mu_\mp}\big(\rho_- - \rho_+\big).
 $$
 
-The row is independent of the sampled side (sympy-checked, the same algebra as for Maxwell).
+The row is independent of the sampled side (the same algebra as for Maxwell).
 Traction (`'t'`) rows on viscoelastic sides become
 
 $$
@@ -180,8 +167,7 @@ $$
 with $\dot{\mathbf b} = \mathbf b_v\mathbf v + \dot{\mathbf b}_r$ (slip rates, and loading). Call the bracket
 $\mathbf A$ and the forcing $\mathbf G\mathbf v + \mathbf g_r$.
 
-- **Maxwell limit:** $\mathbf y = \mathbf t$ and $\mathbf A = \boldsymbol\Gamma D_\alpha - D_\alpha$, the matrix of
-  the first draft.
+- **Maxwell limit:** $\mathbf y = \mathbf t$ and $\mathbf A = \boldsymbol\Gamma D_\alpha - D_\alpha$, the Maxwell matrix.
 - **Zener:** one eigenvalue is zero, because the relaxed state is a finite stress rather than zero.
 - **Initial state:** $\mathbf t(0)$ is the elastic response to the initial loading, and
   $\mathbf t_K(0)=0$. This is the problem of the original note, $\dot{\mathbf t} = \mathbf A\mathbf t$.
@@ -195,7 +181,7 @@ $$
 $$
 
 and these are exactly the zeros of $\mu_m + \tilde\mu_i(s)$ from the correspondence principle
-(sympy-checked). For Maxwell it is the single root $\lambda = -\beta\alpha$. Burgers has two relaxation
+For Maxwell it is the single root $\lambda = -\beta\alpha$. Burgers has two relaxation
 times, and Zener ($\alpha_M=0$) has a zero root.
 
 ### 2.4 Faults embedded in a uniform region
@@ -260,8 +246,8 @@ The rate of the right side is a linear functional of the history of $-\nabla^2 p
 $\partial_i\partial_j\sigma_{ij}=0$ and $\partial_i\partial_j\sigma_{K,ij}=0$. For Maxwell,
 $\nabla^2\dot\theta = -g_\nu\alpha\nabla^2\theta$, with $g_\nu = (1+\nu)/(3(1-\nu))$. Therefore
 $\nabla^2 p$ stays zero if it is zero at the start. This holds for an elastic start with no body force,
-and for any state produced by this model. The first draft's argument used the elastic Navier equation and
-did not hold once viscous strain exists; this replaces it. **For a user-supplied initial state, the
+and for any state produced by this model. The argument uses the rate equations, not the elastic Navier equation, which no longer holds
+once viscous strain exists. **For a user-supplied initial state, the
 assumption is that the interior pressure is harmonic** (document it; the solver cannot check it).
 
 ### 3.3 The distributional gradient: no extra normal force, a local pressure law
@@ -276,8 +262,8 @@ $$
 $$
 
 the line-force unknowns of the solver are $\dot F'$ (the elastic-contrast and shear parts), and the
-pressure part is **not** a separate normal line force. The first draft stated the Green's-identity result
-with an extra $G_{ik}n_k$ term; that term cancels against the pressure part of the line force, as follows.
+pressure part is **not** a separate normal line force. A $G_{ik}n_k$ term that appears when Green's identity is applied region by region cancels
+against the pressure part of the line force, as follows.
 
 **Dilatation.** The dilatation of the reference medium obeys $(\lambda_0+2\mu_0)\nabla^2\dot\theta = -\nabla\cdot\dot{\mathbf f}$,
 and since $\nabla\cdot(\mu_0\nabla\mathcal{P}_{\mathrm{dist}}) = \mu_0\nabla^2\mathcal{P}_{\mathrm{dist}}$,
@@ -311,8 +297,8 @@ $$
 
 with $[\cdot]$ the jump from the $-n$ to the $+n$ side. A free surface is one-sided, with the outside
 value of $\mathcal{P}$ equal to zero. The coefficient equals $\mu_0/(4\pi(\lambda_0+2\mu_0))$, matching the
-potential form. The kernel obeys $\nabla'^2H_i = \partial G_{ik}/\partial x'_k$ in 2-D (sympy-checked,
-using $\nabla^2(x_i\ln r) = 2x_i/r^2$). Stresses follow from $\sigma_{ij} = 2\mu_0\partial_i\partial_j\Phi + \lambda_0\theta\delta_{ij}$,
+potential form. The kernel obeys $\nabla'^2H_i = \partial G_{ik}/\partial x'_k$ in 2-D (using
+$\nabla^2(x_i\ln r) = 2x_i/r^2$). Stresses follow from $\sigma_{ij} = 2\mu_0\partial_i\partial_j\Phi + \lambda_0\theta\delta_{ij}$,
 which has $1/r$ and (for the double layer) hypersingular terms, handled like the existing slip kernels.
 
 ### 3.4 Interface and traction rows
@@ -334,8 +320,7 @@ $$
 \dot F' - \kappa_+(\dot S\cdot n)_+ = \frac{\mu_0}{\mu_-}\big(\boldsymbol\rho_- - \boldsymbol\rho_+\big) + \mu_0\kappa_+\mathcal{P}_+\mathbf n,
 $$
 
-which are equivalent (sympy-checked, including the pressure terms, given the reference-traction jump
-$-(\dot F' + \mu_0[\mathcal{P}]\mathbf n)$ across the line force). Here $\dot S$ contains slip, $\dot F'$,
+which are equivalent (given the reference-traction jump $-(\dot F' + \mu_0[\mathcal{P}]\mathbf n)$ across the line force). Here $\dot S$ contains slip, $\dot F'$,
 loading, **and the pressure layer** $\dot u^{\mathrm{vol}}$ of section 3.3. Traction rows become
 
 $$
@@ -383,8 +368,8 @@ $$
 [\dot p_K] = \frac{[p] - [p_K]}{\tau_K}
 $$
 
-(the coefficient $2\mu g_\nu = 2\mu(1+\nu)/(3(1-\nu))$ is the elastic jump, sympy-checked, and the decay
-rate for Maxwell is $g_\nu\alpha$, matching $3K\alpha/(3K+4\mu)$ from the first draft). This is the same
+(the coefficient $2\mu g_\nu = 2\mu(1+\nu)/(3(1-\nu))$ is the elastic jump, and the decay rate for
+Maxwell is $g_\nu\alpha = 3K\alpha/(3K+4\mu)$). This is the same
 local law as section 3.3, evaluated on the two faces, so the BEM reproduces it automatically. It is also a
 **test**. Three things follow.
 
@@ -435,7 +420,7 @@ relations of (a).
 
 - **Pressure layer:** displacement-rate and stress-rate kernels for a unit $[\mathcal{P}]$ double layer
   and a unit $[\partial_n\mathcal{P}]$ single layer on a linear element, from $H_i$ and $\partial_nH_i$.
-  They are elementary ($r_i\ln r$ and derivatives). Derive with sympy, then add at level 3.
+  They are elementary ($r_i\ln r$ and derivatives). Derive symbolically, then add at level 3.
 - **DtN map** (or an equivalent single-layer representation of $\mathcal{P}$ in each region), needed only
   where $[\partial_n\mathcal{P}]\neq 0$.
 - **Nothing new** for the pressure states themselves: $\hat p$ is the existing pressure kernel.
@@ -473,7 +458,7 @@ Faults interact with each other and with the interfaces through $\mathbf G$.
 3. **Imposed boundary velocity** (`'u'` rows with time-dependent value): the same, with a
    time-dependent right-hand side.
 
-The initial-value problem of the first draft is the special case $\mathbf v = 0$, $\mathbf g_r = 0$.
+The initial-value problem (relaxation after a coseismic step) is the special case $\mathbf v = 0$, $\mathbf g_r = 0$.
 
 ### 4.3 The user's time-stepping loop (for example rate-and-state with RK45)
 
@@ -601,8 +586,7 @@ They follow the elastic suite: tapered slip $\cos^2(\pi d/2D)$ and mesh-refineme
   $\frac{2\mu_i}{\mu_i+\mu_m}\tau_\infty e^{-\alpha_i\mu_m t/(\mu_i+\mu_m)}$, and the single eigenvalue of
   $\mathbf A$ is $-\alpha_i\mu_m/(\mu_i+\mu_m)$.
 - **A5:** a fault next to a vertical contact with a Maxwell block, including a fault on the interface
-  (`dist = 0`): `contact_displacement` with $k(t) = 1-(1-k_0)e^{-\mu_1\alpha_2 t/(\mu_1+\mu_2)}$
-  (sympy-checked).
+  (`dist = 0`): `contact_displacement` with $k(t) = 1-(1-k_0)e^{-\mu_1\alpha_2 t/(\mu_1+\mu_2)}$.
 - Notation: $B(d) = \arctan(d/x)/\pi$, $P(m,z)$ the regularized incomplete gamma function.
   Displacements are $u(t) = u(0) + \int_0^t \dot u  dt'$ from the closed-form mode integrals.
 
@@ -654,8 +638,8 @@ be reproduced first.
   $\dot t_n$ on faults ($\frac{\mu}{\mu_0}[\dot S_n]=-[\pi]$ holds identically).
 - **Integrators agree:** eigen path, `expm`, and `solve_ivp` (BDF) give the same $\mathbf y(t)$.
   Eigenvalues are real and non-positive in antiplane.
-- **Rate form against the integrated form:** time integrals of the rate-form tractions reproduce the
-  first draft's $W$ and $P$ formulation for a single coseismic step.
+- **Rate form against the integrated form:** for a coseismic step, time integrals of the rate-form
+  tractions reproduce the time-integrated ($W$, $P$) formulation.
 - **Superposition:** constant-rate creep by Duhamel equals the time integral of coseismic step responses.
 - **Convergence:** antiplane second order, matching the elastic suite.
 - **Plane-strain unit tests:**
